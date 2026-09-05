@@ -32,12 +32,19 @@ Keep autonomous Plan `e504…` in a separate semantic qualification review. Its
 context problem and paused calibration work do not block P0. A8 has closed its
 bounded local-environment verification; do not extend A6/A7 in this window.
 
+The later user-directed P0 repair added and exercised one bounded behavior
+correction inside the existing Patch adapter. Both acceptances failed the same
+matrix (33/36, then 32/36 with Recoil regression), preserving c760 and source
+identity. This is an implementation-quality blocker, not evidence that the Plan
+must expand. The optional local-model comparison remains a prepared, unexecuted
+scope decision; do not silently switch models or extend retries. Details: section 13.
+
 | Order | Work / exit condition | Current disposition |
 | --- | --- | --- |
 | P0 | Revise the exact Patch to preserve shared weapon/First Shot initialization while disabling accurate-spread override; bind focused cold-start Follow Recoil and First Shot evidence, then regenerate Proposal/Review/Dry-run | Source review found concrete independence regressions inside the existing restart boundary; existing diff must be revised before approval. Use existing Plan/Binding revisions if another owner must change; see reconciliation section 6 |
 | P0 | Present the semantically reviewed diff for exact approval; then approved isolated Apply, changed Build, and separately authorized Runtime acceptance | Not executed for this feature |
 | Current P0 blocker | Preserve shared First Shot initialization when spread is disabled, within the existing c760 boundaries; consume the bound failure observations through a deliberate next repair decision | Revised acceptance complete: new Proposal/Review/Dry-run and source provenance pass, 33/36 behavior checks pass; Match twice and Inner fail. No approval/Apply or automatic next attempt. First Shot feedback was already in the original c760 input; see reconciliation section 12 |
-| P1 | Complete `PATCH-AGENTIC-EXECUTION-001` beyond its narrow source-tool/header-correction proof: review turn persistence/model identity/budget, correction dispatch, bounded observations and history, then a relevant acceptance | Partial; default is one inspection and only header-specific correction; no new generic runtime |
+| P1 | Complete `PATCH-AGENTIC-EXECUTION-001` beyond its narrow source-tool/header-correction proof: review turn persistence/model identity/budget, correction dispatch, bounded observations and history, then a relevant acceptance | A bound behavior feedback/correction path now runs and stops correctly on failed revalidation. The tested Qwen3-Coder repairs did not fix the Mod; no general repair or runtime claim |
 | P1 | Repair engineering cognition's Fresh/API and continuation-receipt projections; regenerate a current handoff entry after the selected work | Known stale projection; do not re-run product models merely to fix its view |
 | P1 | `AUTONOMOUS-EVIDENCE-DISCOVERY-001`: model selects API queries/tools and produces usable evidence | Real success not demonstrated |
 | P1 | `AUTONOMOUS-TARGET-SELECTION-001`: model selects modification targets; existing compiler/Binding validates | Model selection and structural Plan creation executed once, producing e504; independent semantic review is needs_evidence and cross-task stability is unproven. P0 continues with c760 |

@@ -41,8 +41,8 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
-The current platform implementation checkpoint is `de28829`; the latest exercised
-Patch implementation includes request identity repair `43dccbd`. The September 4 continuation
+The current platform implementation checkpoint is `d109e32`, including the bounded
+behavior feedback seam in `3079d31` and request identity repair `43dccbd`. The September 4 continuation
 has exercised a local Patch source-tool observation, one header-specific
 validator correction, ProposalReview, and a no-write Dry-run.
 It has not exercised this feature's Apply, changed Build, or Runtime.
@@ -77,6 +77,20 @@ is verified, including offline reconstruction matching both observed wire hashes
 Behavior remains failed: 33 of 36 checks passed, but First Shot Match twice and
 Inner still regress. Shotgun Recoil now passes. Do not request exact approval or
 Apply this diff; changed Build and Runtime remain unexecuted.
+
+A subsequent user-directed repair cycle added an optional no-write behavior
+evaluator inside the existing Patch adapter. Only a bound implementation failure
+can trigger one same-client correction, sharing the existing total model budget;
+other failure owners stop. Two real acceptances each ran the unchanged matrix
+before and after correction. The first returned equivalent code and stayed 33/36.
+After preserving the previously lost source-tool context, the second changed one
+binding but regressed Recoil and ended 32/36. Neither produced a new admitted
+Proposal. Current First Shot defects remain Patch implementation errors inside
+c760, and the new Recoil regression also occurs inside its binding001.
+Feedback delivery and failure stopping are exercised; successful behavioral
+repair is not demonstrated. A local qwen3.6:27b comparison is prepared without a
+model call and awaits the user's decision to change the previously fixed model.
+See reconciliation section 13; no automatic fallback or new scope is implied.
 
 Autonomous target selection produced e504 in one real model call, but independent
 semantic review returned needs_evidence. Preserve it as a separate A3 result;

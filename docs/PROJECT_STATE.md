@@ -7,7 +7,7 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
-Platform implementation: `de28829`; latest Patch request identity repair: `43dccbd`.
+Platform implementation: `d109e32`; behavior feedback seam: `3079d31`; request identities: `43dccbd`.
 Branch: `codex/rag-capability-mainline`.
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 
@@ -35,6 +35,13 @@ Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
   semantic feedback into Plan/Patch. One real model call produced e504, whose
   independent semantic review is needs_evidence. P0 remains on operator-assisted
   c760; no cross-task Planning quality or automatic replan has been proved.
+- A new user-directed P0 cycle exercised one behavior correction per attempt,
+  in the existing Patch adapter. The first produced equivalent code and stayed
+  33/36; the second preserved source-tool context but regressed Recoil, ending
+  32/36. Both stopped before a new Proposal. This proves the feedback/stopping
+  path was used, not successful correction. Original sources remain unchanged.
+- A same-input local qwen3.6:27b comparison has only passed zero-network preparation.
+  It has not run; changing the previously fixed model awaits the user's decision.
 - Primary run references, evidence limits, test results, and corrections to
   earlier completion claims are in
   [the progress reconciliation](audits/PATCH_AGENT_PROGRESS_RECONCILIATION_20260905.md).

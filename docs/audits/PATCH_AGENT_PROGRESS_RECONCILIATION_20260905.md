@@ -901,3 +901,151 @@ Trace只补本地实际请求链，未交付Langfuse；模型资格/路由未完
 源码单元修复`aa3a72f`发生在本窗口开始前，已在§11.2说明，不能重复算作本窗口新提交。
 本轮最后的文档对账/角色修正提交由Git与最终执行报告定位；未完成校准WIP没有提交、没有
 计作能力。测试组存在重叠，不将216/311/236/12/208相加作为唯一测试总数。
+
+## 13. 新一轮P0：物理owner与有界行为反馈修正
+
+本节记录用户再次明确要求“动手”后的独立修复工作。旧两小时执行卡已消费，不作为
+本轮或未来操作的授权凭证。固定Feature `fc7…`、Evidence `10a3…`、Plan `c760…`、
+qwen3-coder:30b、原5 bindings及原40进程/36检查矩阵；不采用A3的e504。
+
+### 13.1 三项失败的物理owner
+
+对当前af803草稿、原源码、输入和执行轨迹的独立核对表明，三个反例的直接缺陷均为
+**Patch实现错误**，而非此次Evidence不足、Plan/Binding越界或执行环境故障。
+
+| 失败 | 物理链条 | 原Plan已有owner |
+| --- | --- | --- |
+| Match首次cooldown：140，预期30 | timer已把spreadScalar变为0.2，但disabled提前返回使validGun仍false，更新被截断 | OverrideCrosshairSize（001）和UpdateCrosshairSize（005） |
+| Match第二次cooldown：140，预期30 | 第二次timer确实完成，但相同状态缺失持续存在，没有尺寸写入 | 同上 |
+| Inner可见但尺寸10，预期30 | targetSpread未初始化，FirstShotGui.Enable/GetCrosshairSize读取0并计算出10 | OverrideCrosshairSize（001） |
+
+GetCrosshairSize和First Shot方法是错误状态的消费者，不能仅凭处在调用链就升级为编辑
+目标。这证明当前直接缺陷在已允许范围内，不预先保证所有未来修法都能在原范围完成。
+[owner原始核对](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/owner_review.json)
+保存exact Artifact、源码和观察来源。
+
+矩阵另有需要保留的限制：Match同时检查内部mainSize和可见renderedMainSize。
+当前两者均140，故不影响这三个反例的归因；若新修订可见效果正确、仅内部字段不一致，
+应停到validator语义复核，不能悄悄改测试或让模型迎合未证明的内部约束。
+
+### 13.2 工程自检材料如何约束本次修法
+
+已完整读取用户的《项目回头自检.txt》（768行）、《项目自检-8月17.txt》（194行）、
+《rag_如何保证内容准确性.txt》（194行）及8张截图。这些是工程思想与问题材料，内部的
+建议不自动成为当前任务、权限或门禁，也不激活PDF、Dense、微调、多模态等额外建设。
+
+本次采用其中的判断方式：说明真实失败、所需信号、不能删除的环节和完成证据。
+已有源码/Evidence能够解释反例，先处理证据被错误用于代码的问题；已有Graph、native
+materializer、调用预算和Harness能够复用，只补行为观察的消费连接。API成功或结构合法
+不代表业务成功；模型自评不能替代当前可执行检查。
+
+原始Self-RAG训练模型产生reflection tokens来控制检索、生成和自评；外部测试反馈只是
+借鉴质量参与决策的思想，不是等价算法，也不说明本项目必须增加训练。
+[原始说明](https://selfrag.github.io/)。Ragas Faithfulness关注回答与上下文的一致性，不能
+证明Mod运行正确，因而不替代本次行为矩阵。
+[官方定义](https://docs.ragas.io/en/stable/concepts/metrics/available_metrics/faithfulness/)。
+材料中的招聘比例、现成Agent完成百分比等未经独立核实，不作为本次实施或成熟度依据。
+
+### 13.3 有界接缝及平台验证
+
+`3079d31`在LocalOllamaInitialPatchAdapter的native materialization之后、返回Graph之前
+接入可选behavior_evaluator。回调取得生成内容的独立副本、已保存模型响应和source身份，
+在scratch执行现有矩阵。结果与报告文件内容/hash配对；只有已确认的patch_implementation、
+已知绑定内的behavior_failed才进入同client的一次完整修正，随后再次materialize和重验。
+
+header与行为修正共用总模型预算5，发送前检查；Graph的现有receipt消费同步计算两者，
+最终generation保存行为报告/响应refs。环境、身份、缺证、新范围、内部字段语义不明或
+再次验证失败均停止，不产生Approval，不伪造Build/Runtime，不新增Artifact类型或Graph。
+
+Case适配器使用原Harness副本，仅修正“尚未正式Proposal”的来源显示，不修改36条检查。
+它先通过离线旧模型输出重放再次得到33/36；六项分类回归证明错hash、编译/进程故障、
+矩阵不完整和仅内部Match字段差异不会被当作可自动修Mod的三类旧失败。
+入口位于本任务scratch `firstshot_feedback_001/case_behavior_adapter.py`。
+
+21项平台聚焦测试通过，13.25秒；相邻checkpoint238通过、2旧warnings、19.30秒：
+
+```powershell
+python -B -m pytest tests/unit/test_patch_behavior_feedback.py tests/unit/test_fresh_planning_continuation.py tests/unit/test_patch_agent_loop.py tests/unit/test_local_entry.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\pbf-check-$PID"
+```
+
+测试使用Synthetic fixture验证协议，不包含工程编写的正确AccurateCrosshair实现；
+平台测试通过不能代替真实模型及同矩阵验收。
+
+### 13.4 第一次真实行为修正：反馈已送达，但代码没有改变
+
+命令为本任务scratch的`python -B run_case_behavior_feedback.py execute`，输出在
+`firstshot_feedback_001/actual_001`。初稿先经矩阵得到三个原失败，第三次真实模型调用
+消费了该轮输入、预期/实际、validGun/targetSpread/spreadScalar等观察；没有正确代码答案。
+
+结果为322.68秒、3次模型调用、两次完整矩阵执行。修正原文SHA为
+`271a6e834cdef7cf23dea4dab69ac9295579373614f3032d03450ef0fcbe4a8e`，与初稿的原文字节
+不同，但解析后的5处after_text、rationale和rollback_hint完全一致；两次native changes
+SHA均为`dbe2e6d96c69a4c73d13f23a8b08f8ac4f23df24652e8d651b602f9cef58f929`。
+两次矩阵均33/36，原三项失败不变。不是新的通过Patch，也没有新Proposal/Review/Dry-run。
+
+receipt为`cr/0519c4472c7f4949706316d93a0deefb.json`，SHA
+`689cebff8d64c43a0aef4db545e1d1225f5b291b3fe6094a43c47ed7f59f1572`；终止原因
+`PATCH_BEHAVIOR_CORRECTION_FAILED`。canonical source前后相同；外层结果中的
+failed_during_continuation不能被误读为源码漂移。Apply/Build/Runtime均0。
+
+### 13.5 从实际请求发现的修正上下文缺口
+
+第三轮请求明确包含失败观察，schema也没有把after_text锁成旧值，故不能说反馈未发送
+或输出被schema强制固定。但修正轮角色为system/user/user：旧草稿嵌在user JSON中，
+且只重用initial messages，未保留原loop获得的工具观察。该丢失可由聚焦测试复现；
+它是否导致本次原样返回仍需实际验证，不能直接归咎模型能力。
+
+`d109e32`只在成功LoopResult的内存中深拷贝保留最终生成请求（不扩大持久化状态）；
+修正复用原messages/tool_results/provider_state/插入位置，随后追加assistant草稿和user
+失败观察。实际serializer回归证明顺序为system→user→assistant工具调用→tool观察→
+历史loop状态→assistant草稿→user反馈；观察内容/hash、源码身份和工具次数均保留。
+初始请求、Plan、schema、模型、预算和矩阵不变。
+
+新增回归先失败后通过；受影响checkpoint239通过、2旧warnings、19.84秒：
+
+```powershell
+python -B -m pytest tests/unit/test_patch_behavior_feedback.py tests/unit/test_patch_agent_loop.py tests/unit/test_fresh_planning_continuation.py tests/unit/test_local_entry.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\pbf-context-check-$PID"
+```
+
+第二次有依据的接受运行使用`run_case_behavior_feedback_context.py execute`及独立
+`actual_002`目录；旧失败、claims和所有响应保持不变。实际结果另记，不能由239测试
+通过预先宣布Mod修复成功。
+
+### 13.6 第二次真实结果：改动发生，但产生回退
+
+Actual002持续327.27秒，3次模型调用、0 header correction、1次行为correction，执行
+两次原40进程/36检查矩阵。首包与前次相同；实际修正请求为61,108 bytes，角色顺序和
+工具观察均符合§13.5的保留要求，assistant草稿逐字匹配已保存的模型输出。
+
+模型修正仅改变binding001：把disabled return移到weapon/isShotgun识别之前；另外4处
+after_text未变。初稿33/36，修订32/36：原Match两项、Inner一项仍失败，并重新引入
+`FALSE_COLD_SHOTGUN_RECOIL_PRESERVED`失败。新响应SHA为
+`aa12a2398a689f1bd82ae3ff6d903a76ccf350844eec3e9ab38eca0e570e4a0f`；
+修订native changes SHA为`7a7b20d51313d077e5c06f3d51a1bc2f1a4cf0d683017eef27f1ba3d668fd67a`。
+
+当前case分类器仅事先核实了三项First Shot失败，故对新增Recoil组合返回
+`needs_evidence / unknown`并停止。这表示自动分类覆盖有限，不能据此声称当前Evidence
+或Plan必然不足，也不应追写当时报告为已自动识别。其事后源码归因另行核对。
+
+事后核对已确认新增Recoil属于binding001内的Patch回退：冷启动isShotgun保持false，
+未修改的RecoilPatches.EnableCrosshairMovement据此错误开启movement。三轮实际请求
+字节与provider receipt hash匹配，两次生成代码及物化文件也匹配相应模型响应。
+[事后核对报告](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/actual_002/post_run_owner_review.json)。
+这不修改运行时的unknown分类，也没有扩大回调自动识别范围。
+
+receipt为`cr/64a3b3a6dd7ad3b1a80e23d823ce0b0e.json`，SHA
+`ce54c3117f4bdc5de799d265a8eb74952f4d2ac83d909c018405d38588151da8`；
+没有新Proposal/Review/Dry-run，Apply/Build/Runtime均0，canonical source未变。
+第二次矩阵SHA为`aa2a5b4a4173e9693dfdcd7030cd38587790500c9fc5134b0d309335694fd45e`，
+反馈报告SHA为`b21eca3668d4937a7e72386f53c304fe7291d01fdb4f90ae05218694ec235056`。
+
+本轮因此只能证明已实现并真实触发的反馈传递、一次有界修正、来源保留和失败停止；
+不能证明修复成功。两个输入组装版本的真实结果均不支持当前qwen3-coder配置已具备
+这一case的可靠修复能力。也不能由单case推断该模型在所有任务上都不具备修复能力。
+
+停止继续给同配置追加相似提示或模型调用。为新的技术选择，仅准备了本地
+qwen3.6:27b的零网络对照：首包除model字段外完全相同，44,728 bytes、相同schema、
+Plan、bindings、context/output预算、工具策略、行为矩阵及停止条件。模型当前存在，
+digest为`a50eda8ed977ab48a12431878896b27ffd5cef552c17af3317d9623b939a7f1e`。
+这是尚未执行的对照准备，不是自动fallback或默认profile变更；已向用户询问是否进入
+更换模型的对照范围，未得到回复前不发送。
