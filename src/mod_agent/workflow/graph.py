@@ -69,6 +69,10 @@ from src.mod_agent.planning import (
     RequestPlanner,
     Uncertainty,
 )
+from src.mod_agent.planning.model_selection import (
+    ModelPlanningTargetSelector,
+    PlanningTargetSelectionError,
+)
 from src.mod_agent.product_execution import (
     ProductExecutionContractError,
     ProductExecutionGraphModeV1,
@@ -1786,27 +1790,54 @@ def _run_create_implementation_plan(
         _read_artifact_data(state, artifact_store, "feature_spec")
     )
     evidence_pack = _read_artifact_data(state, artifact_store, "evidence_pack")
-    planning_target_evidence_ids = (
-        planning_continuation_mode.planning_target_evidence_ids
-        if planning_continuation_mode is not None
-        else planning_target_selection_factory(
-            copy.deepcopy(feature_spec.to_artifact_payload()),
-            copy.deepcopy(evidence_pack),
+    formal_requirement_coverage_required = formal_requirement_coverage_required or isinstance(
+        planning_target_selection_factory, ModelPlanningTargetSelector
+    )
+    try:
+        if planning_continuation_mode is not None and isinstance(
+            planning_target_selection_factory, ModelPlanningTargetSelector
+        ):
+            raise PlanningTargetSelectionError(
+                "PLANNING_MODEL_OPERATOR_SELECTION_CONFLICT",
+                "An autonomous selector cannot silently use explicit continuation target IDs.",
+            )
+        planning_target_evidence_ids = (
+            planning_continuation_mode.planning_target_evidence_ids
+            if planning_continuation_mode is not None
+            else planning_target_selection_factory(
+                copy.deepcopy(feature_spec.to_artifact_payload()),
+                copy.deepcopy(evidence_pack),
+            )
+            if formal_requirement_coverage_required
+            and planning_target_selection_factory is not None
+            else None
         )
-        if formal_requirement_coverage_required
-        and planning_target_selection_factory is not None
-        else None
-    )
-    implementation = ImplementationPlanner().build(
-        feature_spec=feature_spec,
-        evidence_pack=evidence_pack,
-        formal_requirement_coverage_required=(
-            formal_requirement_coverage_required
-        ),
-        planning_target_evidence_ids=(
-            planning_target_evidence_ids
-        ),
-    )
+        implementation = ImplementationPlanner().build(
+            feature_spec=feature_spec,
+            evidence_pack=evidence_pack,
+            formal_requirement_coverage_required=formal_requirement_coverage_required,
+            planning_target_evidence_ids=planning_target_evidence_ids,
+        )
+        if not implementation.blocking and isinstance(
+            planning_target_selection_factory, ModelPlanningTargetSelector
+        ):
+            implementation = replace(
+                implementation,
+                side_effect_boundaries=tuple(
+                    dict.fromkeys(
+                        (
+                            *implementation.side_effect_boundaries,
+                            *planning_target_selection_factory.semantic_feedback,
+                        )
+                    )
+                ),
+            )
+    except PlanningTargetSelectionError as exc:
+        implementation = ImplementationPlanner._blocked(
+            feature_id=feature_spec.feature_id,
+            blockers=(exc.as_blocker(),),
+            open_questions=(exc.reason,),
+        )
     if planning_continuation_mode is not None:
         preflight_planning_continuation(
             planning_continuation_mode,
@@ -1822,6 +1853,8 @@ def _run_create_implementation_plan(
             _artifact_ref_from_state(state, "evidence_pack"),
         ],
     }
+    if isinstance(planning_target_selection_factory, ModelPlanningTargetSelector):
+        write_arguments["trace_refs"] = planning_target_selection_factory.planning_trace_refs()
     write_result = None
     if use_store_result:
         write_result = artifact_store.write_with_result(**write_arguments)
