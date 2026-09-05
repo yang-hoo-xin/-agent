@@ -631,6 +631,194 @@ def test_actual15_adjacent_methods_have_exact_disjoint_evidence_spans() -> None:
     assert on_file_changed.span["end_line"] < bind_all.span["start_line"]
 
 
+def test_rg_live_expression_method_does_not_include_adjacent_methods() -> None:
+    fixture_root = Path(__file__).parents[1] / "fixtures"
+    source = fixture_root / "actual15_four_site_source" / "SpreadPatches.cs"
+    pack = RgLiveEvidenceProvider(fixture_root).collect(
+        query="GetCrosshairSize",
+        source_identity_query="SpreadPatches.cs",
+        search_root="actual15_four_site_source",
+        max_items=2,
+    )
+
+    methods = {
+        (item.span["start_line"], item.span["end_line"]): item for item in pack.items
+    }
+    assert (167, 167) in methods
+    assert all(item.method_name is not None for item in pack.items)
+    expression = methods[(167, 167)]
+    assert expression.symbol == expression.method_name == "GetCrosshairSize"
+    assert expression.method_kind == "method"
+    assert expression.parameter_types == ()
+    assert expression.return_type == "float"
+    assert expression.excerpt == source.read_bytes().decode("utf-8").splitlines(
+        keepends=True
+    )[166]
+    assert expression.source_hash == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert pack.can_generate_patch is False
+
+
+def test_rg_live_field_declaration_does_not_include_adjacent_method() -> None:
+    fixture_root = Path(__file__).parents[1] / "fixtures"
+    source = fixture_root / "actual15_four_site_source" / "SpreadPatches.cs"
+    pack = RgLiveEvidenceProvider(fixture_root).collect(
+        query="private static float _targetSpread",
+        source_identity_query="SpreadPatches.cs",
+        search_root="actual15_four_site_source",
+        max_items=5,
+    )
+
+    field = next(item for item in pack.items if item.symbol == "_targetSpread")
+    assert field.span == {"start_line": 28, "end_line": 28}
+    assert field.method_name is None
+    assert field.method_kind is None
+    assert field.declaring_type_full_name == "AccurateCrosshair.CrosshairPatches.SpreadPatches"
+    assert field.declared_members["_targetSpread"]["declaration_span"] == field.span
+    assert field.excerpt == source.read_bytes().decode("utf-8").splitlines(
+        keepends=True
+    )[27]
+    assert field.source_hash == hashlib.sha256(source.read_bytes()).hexdigest()
+
+
+def test_rg_live_single_line_expression_method_preserves_literal_content(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "Behavior.cs"
+    source.write_text(
+        "namespace Example;\n"
+        "public class Behavior\n"
+        "{\n"
+        '    public string ReadMarker() => "marker; { }";\n'
+        "    public void NextMethod()\n"
+        "    {\n"
+        "        Finish();\n"
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    item = RgLiveEvidenceProvider(tmp_path).collect(
+        query="ReadMarker", search_root="."
+    ).items[0]
+
+    assert item.span == {"start_line": 4, "end_line": 4}
+    assert item.method_name == "ReadMarker"
+    assert item.excerpt == source.read_bytes().decode("utf-8").splitlines(
+        keepends=True
+    )[3]
+
+
+@pytest.mark.parametrize(
+    "declaration,query",
+    [
+        ("private static float PhantomField;", "PhantomField"),
+        ("public float PhantomMethod() => 1f;", "PhantomMethod"),
+    ],
+)
+def test_rg_live_commented_declaration_is_not_a_physical_source_unit(
+    tmp_path: Path, declaration: str, query: str
+) -> None:
+    source = tmp_path / "Behavior.cs"
+    source.write_text(
+        "namespace Example;\n"
+        "public class Behavior\n"
+        "{\n"
+        "    /*\n"
+        f"    {declaration}\n"
+        "    */\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    item = RgLiveEvidenceProvider(tmp_path).collect(
+        query=query, search_root="."
+    ).items[0]
+
+    assert item.span == {"start_line": 1, "end_line": 7}
+    assert item.method_name is None
+    assert item.declaring_type is None
+
+
+def test_rg_live_adjacent_fields_keep_separate_exact_source_units(tmp_path: Path) -> None:
+    source = tmp_path / "Behavior.cs"
+    source.write_text(
+        "namespace Example;\n"
+        "public class Behavior\n"
+        "{\n"
+        "    private static float FirstField;\n"
+        "    private static float SecondField;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    pack = RgLiveEvidenceProvider(tmp_path).collect(
+        query="FirstField SecondField", search_root=".", max_items=2
+    )
+
+    assert {item.symbol: item.span for item in pack.items} == {
+        "FirstField": {"start_line": 4, "end_line": 4},
+        "SecondField": {"start_line": 5, "end_line": 5},
+    }
+
+
+def test_rg_live_commented_type_cannot_own_field_evidence(tmp_path: Path) -> None:
+    from src.mod_agent.evidence.rg_live import _declared_csharp_members
+
+    text = (
+        "namespace Example;\n"
+        "public class Actual\n"
+        "{\n"
+        "    /*\n"
+        "    class Phantom\n"
+        "    {\n"
+        "        private int FakeField;\n"
+        "    }\n"
+        "    */\n"
+        "    private int RealField;\n"
+        "}\n"
+    )
+    (tmp_path / "Behavior.cs").write_text(text, encoding="utf-8")
+    provider = RgLiveEvidenceProvider(tmp_path)
+
+    commented = provider.collect(query="FakeField", search_root=".").items[0]
+    real = provider.collect(query="RealField", search_root=".").items[0]
+
+    assert commented.span == {"start_line": 1, "end_line": 11}
+    assert commented.declaring_type is None
+    assert real.span == {"start_line": 10, "end_line": 10}
+    assert real.symbol == "RealField"
+    assert real.declaring_type_full_name == "Example.Actual"
+    assert _declared_csharp_members(
+        text.splitlines(keepends=True),
+        declaring_type="Phantom",
+        declaring_type_full_name="Example.Phantom",
+    ) == {}
+
+
+@pytest.mark.parametrize(
+    "declarations,query",
+    [
+        ("public int First() => 1; public int Second() => 2;", "First"),
+        ("private int FirstField; private int SecondField;", "FirstField"),
+    ],
+)
+def test_rg_live_same_line_declarations_are_not_one_exact_source_unit(
+    tmp_path: Path, declarations: str, query: str
+) -> None:
+    (tmp_path / "Behavior.cs").write_text(
+        "namespace Example;\n"
+        "public class Actual\n"
+        "{\n"
+        f"    {declarations}\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    item = RgLiveEvidenceProvider(tmp_path).collect(
+        query=query, search_root="."
+    ).items[0]
+
+    assert item.span == {"start_line": 1, "end_line": 5}
+    assert item.method_name is None
+    assert item.declaring_type is None
+
+
 def test_rg_live_repeated_hits_in_one_method_share_one_occurrence() -> None:
     fixture_root = Path(__file__).parents[1] / "fixtures"
     provider = RgLiveEvidenceProvider(fixture_root)
@@ -774,7 +962,7 @@ def test_rg_live_non_method_match_keeps_bounded_context_without_symbol_fabricati
         "            UseEarlierSignal();\n"
         "        }\n"
         "\n"
-        "        private static string BoundarySignal = \"class-level\";\n"
+        "        // BoundarySignal is a class-level explanation.\n"
         "    }\n"
         "}\n",
         encoding="utf-8",

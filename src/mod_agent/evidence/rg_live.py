@@ -23,7 +23,7 @@ _CSHARP_METHOD_RE = re.compile(
     r"sealed|async|extern|unsafe|new|partial)\s+)*"
     r"(?P<return_type>[A-Za-z_][A-Za-z0-9_.<>,?\[\]]*)\s+"
     r"(?P<method_name>[A-Za-z_][A-Za-z0-9_]*)\s*"
-    r"\((?P<parameters>[^)]*)\)\s*(?:\{|=>)?\s*$"
+    r"\((?P<parameters>[^)]*)\)\s*(?:\{|(?P<expression_body>=>[^\r\n]*;))?\s*$"
 )
 _CSHARP_TYPE_RE = re.compile(
     r"^(?:(?:public|private|protected|internal|static|abstract|sealed|partial)\s+)*"
@@ -176,19 +176,22 @@ class RgLiveEvidenceProvider:
                 selected_line=selected_line,
                 method_spans=method_spans,
             )
+            source_context = method_context or _enclosing_csharp_field(
+                lines, selected_line=selected_line
+            )
             start_line = (
-                int(method_context["start_line"])
-                if method_context is not None
+                int(source_context["start_line"])
+                if source_context is not None
                 else max(1, selected_line - 10)
             )
             end_line = (
-                int(method_context["end_line"])
-                if method_context is not None
+                int(source_context["end_line"])
+                if source_context is not None
                 else min(len(lines), selected_line + 18)
             )
             excerpt = (
-                str(method_context["source_text"])
-                if method_context is not None
+                str(source_context["source_text"])
+                if source_context is not None
                 else "".join(lines[start_line - 1 : end_line])
             )
             relative = selected_path.relative_to(self.workspace_root).as_posix()
@@ -196,21 +199,21 @@ class RgLiveEvidenceProvider:
                 f"{relative}:{file_hash}:{start_line}:{end_line}".encode()
             ).hexdigest()[:16]
             symbol = (
-                str(method_context["method_name"])
-                if method_context is not None
+                str(source_context["symbol"])
+                if source_context is not None
                 else _best_symbol(excerpt, tokens)
             )
             declared_members = (
                 _declared_csharp_members(
                     lines,
-                    declaring_type=str(method_context["declaring_type"]),
+                    declaring_type=str(source_context["declaring_type"]),
                     declaring_type_full_name=str(
-                        method_context["declaring_type_full_name"]
+                        source_context["declaring_type_full_name"]
                     ),
                 )
-                if method_context is not None
-                and method_context.get("declaring_type") is not None
-                and method_context.get("declaring_type_full_name") is not None
+                if source_context is not None
+                and source_context.get("declaring_type") is not None
+                and source_context.get("declaring_type_full_name") is not None
                 else None
             )
             items.append(
@@ -234,9 +237,9 @@ class RgLiveEvidenceProvider:
                     doc_hash=file_hash,
                     authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
                     declaring_type=(
-                        str(method_context["declaring_type"])
-                        if method_context is not None
-                        and method_context.get("declaring_type") is not None
+                        str(source_context["declaring_type"])
+                        if source_context is not None
+                        and source_context.get("declaring_type") is not None
                         else None
                     ),
                     method_name=(
@@ -265,9 +268,9 @@ class RgLiveEvidenceProvider:
                         else None
                     ),
                     declaring_type_full_name=(
-                        str(method_context["declaring_type_full_name"])
-                        if method_context is not None
-                        and method_context.get("declaring_type_full_name") is not None
+                        str(source_context["declaring_type_full_name"])
+                        if source_context is not None
+                        and source_context.get("declaring_type_full_name") is not None
                         else None
                     ),
                     declared_members=declared_members,
@@ -630,6 +633,9 @@ def _rank_distinct_match_lines(
             end_line = int(span["end_line"])
             if start_line <= line_number <= end_line:
                 return ("method", start_line, end_line)
+        field = _enclosing_csharp_field(lines, selected_line=line_number)
+        if field is not None:
+            return ("field", int(field["start_line"]), int(field["end_line"]))
         return None
 
     ranked_lines: list[int] = []
@@ -728,6 +734,7 @@ def _enclosing_csharp_method(
     )
     return {
         **containing_span,
+        "symbol": match.group("method_name"),
         "declaration_line": start_line,
         "declaring_type": declaring_type,
         "declaring_type_full_name": declaring_type_full_name,
@@ -735,6 +742,39 @@ def _enclosing_csharp_method(
         "parameter_types": () if not parameters else None,
         "return_type": match.group("return_type"),
     }
+
+
+def _enclosing_csharp_field(
+    lines: list[str], *, selected_line: int
+) -> dict[str, object] | None:
+    """Use an existing complete single-line field declaration as its source unit."""
+
+    if not 1 <= selected_line <= len(lines):
+        return None
+    line = lines[selected_line - 1]
+    if not _single_csharp_statement_line(line):
+        return None
+    declaring_type = _nearest_csharp_type(lines, before_line=selected_line)
+    if declaring_type is None:
+        return None
+    namespace = _nearest_csharp_namespace(lines, before_line=selected_line)
+    full_name = f"{namespace}.{declaring_type}" if namespace else declaring_type
+    members = _declared_csharp_members(
+        lines, declaring_type=declaring_type, declaring_type_full_name=full_name
+    )
+    for member in members.values():
+        if member["member_kind"] != "field":
+            continue
+        span = member["declaration_span"]
+        if span == {"start_line": selected_line, "end_line": selected_line}:
+            return {
+                **span,
+                "source_text": line,
+                "symbol": member["member_name"],
+                "declaring_type": declaring_type,
+                "declaring_type_full_name": full_name,
+            }
+    return None
 
 
 def _csharp_method_match_rank(
@@ -790,27 +830,33 @@ def _csharp_method_source_spans(lines: list[str]) -> tuple[dict[str, object], ..
 
     spans: list[dict[str, object]] = []
     occupied_through = 0
+    declaration_state = "code"
     for index, line in enumerate(lines):
-        if index + 1 <= occupied_through:
+        initial_state = declaration_state
+        _, declaration_state = _csharp_brace_delta(line, initial_state=declaration_state)
+        if index + 1 <= occupied_through or initial_state != "code":
             continue
         match = _CSHARP_METHOD_RE.fullmatch(line.strip())
-        if match is None or "=>" in line:
+        if match is None:
+            continue
+        if match.group("expression_body") and not _single_csharp_statement_line(line):
             continue
         depth = 0
         entered_body = False
         lexical_state = "code"
-        end_line: int | None = None
-        for body_index in range(index, len(lines)):
-            brace_delta, lexical_state = _csharp_brace_delta(
-                lines[body_index],
-                initial_state=lexical_state,
-            )
-            depth += brace_delta
-            if depth > 0:
-                entered_body = True
-            elif entered_body:
-                end_line = body_index + 1
-                break
+        end_line: int | None = index + 1 if match.group("expression_body") else None
+        if end_line is None:
+            for body_index in range(index, len(lines)):
+                brace_delta, lexical_state = _csharp_brace_delta(
+                    lines[body_index],
+                    initial_state=lexical_state,
+                )
+                depth += brace_delta
+                if depth > 0:
+                    entered_body = True
+                elif entered_body:
+                    end_line = body_index + 1
+                    break
         if end_line is None:
             continue
         start_line = index + 1
@@ -827,11 +873,15 @@ def _csharp_method_source_spans(lines: list[str]) -> tuple[dict[str, object], ..
 
 
 def _nearest_csharp_type(lines: list[str], *, before_line: int) -> str | None:
-    for index in range(min(before_line, len(lines)) - 1, -1, -1):
-        match = _CSHARP_TYPE_RE.match(lines[index].strip())
-        if match is not None:
-            return match.group("type_name")
-    return None
+    nearest_type = None
+    lexical_state = "code"
+    for line in lines[: max(0, before_line)]:
+        if lexical_state == "code":
+            match = _CSHARP_TYPE_RE.match(line.strip())
+            if match is not None:
+                nearest_type = match.group("type_name")
+        _, lexical_state = _csharp_brace_delta(line, initial_state=lexical_state)
+    return nearest_type
 
 
 def _nearest_csharp_namespace(lines: list[str], *, before_line: int) -> str | None:
@@ -875,11 +925,14 @@ def _declared_csharp_members(
     """Extract source-bound class-level member declarations for one C# type."""
 
     declaration_index: int | None = None
+    lexical_state = "code"
     for index, line in enumerate(lines):
-        match = _CSHARP_TYPE_RE.match(line.strip())
-        if match is not None and match.group("type_name") == declaring_type:
-            declaration_index = index
-            break
+        if lexical_state == "code":
+            match = _CSHARP_TYPE_RE.match(line.strip())
+            if match is not None and match.group("type_name") == declaring_type:
+                declaration_index = index
+                break
+        _, lexical_state = _csharp_brace_delta(line, initial_state=lexical_state)
     if declaration_index is None:
         return {}
 
@@ -891,7 +944,7 @@ def _declared_csharp_members(
         lines[declaration_index:],
         start=declaration_index + 1,
     ):
-        if entered_type and brace_depth == 1:
+        if entered_type and brace_depth == 1 and lexical_state == "code":
             match = _CSHARP_MEMBER_DECLARATION_RE.match(line.strip())
             if match is not None:
                 member_name = match.group("member_name")
@@ -933,10 +986,17 @@ def _declared_csharp_members(
     return dict(sorted(members.items()))
 
 
+def _single_csharp_statement_line(value: str) -> bool:
+    semicolons: list[int] = []
+    _csharp_brace_delta(value, initial_state="code", code_semicolons=semicolons)
+    return len(semicolons) == 1 and not value[semicolons[0] + 1 :].strip()
+
+
 def _csharp_brace_delta(
     value: str,
     *,
     initial_state: str,
+    code_semicolons: list[int] | None = None,
 ) -> tuple[int, str]:
     """Count structural braces while ignoring C# comments and string literals."""
 
@@ -965,6 +1025,8 @@ def _csharp_brace_delta(
                 delta += 1
             elif current == "}":
                 delta -= 1
+            elif current == ";" and code_semicolons is not None:
+                code_semicolons.append(index)
             index += 1
             continue
         if state == "block_comment":
