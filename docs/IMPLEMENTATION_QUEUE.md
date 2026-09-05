@@ -13,23 +13,36 @@ Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 Current implementation is at the pre-approval boundary; the full chat buffer
 is not complete. The exact run, nine commits, and per-requirement coverage are
 recorded in [the reconciliation](audits/PATCH_AGENT_PROGRESS_RECONCILIATION_20260905.md).
-This queue consolidates previously requested work; it is not a new ten-day
-schedule and does not create approval for product writes or game operations.
+The latest user clarification includes all seven construction groups in the
+ten-day target (reconciliation section 10). This queue orders that work;
+AccurateCrosshair is the immediate bounded P0, not the whole ten-day outcome.
+It does not create exact-diff approval or game-operation authorization.
+
+The [two-hour execution package](TWELVE_TURN_EXECUTION_WORK_PACKAGE_20260905.md)
+starts with a 120-minute runnable schedule for A1/A2 and independent A3, followed
+by the full 12-input/seven-group coverage and delivery checks. Execution began
+on September 5 at 16:44:24 Asia/Shanghai and the active window ends at 18:44:24.
+The user authorized this
+package's implementation and local model work; exact-diff approval and concrete
+game-operation boundaries remain in force. The package does not replace this queue.
 
 | Order | Work / exit condition | Current disposition |
 | --- | --- | --- |
-| P0 | Review the current exact diff against First Shot independence and the explicit restart boundary; establish focused behavioral evidence or record the unresolved obligation | Next product action; previous clean-Dry-run claim is insufficient |
+| P0 | Revise the exact Patch to preserve shared weapon/First Shot initialization while disabling accurate-spread override; bind focused cold-start Follow Recoil and First Shot evidence, then regenerate Proposal/Review/Dry-run | Source review found concrete independence regressions inside the existing restart boundary; existing diff must be revised before approval. Use existing Plan/Binding revisions if another owner must change; see reconciliation section 6 |
 | P0 | Present the semantically reviewed diff for exact approval; then approved isolated Apply, changed Build, and separately authorized Runtime acceptance | Not executed for this feature |
+| Current path blocker | Resolve the first-request context-admission/representation limit for new Plan `c760a9cc…`, using one bounded decision within provider reliability/context work | New Findings/Evidence/Plan exist; byte proxy rejects `65821 + 4096 > 49152` before any Patch model call. Do not widen model context or retry silently; see reconciliation section 11. This does not stop independent ten-day work |
 | P1 | Complete `PATCH-AGENTIC-EXECUTION-001` beyond its narrow source-tool/header-correction proof: review turn persistence/model identity/budget, correction dispatch, bounded observations and history, then a relevant acceptance | Partial; default is one inspection and only header-specific correction; no new generic runtime |
 | P1 | Repair engineering cognition's Fresh/API and continuation-receipt projections; regenerate a current handoff entry after the selected work | Known stale projection; do not re-run product models merely to fix its view |
 | P1 | `AUTONOMOUS-EVIDENCE-DISCOVERY-001`: model selects API queries/tools and produces usable evidence | Real success not demonstrated |
 | P1 | `AUTONOMOUS-TARGET-SELECTION-001`: model selects modification targets; existing compiler/Binding validates | Current selected Plan still operator-assisted |
+| Ten-day capability | Carry preservation obligations into relevant state/call-chain evidence and executable checks; route an engineering/human semantic finding back through evidence and Planning in the existing graph | Current upstream recovery is manually orchestrated by Codex. The stored deterministic ProposalReview passed; do not relabel it as the semantic failure detector or claim automatic replan is complete |
 | P1 | `PATCH-EVAL-SUITE-001`: freeze 3-5 real task cases with source/FeatureSpec/verification identities; measure quality, time, calls and corrections | No new frozen Patch suite; do not substitute old retrieval cases |
 | P1 | `MODEL-ROUTING-001`: role to tested profile after comparable qualification results exist | Manual selection exists; formal resolver not delivered; no silent semantic fallback |
 | Delivery support | Complete Trace/Langfuse export, invocation/session association, exit flush and evidence-bound evaluation | Injected exporter exists; real sink/end-to-end delivery unproven |
 | Delivery support | Verify existing lock/CI/setup script in the selected clean environment and hosted CI; verify context Hook trust/lifecycle once | Files exist; do not recreate them; no new scheduler |
-| Later | `RUNTIME-REPAIR-LOOP-001`, full `PROVIDER-CONTEXT-ADMISSION-001`, infrastructure-only fallback | Incomplete; the current token-ratio heuristic is not an exact tokenizer |
-| Release | Use existing release-evidence-packager for manifest, README evidence, demo and resume claims once results exist | Skill exists; deliverables pending |
+| Ten-day capability | `RUNTIME-REPAIR-LOOP-001` and `PROVIDER-CONTEXT-ADMISSION-001`, alongside compiler/test feedback and external-call reliability | Included in the clarified ten-day target; incomplete. The current token-ratio heuristic is not an exact tokenizer; arbitrary failure recovery is not assumed |
+| Conditional implementation choice | Infrastructure-only fallback when the selected reliability failure requires it | Do not silently switch models to hide semantic failures; this is not an automatic new subsystem |
+| Release | Use existing release-evidence-packager for manifest, README evidence, demo and resume claims once results exist | Skill exists; deliverables pending. A verified reference and matching commit do not alone prove an arbitrary natural-language claim; review claim-to-evidence entailment before release |
 | Deferred | Slot filling, cross-stage model-owned-field audit, wider provider schema compatibility, pre-commit/dev-check/profiles, expanded Hooks, branch coverage and security review | Retained, not discarded; activate only per the selected product or release need |
 
 Stable design intent for the remaining work: the model produces semantic
@@ -40,8 +53,12 @@ or write authority. Keep stage-specific simple schemas and reference-first
 observations; reuse the single graph and existing Artifacts.
 
 The wider nine goals, five lines, and three source notes remain in the existing
-user WIP planning documents. No item is declared complete because the timebox
-ended or because a narrower goal was marked complete.
+user WIP planning documents. The earlier Core/Stretch split is a historical
+decision superseded by the user's full seven-group ten-day target. Do not
+silently move those groups to a longer-term backlog or mark the whole target
+complete after one case succeeds. This does not approve every WIP statement
+or grant execution approval. Report budget/scope conflicts explicitly instead
+of silently degrading the target.
 
 ### Historical queue record (through 2026-09-01)
 

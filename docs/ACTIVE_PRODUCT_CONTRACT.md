@@ -41,7 +41,8 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
-The current product-code checkpoint is `3694a77`. The September 4 continuation
+The current platform-source checkpoint is `aa3a72f`; the last exercised Patch
+implementation checkpoint remains `3694a77`. The September 4 continuation
 has exercised a local Patch source-tool observation, one header-specific
 validator correction, ProposalReview, and a no-write Dry-run.
 It has not exercised this feature's Apply, changed Build, or Runtime.
@@ -51,17 +52,44 @@ buffer reconciliation are recorded once in
 [the progress reconciliation](audits/PATCH_AGENT_PROGRESS_RECONCILIATION_20260905.md).
 Read the current [queue](IMPLEMENTATION_QUEUE.md) for next work.
 
-The next product action is to check the exact diff against the FeatureSpec's
-First Shot independence obligation and the restart boundary. A clean diff and
-an approving deterministic Review do not settle that semantic question.
+The next product action is to revise the current exact diff: source review
+identified cold-start Follow Recoil and First Shot independence regressions
+within the FeatureSpec's existing restart boundary. Shared weapon and First
+Shot initialization must survive disabling the accurate-spread override.
+A clean diff and an approving deterministic Review did not detect these
+behavioral dependencies; the existing diff is not recommended for approval.
 The recorded human semantic decision remains pending. Existing exact-diff
 approval, live-source checks, and separate game-operation authorization remain
 in force. No new approval is created by this documentation update.
+
+The current continuation has recomputed Findings over old valid plus newly
+retrieved evidence and produced EvidencePack `10a3fadd…` and Plan `c760a9cc…`.
+The new Plan preserves the four prior targets and adds `UpdateCrosshairSize`;
+other newly retrieved methods remain supporting. Planning selection and
+upstream recovery are explicitly engineering-assisted; product Patch generation
+must use the real model, without importing an engineering-authored replacement.
+Its offline first-request check is blocked by the byte-proxy context gate
+(`65821 + 4096 > 49152`); no new Patch model call or Proposal has occurred.
+Run identities, evidence, and the bounded next decision are in reconciliation
+section 11. This is a path-local blocker, not a reason to pause all seven groups.
 
 Autonomous API discovery, autonomous Planning target selection, general
 multi-round Patch investigation, general correction, full Trace/Langfuse,
 multi-task Eval, and the wider nine-goal/five-line delivery are not complete.
 The timeboxed implementation is not completion of the full chat buffer.
+The user's latest clarification selects all seven capability groups as the
+ten-day target: end-to-end delivery including failure/Repair/Revalidation;
+production Evidence/RAG and semantic consumption; agentic execution and
+feedback; Trace/Lineage/Langfuse; model qualification and role routing;
+fixed multi-task Eval; and reproducible environment/CI/release.
+The earlier Core/Stretch split is historical and must not defer these groups
+beyond the ten-day target. AccurateCrosshair is the bounded immediate P0:
+resolve its real blocker and proceed through required Build/Runtime, then
+return to the full construction scope without expanding this case into a
+long-term platform project. A schedule shortfall must be reported explicitly;
+it does not silently reduce the target. Existing action approvals still apply.
+Historical decisions and the current override are recorded in the progress
+reconciliation, section 10.
 
 ### 1.2 Historical Development Selection (through 2026-09-01)
 

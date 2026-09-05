@@ -7,16 +7,27 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
-Product code: `3694a77`, branch `codex/rag-capability-mainline`.
+Platform source: `aa3a72f`; last exercised Patch implementation: `3694a77`.
+Branch: `codex/rag-capability-mainline`.
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 
 - Last inspected continuation reached no-write Dry-run after one model-selected
   source inspection and one header-specific model correction.
 - This feature's Apply, changed Build, and Runtime have not run.
-- Human semantic review remains pending. First Shot behavior independence and
-  the exact restart/reload boundary require review before recommending Apply.
+- Human semantic review remains pending in the stored Artifact. Current source
+  review found cold-start Follow Recoil and First Shot independence regressions
+  in the exact diff; revise the Patch before recommending approval or Apply.
+  These failures already fall inside the restart boundary; hot reload is a
+  separate scope question.
 - The full conversation buffer is not complete; use
   [Implementation Queue](IMPLEMENTATION_QUEUE.md) for current ordering.
+- Current-source unit extraction is fixed and tested. One real incremental
+  Findings call produced EvidencePack `10a3fadd…`; explicit operator-assisted
+  Planning produced five-binding Plan `c760a9cc…` and passed Patch preflight.
+- New Patch generation has not run: the offline first request was rejected by
+  the byte-proxy context gate. Exact result references are in reconciliation
+  section 11. The original deterministic Review passed; the behavioral failure
+  came from subsequent engineering/human semantic review.
 - Primary run references, evidence limits, test results, and corrections to
   earlier completion claims are in
   [the progress reconciliation](audits/PATCH_AGENT_PROGRESS_RECONCILIATION_20260905.md).
@@ -27,7 +38,11 @@ Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
   Skill already exist. Their existence does not prove hosted CI, Desktop Hook
   lifecycle, environment reconstruction, or release delivery.
 - The six pre-existing WIP documents remain outside this documentation edit.
-  The ten-day drafts remain drafts; this update does not approve their schedule.
+  The latest user clarification makes all seven capability groups the ten-day
+  target; the earlier Core/Stretch split is historical. AccurateCrosshair is
+  the immediate bounded P0, followed by the full construction scope. See the
+  reconciliation section 10. Target inclusion is not completion evidence or
+  a replacement for existing action approvals.
 
 ### Historical selection snapshot (through 2026-09-01)
 
