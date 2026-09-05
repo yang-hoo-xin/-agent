@@ -7,11 +7,11 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
-Platform source: `aa3a72f`; last exercised Patch implementation: `3694a77`.
+Platform implementation: `de28829`; latest Patch request identity repair: `43dccbd`.
 Branch: `codex/rag-capability-mainline`.
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 
-- Last inspected continuation reached no-write Dry-run after one model-selected
+- The September 4 continuation reached no-write Dry-run after one model-selected
   source inspection and one header-specific model correction.
 - This feature's Apply, changed Build, and Runtime have not run.
 - Human semantic review remains pending in the stored Artifact. Current source
@@ -24,19 +24,30 @@ Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 - Current-source unit extraction is fixed and tested. One real incremental
   Findings call produced EvidencePack `10a3fadd…`; explicit operator-assisted
   Planning produced five-binding Plan `c760a9cc…` and passed Patch preflight.
-- New Patch generation has not run: the offline first request was rejected by
-  the byte-proxy context gate. Exact result references are in reconciliation
-  section 11. The original deterministic Review passed; the behavioral failure
-  came from subsequent engineering/human semantic review.
+- The first new three-call Patch attempt was rejected for a task-local outer
+  budget mismatch. Its failure and four failing behavior checks remain preserved.
+  One revised c760 acceptance then used two model calls and reached new Proposal,
+  Review and no-write Dry-run. Source unchanged; request/response identities and
+  offline wire reconstruction agree. Behavior is still 33/36: Recoil fixed,
+  First Shot Match twice and Inner fail. Do not approve or Apply this new diff.
+- Model-owned target selection is implemented inside the existing Planning node;
+  tests cover invalid/missing selections, source drift and forwarding the user's
+  semantic feedback into Plan/Patch. One real model call produced e504, whose
+  independent semantic review is needs_evidence. P0 remains on operator-assisted
+  c760; no cross-task Planning quality or automatic replan has been proved.
 - Primary run references, evidence limits, test results, and corrections to
   earlier completion claims are in
   [the progress reconciliation](audits/PATCH_AGENT_PROGRESS_RECONCILIATION_20260905.md).
 - Engineering cognition currently misses the Fresh API connection and newer
   continuation receipts; its task packet is stale. The projection is a locator,
   not completion evidence.
-- `uv.lock`, the CI workflow, context Hook scripts, handoff Skill, and release
-  Skill already exist. Their existence does not prove hosted CI, Desktop Hook
-  lifecycle, environment reconstruction, or release delivery.
+- An isolated e128ff9 archive and fresh venv restored 184 locked dependencies;
+  208 unique selected tests obtained passing executions after a temporary-path
+  fix. This closes the bounded local environment check, not hosted CI, Desktop
+  Hook lifecycle, a whole clean OS, later code checkpoints or release delivery.
+- A7 input inventory did not establish a runnable 3–5-task suite. A6/A7 are not
+  expanded in this window. Cross-client calibration WIP is preserved outside
+  checkout and is not a delivered or currently active capability.
 - The six pre-existing WIP documents remain outside this documentation edit.
   The latest user clarification makes all seven capability groups the ten-day
   target; the earlier Core/Stretch split is historical. AccurateCrosshair is

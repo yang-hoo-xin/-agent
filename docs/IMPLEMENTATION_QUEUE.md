@@ -18,28 +18,34 @@ ten-day target (reconciliation section 10). This queue orders that work;
 AccurateCrosshair is the immediate bounded P0, not the whole ten-day outcome.
 It does not create exact-diff approval or game-operation authorization.
 
-The [two-hour execution package](TWELVE_TURN_EXECUTION_WORK_PACKAGE_20260905.md)
-starts with a 120-minute runnable schedule for A1/A2 and independent A3, followed
-by the full 12-input/seven-group coverage and delivery checks. Execution began
-on September 5 at 16:44:24 Asia/Shanghai and the active window ends at 18:44:24.
-The user authorized this
-package's implementation and local model work; exact-diff approval and concrete
-game-operation boundaries remain in force. The package does not replace this queue.
+The [scope reference](TWELVE_TURN_EXECUTION_WORK_PACKAGE_20260905.md) maps the twelve
+inputs to ten-day outcomes; it grants no authority and contains no replayable
+execution instruction. The [short execution card](PATCH_ACCEPTANCE_SPRINT_CARD_20260905.md)
+records the selected exact inputs and single Patch-attempt owner. User messages,
+not either document, authorize actions; new exact diffs still require new approval.
+
+Current execution: keep P0 on Feature `fc7…`, Evidence `10a3…`, operator Plan
+`c760…`, its five bindings and original tool policy. Its revised acceptance reached
+Proposal/Review/Dry-run, but First Shot Match twice and Inner still fail behavior;
+the attempt is consumed and the diff must not be approved or applied.
+Keep autonomous Plan `e504…` in a separate semantic qualification review. Its
+context problem and paused calibration work do not block P0. A8 has closed its
+bounded local-environment verification; do not extend A6/A7 in this window.
 
 | Order | Work / exit condition | Current disposition |
 | --- | --- | --- |
 | P0 | Revise the exact Patch to preserve shared weapon/First Shot initialization while disabling accurate-spread override; bind focused cold-start Follow Recoil and First Shot evidence, then regenerate Proposal/Review/Dry-run | Source review found concrete independence regressions inside the existing restart boundary; existing diff must be revised before approval. Use existing Plan/Binding revisions if another owner must change; see reconciliation section 6 |
 | P0 | Present the semantically reviewed diff for exact approval; then approved isolated Apply, changed Build, and separately authorized Runtime acceptance | Not executed for this feature |
-| Current path blocker | Resolve the first-request context-admission/representation limit for new Plan `c760a9cc…`, using one bounded decision within provider reliability/context work | New Findings/Evidence/Plan exist; byte proxy rejects `65821 + 4096 > 49152` before any Patch model call. Do not widen model context or retry silently; see reconciliation section 11. This does not stop independent ten-day work |
+| Current P0 blocker | Preserve shared First Shot initialization when spread is disabled, within the existing c760 boundaries; consume the bound failure observations through a deliberate next repair decision | Revised acceptance complete: new Proposal/Review/Dry-run and source provenance pass, 33/36 behavior checks pass; Match twice and Inner fail. No approval/Apply or automatic next attempt. First Shot feedback was already in the original c760 input; see reconciliation section 12 |
 | P1 | Complete `PATCH-AGENTIC-EXECUTION-001` beyond its narrow source-tool/header-correction proof: review turn persistence/model identity/budget, correction dispatch, bounded observations and history, then a relevant acceptance | Partial; default is one inspection and only header-specific correction; no new generic runtime |
 | P1 | Repair engineering cognition's Fresh/API and continuation-receipt projections; regenerate a current handoff entry after the selected work | Known stale projection; do not re-run product models merely to fix its view |
 | P1 | `AUTONOMOUS-EVIDENCE-DISCOVERY-001`: model selects API queries/tools and produces usable evidence | Real success not demonstrated |
-| P1 | `AUTONOMOUS-TARGET-SELECTION-001`: model selects modification targets; existing compiler/Binding validates | Current selected Plan still operator-assisted |
+| P1 | `AUTONOMOUS-TARGET-SELECTION-001`: model selects modification targets; existing compiler/Binding validates | Model selection and structural Plan creation executed once, producing e504; independent semantic review is needs_evidence and cross-task stability is unproven. P0 continues with c760 |
 | Ten-day capability | Carry preservation obligations into relevant state/call-chain evidence and executable checks; route an engineering/human semantic finding back through evidence and Planning in the existing graph | Current upstream recovery is manually orchestrated by Codex. The stored deterministic ProposalReview passed; do not relabel it as the semantic failure detector or claim automatic replan is complete |
 | P1 | `PATCH-EVAL-SUITE-001`: freeze 3-5 real task cases with source/FeatureSpec/verification identities; measure quality, time, calls and corrections | No new frozen Patch suite; do not substitute old retrieval cases |
 | P1 | `MODEL-ROUTING-001`: role to tested profile after comparable qualification results exist | Manual selection exists; formal resolver not delivered; no silent semantic fallback |
 | Delivery support | Complete Trace/Langfuse export, invocation/session association, exit flush and evidence-bound evaluation | Injected exporter exists; real sink/end-to-end delivery unproven |
-| Delivery support | Verify existing lock/CI/setup script in the selected clean environment and hosted CI; verify context Hook trust/lifecycle once | Files exist; do not recreate them; no new scheduler |
+| Delivery support | Verify existing lock/CI/setup script in the selected clean environment and hosted CI; verify context Hook trust/lifecycle once | Bounded clean-venv verification completed at e128ff9; hosted CI/Hook lifecycle not proved. A8 execution is closed for this window; no new scheduler |
 | Ten-day capability | `RUNTIME-REPAIR-LOOP-001` and `PROVIDER-CONTEXT-ADMISSION-001`, alongside compiler/test feedback and external-call reliability | Included in the clarified ten-day target; incomplete. The current token-ratio heuristic is not an exact tokenizer; arbitrary failure recovery is not assumed |
 | Conditional implementation choice | Infrastructure-only fallback when the selected reliability failure requires it | Do not silently switch models to hide semantic failures; this is not an automatic new subsystem |
 | Release | Use existing release-evidence-packager for manifest, README evidence, demo and resume claims once results exist | Skill exists; deliverables pending. A verified reference and matching commit do not alone prove an arbitrary natural-language claim; review claim-to-evidence entailment before release |

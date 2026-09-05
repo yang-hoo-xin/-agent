@@ -41,8 +41,8 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
-The current platform-source checkpoint is `aa3a72f`; the last exercised Patch
-implementation checkpoint remains `3694a77`. The September 4 continuation
+The current platform implementation checkpoint is `de28829`; the latest exercised
+Patch implementation includes request identity repair `43dccbd`. The September 4 continuation
 has exercised a local Patch source-tool observation, one header-specific
 validator correction, ProposalReview, and a no-write Dry-run.
 It has not exercised this feature's Apply, changed Build, or Runtime.
@@ -68,10 +68,24 @@ The new Plan preserves the four prior targets and adds `UpdateCrosshairSize`;
 other newly retrieved methods remain supporting. Planning selection and
 upstream recovery are explicitly engineering-assisted; product Patch generation
 must use the real model, without importing an engineering-authored replacement.
-Its offline first-request check is blocked by the byte-proxy context gate
-(`65821 + 4096 > 49152`); no new Patch model call or Proposal has occurred.
-Run identities, evidence, and the bounded next decision are in reconciliation
-section 11. This is a path-local blocker, not a reason to pause all seven groups.
+The first new Patch attempt failed post-call admission because its task-local
+caller omitted the outer call budget; its retained code also failed behavior.
+One revised acceptance kept the original c760 Plan, five bindings, model and tool
+strategy. It made two model calls and produced Proposal `af80386f…`, Review
+`965b4982…` and no-write Dry-run `28e5d922…`. Actual request/response provenance
+is verified, including offline reconstruction matching both observed wire hashes.
+Behavior remains failed: 33 of 36 checks passed, but First Shot Match twice and
+Inner still regress. Shotgun Recoil now passes. Do not request exact approval or
+Apply this diff; changed Build and Runtime remain unexecuted.
+
+Autonomous target selection produced e504 in one real model call, but independent
+semantic review returned needs_evidence. Preserve it as a separate A3 result;
+it must not replace c760 for P0. The attempted cross-client calibration branch
+was paused and its WIP preserved outside the execution checkout. This window's
+A8 local-environment verification has closed; A6/A7 are not being expanded.
+Exact results and limits are in reconciliation section 12. Future work remains
+within all seven ten-day groups, with actual execution selected by the latest
+user request and queue rather than a replayed historical work package.
 
 Autonomous API discovery, autonomous Planning target selection, general
 multi-round Patch investigation, general correction, full Trace/Langfuse,

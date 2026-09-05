@@ -613,3 +613,291 @@ P0已形成精确路径阻断。下一有界能力应在七组十日建设中的
 主线是A1生产输入表示→A2真实Agentic Patch与新修订验证；A3自主Planning独立并行。
 工程侧不得提供正确Mod实现；新增exact diff与实际游戏操作按包内边界处理。
 具体执行结果在本节续记，不将两小时结束等同于P0或七组十日目标完成。
+
+### 12.1 生产输入压缩与首次真实 Patch 接受运行
+
+`d84d888`在现有`_patch_agent_initial_messages`接入重复成员metadata与supporting
+source metadata的共享表示。原有1024-byte supporting excerpt投影之后可canonical逐项
+往返；保留5个edit上下文、24个supporting、Feature义务与用户澄清。它没有恢复此前已经
+截断的原文，也不是新Binding或更大的模型上下文。
+
+生产serializer零网络检查得到44,600-byte首轮请求，输出预算4,096，配置context49,152。
+[输入往返与真实preflight](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/case_revision/context_codec_preflight_001/context_projection_validation.json)。
+3项聚焦回归先红后绿；一次相邻checkpoint为216 passed、2 warnings、18.79秒：
+
+```powershell
+python -B -m pytest tests/unit/test_local_entry.py tests/unit/test_patch_agent_loop.py tests/unit/test_fresh_planning_continuation.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\pctx-checkpoint-$PID"
+```
+
+随后执行当时的`run_case_patch.py execute`，同一Feature/Evidence `10a3fadd…`/Plan
+`c760a9cc…`真实调用`qwen3-coder:30b`。模型digest为
+`06c1097efce0431c2045fe7b2e5108366e43bee1b4603a7aded8f21689e90bca`；
+3次模型调用（源码工具选择、初稿、既有header correction），1次binding001源码检查。
+合计41,575输入/3,340输出tokens，331.44秒。首轮实测13,021 prompt tokens；该数字只说明
+这次实际输入，不把旧65,821-byte请求的真实token长度倒推成已测量。
+
+当次continuation终态为`continuation_failed`，不是Proposal/Dry-run成功。
+直接原因是**本页临时调用脚本漏传`max_model_calls`**：外层默认1，而内部loop预算5、实际3。
+生产CLI已在Agent loop模式传5，故不改生产validator、不增预算。临时调用已改为显式传
+`policy.max_total_model_turns`；AST、纯计数校验与五份旧文件hash验证均通过，未重放模型。
+[调用方诊断](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/case_revision/patch-caller-budget-diagnosis.md)。
+
+| 留存事实 | 精确身份 |
+| --- | --- |
+| 原失败receipt | `cr/ccc254c3eb122bf821fdf3b7a5e174f5.json`，run `patch_continuation_a2ee10450a614ee2884ceb2938079a09` |
+| 原最终model response SHA256 | `3c8991684cad1de856ea19337ebac8475f17625ed10cc213933bc77f8f583f76` |
+| 实际生成5 changes的SHA256 | `88d7e65162d4453f675deb709551a181541ae5eee00faf6d0aba49a1983d5efe` |
+| source snapshot | `421ea5eb4785db9fd03740ab76d9f5eff84bf0cedbee9d749679271febf860a0`，前后相同 |
+
+来源检查另发现当时receipt的`model_input_sha256`是压缩前native输入身份；压缩后的实际
+wire body身份没有单独绑定。已有实际模型返回和raw输出，但不能宣称这条完整wire来源链
+已通过；修补结果及其后续接受运行另记，不追写旧receipt制造当时没有的观察。
+
+### 12.2 留存新模型输出的离线行为诊断
+
+既有materializer从当时exact Feature/Evidence/Plan和留存最终response重建5 changes，
+schema、native model input和changes SHA全部匹配原失败receipt。4项after_text逐字来自
+raw；header仅由既有确定性materializer恢复BOM。没有工程正确实现、参考实现或新模型调用。
+
+这次不是给失败continuation补写正式Proposal/Dry-run，而是在独立目录诊断其已生成内容。
+[来源证明](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/case_behavior_repro/acceptance_runs/failed_ccc254_offline_001/provenance_audit.json)
+与[结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/case_behavior_repro/acceptance_runs/failed_ccc254_offline_001/acceptance_results.json)
+记录40次C#进程执行、36项检查，32通过、4失败：
+
+- false冷启动霰弹枪的Follow Recoil行为仍错误；
+- First Shot Match首轮和第二次cooldown后尺寸为140，基线为30；
+- First Shot Inner尺寸为10，基线为30。
+
+新增检查只补既定Pop义务和重复cooldown的正向验收，未扩成Unity模拟或新增任务集。
+配置I/O和引擎仍用外部doubles；这不是GTFO Runtime或完整Mod依赖Build。
+用户明确的冷启动preservation仍未修复，因此原/新失败输出均不得建议批准或Apply。
+
+### 12.3 自主Planning实现检查点
+
+`e128ff9`把`ModelPlanningTargetSelector`接入既有`create_implementation_plan`节点。
+模型读当前源码与完整change-support选择集合，返回语义目标ID；现有compiler/Binding
+核验范围、身份并生成新Plan。`needs_evidence`或非法选择生成blocked Plan，不使用人辅
+IDs兜底。模型原响应、usage、前后源码验证和receipt hash可回查；未增加第二Graph。
+已接受的用户语义反馈保序去重写入新Plan的既有`side_effect_boundaries`，测试证明其继续
+进入Patch义务投影。`48ab878`补齐selector输入的完整FeatureSpec，包含原先投影遗漏字段。
+
+基础接线checkpoint：311 passed、2 warnings、112.01秒，命令为：
+
+```powershell
+python -B -m pytest tests/unit/test_model_planning_selection.py tests/unit/test_planning.py tests/unit/test_workflow_graph.py tests/unit/test_product_execution.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\a3-final-$PID"
+```
+
+之后的反馈贯穿回归先红后绿，10项selector测试4.45秒通过；完整Feature补丁后的同组
+10项3.84秒通过。311结果属于基础接线，不冒充后两处小修改再次全跑的结果。
+截至该检查点尚无真实Planning模型运行；旧`c760a9cc…`仍是人辅Plan，不能改写其历史。
+
+### 12.4 实际请求身份与一次真实自主目标选择
+
+`43dccbd`在既有Ollama Agent诊断中记录与实际HTTPX JSON encoder一致的请求体hash，
+保留每轮provider诊断，并在Patch factory receipt中区分native输入、实际initial messages
+和编码版本。没有改变传输字典、输出schema、context或调用预算。
+5项聚焦回归先红后绿，四文件checkpoint236 passed、19.86秒：
+
+```powershell
+python -B -m pytest tests/unit/test_agent_turn_adapters.py tests/unit/test_patch_agent_loop.py tests/unit/test_local_entry.py tests/unit/test_fresh_planning_continuation.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\pidentity-checkpoint-$PID"
+```
+
+加入明确编码版本和准确guide之后，旧5-binding请求变为44,732 bytes，仍在原预算内；
+[零网络证明](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/case_revision/request_identity_preflight_001/verification.json)。
+这不补写旧`ccc254…`没有记录的wire观察。
+
+自主Planning输入最初48,170 bytes，被原byte proxy拒绝。`de28829`只共享重复
+source_type/path/hash三元组，全Feature、29 observations、9个合法目标、4条反馈及源码
+内容可canonical完全还原，最终45,021 bytes。另补返回目标必须属于本次实际prepared enum
+的回归，避免仅通过旧helper、但item authority不匹配时receipt误报selected。
+12项聚焦测试4.18秒通过，Ruff/diff检查通过。
+
+首次安装节点接受运行`case_autonomous_planning_001`因临时runner预检使用raw Artifact
+的JSON字段插入顺序、正式Graph使用FeatureSpec序列化顺序而被strict wire hash检查挡住。
+HTTP/model均为0，blocked Plan `1ba3d00…`和原claim保留。修复的是runner输入构造，
+解码后的全部Feature/request值相等，未减弱hash检查、修改prompt或重放模型。
+[精确差异与诊断](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/case_autonomous_planning_002/construction-diagnostic.json)。
+
+随后`run_case_autonomous_planning.py execute`在002目录成功执行一次模型调用：
+qwen3-coder:30b、11,657输入/318输出tokens、78.61秒。实际wire SHA为
+`c62491257ebe0101f0ab129ff1d9cd9072b798805cc51786372686e3e8d6b6d5`，
+与预检和provider诊断一致，模型digest前后一致，canonical Mod未写入。
+
+模型自主选择6个精确source units，compiler按Evidence顺序规范化为6 bindings：
+OverrideCrosshairSize、BindAll、Configuration文件头、Configuration静态构造函数、
+UpdateCrosshairSize、带参数的GetCrosshairSize。没有工程补target IDs；这不是把旧5目标
+改写为自主选择。新Plan为
+`e504888e5c7a366066495b7db1830dde6243771a79a3cbae8d10cbd82b5d1325`。
+[结果与exact refs](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/case_autonomous_planning_002/result.json)。
+Plan.trace_refs绑定selector receipt SHA
+`461f54e84033a440955792ecbf14a006f720e9bf8c27fd8b1b089ba62a3358fe`。
+
+**该结果证明模型目标选择与现有Planning节点的真实接线，不证明规划语义质量通过。**
+模型rationale提到Loader.cs和FirstShotGuiPatches.cs，但二者不在所选编辑集合；不因这句
+解释增加bindings，也不据其自述证明preservation。完整Fresh、自主补证、自动semantic
+replan及另一真实任务的Planning资格仍未证明。本次只执行安装的Planning节点，不宣称
+公开CLI全链或Graph条件路由闭环已跑通。
+
+新6-binding Plan的Patch零网络预检得到48,773 bytes，原byte proxy加4,096后为52,869，
+再次高于49,152；新Patch模型调用为0。该请求SHA为
+`bbf7282d0abcc2ab4bfee45e436984822e0d9168c98fe9eea269d530788d6bd5`。
+保留完整输入后，下一决策转为核验复用同模型实测prompt校准；不继续仅为字节门裁减
+语义输入，也不把新请求的真实token长度称为已测量。
+
+### 12.5 独立锁定环境的实际重建
+
+从`e128ff9983ff59afc67b0c8f4cc0c90f0dbbeab1`的Git对象创建独立源码archive，
+没有复制六份用户WIP或主环境。原setup先`uv lock --check`，再按原lock完成新venv
+的frozen dev sync；Python3.10.20、uv0.12.9、184项依赖。离线首次只缺PyMuPDF wheel，
+按锁下载后28.07秒完成，没有依赖升级。
+
+567份archive源码均与提交字节一致且运行后未变；实际隔离Python import通过。
+三个关键测试文件首次163通过、45因过长临时路径触发WinError3；从失败路径263字符
+缩到246后，单条probe通过，再`--lf`运行余下44项通过。208个唯一测试均有通过执行，
+不是一次208全绿。产品代码、锁、测试内容未为这项环境失败改动。
+
+详细命令、stdout/JUnit身份和每项最新执行状态只保存在
+[A8证据汇总](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/environment_rebuild/A8_EVIDENCE.json)，
+其SHA为`ac638aa92a913f9e53c8b9ac579484cd98b9fb7b12a313b4fa77d486199f3632`。
+这是Windows本机、干净venv、该commit及适用测试的证据；不是干净OS、当前所有后续commit、
+完整测试集、hosted CI、产品模型执行、Mod Build或GTFO Runtime。
+GitHub connector读取配置origin返回404，不能由此认定仓库不存在；本轮未取得hosted CI，
+没有推送或发布。
+
+### 12.6 本轮审查后的路线与文档修正
+
+本页一度把A3自主Plan `e504…`接到P0的Patch预检，因6目标和新观察使首包再次超出
+字节代理，随后开始跨客户端实测校准支线。用户转发的审查指出这样混合了Plan、上下文、
+策略和调用接线变量。本页采纳：P0回到`c760…`，A3独立评审，A8收口，A6/A7本轮不扩。
+自主Plan没有进入真实Patch调用，跨客户端校准没有进入真实模型运行。
+
+校准支线的3份未提交代码/测试共250 additions、3 deletions已按原字节与diff完整备份到
+本任务scratch `paused_calibration_wip`；确认只含本页工程改动后，执行checkout恢复到
+已提交版本。原6份用户WIP未改。该校准尝试未完成全组测试/preflight，不能标为已交付能力。
+其中已做5项测试通过、1项失败后仅该项重跑通过；不会计入已提交代码的236项checkpoint。
+
+审查中“第一次c760的用户澄清没有传入Patch”不成立：该Plan已有3条反馈，第一次输入
+投影和receipt对应的native输入包含它们。反馈丢失是在新A3接线发现并于真实运行前修复。
+因此First Shot行为失败不能归因于这项并不存在的c760输入遗漏。
+
+原长工作包已改为十日范围与验收参考，移除可执行启动指令、动态授权状态及两小时硬交付
+混用；A0降为共同原则，A1停止在发送前，A2是唯一Patch接受运行责任方，A4首版只覆盖
+已经出现的人类语义finding回上游，A5按自主查询/语义消费/机械字段分工。
+当前输入另由短执行卡定位，实际权限仍来自用户消息及产品审批，任何Markdown都不能
+授权新任务重放或预先批准未来diff。七组十日目标未降档。
+
+### 12.7 固定c760的新接受运行与仍未修复的行为
+
+使用同一Feature/Evidence/Plan、原5 bindings、相同qwen3-coder:30b及
+`finalize_after_first_observation=True`。本次只使用已提交代码和已修正的调用方，
+同一policy的总预算传给continuation与adapter；没有跨客户端校准，没有A3目标替换。
+这是预算调用修复和请求身份补齐后的产品修订验收，不是单变量模型质量对照。
+
+```powershell
+python -B C:\Users\10160\.codex\visualizations\2026\09\05\01a07014-bccb-7420-bbcd-38defc72fecb\run_case_patch_baseline_reacceptance.py
+python -B C:\Users\10160\.codex\visualizations\2026\09\05\01a07014-bccb-7420-bbcd-38defc72fecb\run_case_patch_baseline_reacceptance.py execute
+```
+
+零网络首包44,732 bytes及SHA `c00e2ea00671231a530b154acc3046e3c058179faebe0487066aeed1120d9766`
+与实际发送前记录一致。真实运行205.25秒、2次模型调用、1次源码工具、0 correction，
+27,229输入/1,699输出tokens。正式continuation到达`dry_run_apply`，停在exact approval前。
+
+| 当前输出 | 精确身份 |
+| --- | --- |
+| 新Proposal | `af80386f328c6773ea54a79e9fa4d80fe67af9fa825e4b59cc7956ead1afa7c8` |
+| 新deterministic Review | `965b4982d91838ab5b112c593ca985aacbd6bac1ea02934efae91bce6f009d57`，通过 |
+| 新Dry-run | `28e5d9225ae258e332cd70a306e8f297300c2c7183c0324bc1407f98fa83108e`，无写通过 |
+| receipt | `cr/d80ca492c728d18a8c294527136f1b38.json`，SHA `689170fa973719bedd09ee104f2204590da0447f172d8fe6e08902766a631d8a` |
+| 模型原始content | SHA `2b4f580c5d1eb2a698b5e8f034ba321089c47b815ecb1703c655a26a19b720df`，7,443 bytes |
+
+[完整执行结果与路径](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/case_patch_c760_reacceptance_001/result.json)
+记录source前后一致，Apply/Build/Runtime均为0。
+本次请求身份分层为native prepared messages `a08e08bb…`、实际initial messages
+`f8803841…`、encoding `patch_agent_context_tables_v1`，以及每轮HTTPX body SHA。
+
+| 真实回合 | body bytes | 实测输入/输出tokens | 实际准入方式 |
+| --- | --- | --- | --- |
+| 源码检查选择 | 44,732 | 13,044 / 12 | 原byte proxy，44,732+4,096=48,828 |
+| 生成Patch | 50,301 | 14,185 / 1,687 | 同一客户端既有实测ratio校准；估计总需33,432 |
+
+第二回合body SHA为`e1a8a4516a62cb18dfbf4dd076a5e1f66f2c8718d3154197ace88a17fe63651b`。
+完整解析请求记录经canonical保存，因此初次审查不能直接按字典原插入顺序重放字节。
+随后只用现有producer/loop、保留的两个响应，在socket禁止条件下离线重建两包，均匹配
+当时记录的body SHA与长度，最终content也一致。该证明是**事后重建匹配发送时hash**，
+不是原始HTTP抓包或新的模型调用。旧记录不改。
+[重建报告](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/case_behavior_repro/acceptance_runs/c760_reacceptance_001/offline_wire_reconstruction/report.json)
+SHA `d37e7a46ab9d0a5162be867ec1101db306ba4f4b40ae0c35b8a04ea69de27c1a`。
+
+**新行为验收仍失败：40个进程、36项检查，33通过、3失败。**
+Shotgun Recoil这次通过；First Shot Match首轮及第二次cooldown仍为140（基线30），
+Inner仍为10（基线30）。raw、true路径及Pop相关检查通过。新代码已识别shotgun/archetype，
+但false return仍早于`_validGun`、`_targetSpread`及`SetStoredCrosshair`初始化。
+这定位剩余First Shot共享状态问题，不能宣布Mod修复完成或申请批准。
+
+[本次行为结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/case_behavior_repro/acceptance_runs/c760_reacceptance_001/acceptance_results.json)
+SHA `e6858aba7dc3d5e3e6ad9957be668b2cdc47fe0c6d3d228a03b24deff4c8b9cb`；
+[来源核验](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/case_behavior_repro/acceptance_runs/c760_reacceptance_001/provenance_audit.json)
+SHA `204a9d6d0308de02d8b3482fd7fa5300090f583ed51d0d613b7962fbfbf5883f`。
+5处after_text均逐字来自本次模型响应，无文本增删或工程BOM修正；完整diff与Dry-run hash匹配。
+测试仍用外部引擎/配置doubles，不是GTFO Runtime。本次没有追加模型尝试，也未申请exact approval。
+
+### 12.8 A3独立质量结论及A7输入盘点边界
+
+A3独立语义评审结论为`needs_evidence`：OverrideCrosshairSize、BindAll、配置声明区、
+UpdateCrosshairSize有明确修改依据；静态构造函数已调用BindAll，带参数GetCrosshairSize
+的计算也未被现有失败证明有错，二者修改必要性没有得到模型论证。rationale作为编辑集合
+解释不成立：Loader/FirstShotGui只是supporting。不能因此扩权限，也不能只因未选
+OnFileChanged判错；分别重启不等于热重载验收。
+[语义审查](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/case_autonomous_planning_002/semantic-target-review.json)
+SHA `043905889934545e3943099aadf7e1b9405695bc42e38f97dd5071cb45d58627`。
+此评审不改写Plan或Graph路由；`needs_evidence`不自动授权重跑Fresh。
+
+A7仅形成[机器输入盘点](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/a7_input_inventory/task_inputs.json)，
+SHA `29049758308aefad884eec6a077696e3aeace11e7ffc8958e2d438635d6ff2d6`。
+Stagger有原请求、源码及Build/Runtime/Repair实物，但需选择一致的修复前输入链；
+WallCrawler有原请求与程序集身份，仍缺绑定的FeatureSpec、真实EvidencePack及可写Mod基线。
+没有冻结3–5任务suite、运行资格评测、读取hidden golden或参考Mod实现。该支线已收口。
+
+### 12.9 十二轮输入与本轮实际落实对账
+
+本表是已发生工作对账，不是新Queue或全部完成声明。十二条输入均有对应处理，
+但其中的产品交付要求没有全部完成。
+
+| 原输入 | 本轮落实与证据边界 |
+| --- | --- |
+| 1：First Shot Match保留现有效果 | 3条澄清已在c760及实际Patch输入；新代码Match/Inner仍失败。输入落实，行为未完成 |
+| 2：让产品Agent修Mod | 真实模型生成5处代码，来源/实际请求/完整diff核验；没有工程正确after_text。修复本身只部分通过 |
+| 3：P0、旧Core与完整目标关系 | 七组全部保留为十日目标；旧Core/Stretch历史化。属于范围校准，不计新增产品能力 |
+| 4：当前authority、复用合同、完整七组 | 复用现有Graph/Artifact/Plan/Binding/Review/Dry-run；新diff未批准、Apply/游戏写入均0。文档不再充当授权凭证 |
+| 5：扩范围的合法恢复顺序 | 当前Evidence全集/Findings10a与人辅Planc760有效；A3新Plan单独保存。自动补证/重新规划尚未交付 |
+| 6：语义失败自动回正确上游 | 缺口仍在。当前人工反馈、Evidence恢复和结果编排仍由Codex组织；不能用模型节点运行冒充自动闭环 |
+| 7：preservation、状态、owner、checks及六类缺口 | 新Patch实际33/36检查通过，Recoil修复、First Shot未通过；Pop在现有doubles下通过。Build/Runtime及跨任务稳定性未证明 |
+| 8：blocker是否妨碍推进 | 取得独立A3与环境实物，但一度把e504→Patch混进P0；审查后回c760并停止该旁路。没有用新限制替代交付 |
+| 9：完整约束与自由执行 | 文档权限/历史窗口/单次调用责任已纠正；实际触及入口有检查。未做全仓所有路径的enforcement审计，也不将其变成前置门 |
+| 10：模型与机械记账Owner | 模型真实选择目标，系统编译Binding；重复metadata/source identity已共享。Projection索引负担与Patch slot filling仍未改造 |
+| 11：项目能力差距评价 | 当前状态绑定代码、真实运行、行为结果分别说明；A3语义质量needs_evidence，通用Repair、Trace交付、角色路由和多任务Eval未完成 |
+| 12：三档约束与立即推进 | 未扩parser/全量Fresh；原/新失败保留；A1不发模型、A2独占接受运行；warm仅诊断。校准WIP备份后移出执行路径，其他支线按最新要求收口 |
+
+新增两轮审查分别促成文档职责拆分和P0/A3路线重新分离；没有采纳错误的“c760丢失澄清”
+因果判断。模型可逆输入不等于语义理解、结构Plan不等于正确Planning、Dry-run不等于
+行为成功，这三条限制均由本轮实际结果保留。
+
+七组目标的本轮增量分别是：端到端推进到新Dry-run但First Shot未修复；Evidence/RAG完成
+本轮需要的输入表示/身份接缝；Agentic获得有来源证明的有界Patch与一次模型选目标；
+Trace只补本地实际请求链，未交付Langfuse；模型资格/路由未完成；Eval仅输入盘点，未冻结
+真实任务suite；环境取得一个commit的干净venv验证，CI/Release未完成。
+
+### 12.10 本执行窗口内产生的提交
+
+| Commit | 做了什么 | 验证/性质 |
+| --- | --- | --- |
+| `872b479` | 固定完整目标、历史核对、十二轮要求与执行编排 | 5份本页文档；不计产品运行能力 |
+| `d84d888` | 生产Patch输入去重，保留原语义、绑定和supporting信息 | 216相邻测试；真实首包准入/模型返回；模型业务正确性另验 |
+| `e128ff9` | 现有Planning节点消费模型目标选择，记录响应与source；将反馈传到Plan/Patch | 基础311测试，后续反馈贯穿10测试；不是全自动replan |
+| `48ab878` | Planning模型输入保留完整FeatureSpec | 10项聚焦测试；不再漏掉原Feature字段 |
+| `43dccbd` | 记录真实HTTPX body身份、编码版本、实际initial messages与每轮provider诊断 | 236测试；c760新实际两轮及离线重建均匹配记录hash |
+| `de28829` | Planning源码身份无损共享，并校验返回ID属于本次prepared允许集合 | 12测试；随后一次真实模型选择与Plan生成，语义质量另评为needs_evidence |
+
+源码单元修复`aa3a72f`发生在本窗口开始前，已在§11.2说明，不能重复算作本窗口新提交。
+本轮最后的文档对账/角色修正提交由Git与最终执行报告定位；未完成校准WIP没有提交、没有
+计作能力。测试组存在重叠，不将216/311/236/12/208相加作为唯一测试总数。
