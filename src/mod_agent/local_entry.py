@@ -605,6 +605,195 @@ def _bounded_utf8_prefix(value: str, *, max_bytes: int) -> tuple[str, bool]:
     return "", True
 
 
+def _patch_agent_context_json(value: object) -> str:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+
+
+def _patch_agent_member_table(bundle: dict[str, Any]) -> dict[str, Any]:
+    """Compact only metadata whose omitted values are exactly reconstructible."""
+
+    members = bundle.get("declared_members")
+    fields = {
+        "member_name", "member_kind", "declared_type", "declaring_type",
+        "is_static", "declaration_span",
+    }
+    if not isinstance(members, dict) or not members or any(
+        not isinstance(member, dict)
+        or set(member) != fields
+        or member["member_name"] != name
+        or not isinstance(member["declaring_type"], str)
+        or not isinstance(member["declaration_span"], dict)
+        or set(member["declaration_span"]) != {"start_line", "end_line"}
+        for name, member in members.items()
+    ):
+        return bundle
+    classes = {member["declaring_type"] for member in members.values()}
+    has_types = "declared_member_types" in bundle
+    if len(classes) != 1 or (
+        has_types
+        and _patch_agent_context_json(bundle["declared_member_types"])
+        != _patch_agent_context_json(
+            {name: member["declared_type"] for name, member in members.items()}
+        )
+    ):
+        return bundle
+    return {
+        "declaring_type": next(iter(classes)),
+        "has_declared_member_types": has_types,
+        "members": {
+            name: [
+                member["member_kind"], member["declared_type"], member["is_static"],
+                member["declaration_span"]["start_line"],
+                member["declaration_span"]["end_line"],
+            ]
+            for name, member in members.items()
+        },
+    }
+
+
+def _restore_patch_agent_context(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Expand the local model-input tables; this never materializes authority."""
+
+    try:
+        restored = json.loads(_patch_agent_context_json(payload))
+        tables = restored.pop("patch_agent_context_encoding", None)
+        if tables is None:
+            return restored
+        layouts = tables["supporting_evidence_columns"]
+        supporting = []
+        for layout_index, values in restored["supporting_evidence"]:
+            if type(layout_index) is not int or not 0 <= layout_index < len(layouts):
+                raise ValueError("Invalid supporting layout reference.")
+            columns = layouts[layout_index]
+            if len(columns) != len(set(columns)):
+                raise ValueError("Repeated supporting column.")
+            supporting.append(dict(zip(columns, values, strict=True)))
+        restored["supporting_evidence"] = supporting
+        for item in supporting:
+            if "source_identity_ref" in item:
+                source = tables["supporting_source_identities"][item.pop("source_identity_ref")]
+                if set(source).intersection(item):
+                    raise ValueError("Conflicting source identity fields.")
+                item.update(source)
+        for item in [*restored["edit_binding_contexts"].values(), *supporting]:
+            if "member_metadata_ref" not in item:
+                continue
+            table = tables["member_metadata"][item.pop("member_metadata_ref")]
+            if "members" not in table:
+                bundle = table
+            else:
+                members = {}
+                for name, row in table["members"].items():
+                    kind, declared_type, is_static, start_line, end_line = row
+                    members[name] = {
+                        "member_name": name,
+                        "member_kind": kind,
+                        "declared_type": declared_type,
+                        "declaring_type": table["declaring_type"],
+                        "is_static": is_static,
+                        "declaration_span": {"start_line": start_line, "end_line": end_line},
+                    }
+                bundle = {"declared_members": members}
+                if table["has_declared_member_types"]:
+                    bundle["declared_member_types"] = {
+                        name: member["declared_type"] for name, member in members.items()
+                    }
+            if set(bundle).intersection(item):
+                raise ValueError("Conflicting member metadata fields.")
+            item.update(json.loads(_patch_agent_context_json(bundle)))
+        return restored
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise LocalEntryError("LOCAL_PATCH_AGENT_CONTEXT_PROJECTION_INVALID") from exc
+
+
+def _compact_patch_agent_context(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Share repeated model context without changing the native prepared contract."""
+
+    original_json = _patch_agent_context_json(payload)
+    compacted = json.loads(original_json)
+    if "patch_agent_context_encoding" in compacted:
+        raise LocalEntryError("LOCAL_PATCH_AGENT_CONTEXT_PROJECTION_INVALID")
+    edits = compacted.get("edit_binding_contexts")
+    supporting = compacted.get("supporting_evidence")
+    if not isinstance(edits, dict) or not isinstance(supporting, list):
+        raise LocalEntryError("LOCAL_PATCH_AGENT_CONTEXT_PROJECTION_INVALID")
+    entries = [*edits.values(), *supporting]
+    if any(
+        not isinstance(item, dict)
+        or {"member_metadata_ref", "source_identity_ref"}.intersection(item)
+        for item in entries
+    ):
+        raise LocalEntryError("LOCAL_PATCH_AGENT_CONTEXT_PROJECTION_INVALID")
+
+    member_tables: dict[str, dict[str, Any]] = {}
+    member_refs: dict[str, str] = {}
+    for item in entries:
+        bundle = {
+            name: item.pop(name)
+            for name in ("declared_members", "declared_member_types")
+            if name in item
+        }
+        if not bundle:
+            continue
+        identity = _patch_agent_context_json(bundle)
+        if identity not in member_refs:
+            ref = f"m{len(member_tables)}"
+            member_refs[identity] = ref
+            member_tables[ref] = _patch_agent_member_table(bundle)
+        item["member_metadata_ref"] = member_refs[identity]
+
+    sources: dict[str, dict[str, Any]] = {}
+    source_refs: dict[str, str] = {}
+    layouts: list[list[str]] = []
+    rows = []
+    for item in supporting:
+        source = {
+            name: item.pop(name)
+            for name in ("source_path", "source_hash", "source_type")
+            if name in item
+        }
+        if source:
+            identity = _patch_agent_context_json(source)
+            if identity not in source_refs:
+                ref = f"s{len(sources)}"
+                source_refs[identity] = ref
+                sources[ref] = source
+            item["source_identity_ref"] = source_refs[identity]
+        columns = sorted(item)
+        if columns not in layouts:
+            layouts.append(columns)
+        rows.append([layouts.index(columns), [item[column] for column in columns]])
+    compacted["supporting_evidence"] = rows
+    compacted["patch_agent_context_encoding"] = {
+        "guide": (
+            "Shared tables are in patch_agent_context_encoding. Supporting rows are "
+            "[column-layout index, values]. Resolve source_identity_ref and "
+            "member_metadata_ref in their tables. Member rows follow member_metadata_columns; "
+            "name is the map key and declaring_type is shared; has_declared_member_types "
+            "rebuilds the type map. Local refs grant no authority; exact edit contexts "
+            "and final response schema are unchanged."
+        ),
+        "member_metadata": member_tables,
+        "member_metadata_columns": [
+            "member_kind", "declared_type", "is_static",
+            "declaration_start_line", "declaration_end_line",
+        ],
+        "supporting_source_identities": sources,
+        "supporting_evidence_columns": layouts,
+    }
+    if _patch_agent_context_json(_restore_patch_agent_context(compacted)) != original_json:
+        raise LocalEntryError("LOCAL_PATCH_AGENT_CONTEXT_PROJECTION_INVALID")
+    compacted_json = _patch_agent_context_json(compacted)
+    # The provider encodes this JSON text as a message string, so compare wire escaping too.
+    if len(_patch_agent_context_json(compacted_json).encode("utf-8")) >= len(
+        _patch_agent_context_json(original_json).encode("utf-8")
+    ):
+        return json.loads(original_json)
+    return compacted
+
+
 def _patch_agent_initial_messages(
     messages: tuple[Message, ...],
 ) -> tuple[AgentMessage, ...]:
@@ -640,6 +829,7 @@ def _patch_agent_initial_messages(
         "supporting_evidence": "ref_first_bounded_excerpt_1024_bytes",
         "additional_source": "plan_binding_tool_observation",
     }
+    payload = _compact_patch_agent_context(payload)
     return (
         AgentMessage(
             role="system",

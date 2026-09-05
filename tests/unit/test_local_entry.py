@@ -117,6 +117,124 @@ def _feature_wide_patch_model_input() -> dict[str, object]:
     }
 
 
+def _patch_agent_context_fixture() -> dict[str, object]:
+    members = {
+        f"State{index}": {
+            "member_name": f"State{index}",
+            "member_kind": "field",
+            "declared_type": "float",
+            "declaring_type": "Example.SharedState",
+            "is_static": True,
+            "declaration_span": {"start_line": index + 10, "end_line": index + 10},
+        }
+        for index in range(16)
+    }
+    metadata = {
+        "declared_members": members,
+        "declared_member_types": {name: item["declared_type"] for name, item in members.items()},
+    }
+    return {
+        "request": "Preserve First Shot Match while disabling the spread override.",
+        "target_behavior": "Keep shared state and independent First Shot effects.",
+        "acceptance_criteria": ["False preserves Match; true retains current behavior."],
+        "runtime_verification_plan": ["Restart before each configuration value."],
+        "constraints": ["No unapproved path or source changes."],
+        "diagnostic": {"source": "human semantic review", "observed": False},
+        "allowed_edit_binding_ids": [f"edit_binding_{index:03}" for index in range(5)],
+        "edit_binding_contexts": {
+            f"edit_binding_{index:03}": {
+                **metadata,
+                "binding_id": f"edit_binding_{index:03}",
+                "source_excerpt": "private void Update() { FirstShot.Match(); }\r\n",
+                "source_hash": "a" * 64,
+                "canonical_target_path": "Example/Behavior.cs",
+                "target_span": {"start_line": index + 30, "end_line": index + 30},
+            }
+            for index in range(5)
+        },
+        "supporting_evidence": [
+            {
+                **metadata,
+                "binding_id": f"support_binding_{index:03}",
+                "evidence_id": f"evidence_{index:03}",
+                "source_path": "Example/Behavior.cs",
+                "source_hash": "a" * 64,
+                "source_type": "target_source",
+                "excerpt": "证据\n" * 200,
+                "target_span": {"start_line": index + 50, "end_line": index + 50},
+                "claim_supported": "Shared state is read here; this is not edit authority.",
+            }
+            for index in range(24)
+        ],
+        "required_change_units": [{"edit_binding_id": "edit_binding_000"}],
+        "required_output_schema": {"type": "object", "properties": {"changes": {"type": "array"}}},
+    }
+
+
+def test_patch_agent_context_losslessly_compacts_after_existing_excerpt_projection() -> None:
+    from src.libs.llm import Message
+    from src.mod_agent import local_entry
+
+    original = _patch_agent_context_fixture()
+    original_json = json.dumps(original, ensure_ascii=False)
+    messages = (
+        Message(role="system", content="Generate an exact Patch."),
+        Message(role="user", content=original_json),
+    )
+    projected = local_entry._patch_agent_initial_messages(messages)
+    encoded = json.loads(projected[1].content)
+    assert "patch_agent_context_encoding" in encoded
+    restored = local_entry._restore_patch_agent_context(encoded)
+    expected = json.loads(original_json)
+    for item in expected["supporting_evidence"]:
+        full_excerpt = item["excerpt"]
+        item.update(
+            excerpt="证据\n" * 146,
+            excerpt_sha256=hashlib.sha256(full_excerpt.encode("utf-8")).hexdigest(),
+            excerpt_utf8_bytes=len(full_excerpt.encode("utf-8")),
+            excerpt_truncated=True,
+        )
+    expected["patch_agent_context_policy"] = {
+        "editable_source": "exact_binding_excerpt",
+        "supporting_evidence": "ref_first_bounded_excerpt_1024_bytes",
+        "additional_source": "plan_binding_tool_observation",
+    }
+    assert json.dumps(restored, sort_keys=True) == json.dumps(expected, sort_keys=True)
+    assert messages[1].content == original_json
+    assert encoded["edit_binding_contexts"]["edit_binding_000"]["source_excerpt"] == (
+        original["edit_binding_contexts"]["edit_binding_000"]["source_excerpt"]
+    )
+    assert len(restored["edit_binding_contexts"]) == 5
+    assert len(restored["supporting_evidence"]) == 24
+
+
+def test_patch_agent_context_retains_unusual_metadata_and_missing_fields() -> None:
+    from src.mod_agent import local_entry
+
+    original = _patch_agent_context_fixture()
+    original = json.loads(json.dumps(original))
+    unusual = original["edit_binding_contexts"]["edit_binding_000"]
+    unusual["declared_members"]["State0"]["extra_type_fact"] = {"nullable": False}
+    unusual["declared_member_types"]["State0"] = "System.Single"
+    del original["supporting_evidence"][0]["source_hash"]
+    original["supporting_evidence"][1]["source_hash"] = None
+    encoded = local_entry._compact_patch_agent_context(original)
+    restored = local_entry._restore_patch_agent_context(encoded)
+
+    assert json.dumps(restored, sort_keys=True) == json.dumps(original, sort_keys=True)
+    assert "source_hash" not in restored["supporting_evidence"][0]
+    assert restored["supporting_evidence"][1]["source_hash"] is None
+
+
+def test_patch_agent_context_missing_local_ref_cannot_pass_restore() -> None:
+    from src.mod_agent import local_entry
+
+    encoded = local_entry._compact_patch_agent_context(_patch_agent_context_fixture())
+    encoded["edit_binding_contexts"]["edit_binding_000"]["member_metadata_ref"] = "unknown"
+    with pytest.raises(LocalEntryError, match="LOCAL_PATCH_AGENT_CONTEXT_PROJECTION_INVALID"):
+        local_entry._restore_patch_agent_context(encoded)
+
+
 def test_patch_provider_payload_fields_bind_to_exact_disclosure_classes() -> None:
     binding_by_provider_field = {
         provider_field: data_classes
