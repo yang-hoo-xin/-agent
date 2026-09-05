@@ -1942,15 +1942,28 @@ def _valid_patch_agent_loop_receipt(
     termination = value.get("termination")
     tool_rounds = value.get("tool_rounds_used")
     loop_model_turns = value.get("model_turns_used")
-    correction = value.get("validator_correction")
-    correction_calls = (
-        1
-        if isinstance(correction, Mapping)
-        and correction.get("status") == "completed"
-        and correction.get("attempt_count") == 1
-        and isinstance(correction.get("response"), Mapping)
-        else 0
-    )
+    correction_calls = 0
+    for key in ("validator_correction", "behavior_correction"):
+        correction = value.get(key)
+        if correction is None:
+            continue
+        if not (
+            isinstance(correction, Mapping)
+            and correction.get("status") == "completed"
+            and type(correction.get("attempt_count")) is int
+            and correction["attempt_count"] == 1
+            and isinstance(correction.get("response"), Mapping)
+        ):
+            return False
+        correction_calls += 1
+    behavior = value.get("behavior_evaluations")
+    if behavior is not None and not (
+        isinstance(behavior, list) and behavior
+        and isinstance(behavior[-1], Mapping)
+        and behavior[-1].get("status") == "passed"
+        and behavior[-1].get("admission") == "accepted"
+    ):
+        return False
     return (
         value.get("enabled") is True
         and value.get("status") == "completed"
