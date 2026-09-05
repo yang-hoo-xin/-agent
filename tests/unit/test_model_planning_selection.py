@@ -104,6 +104,7 @@ def test_model_selection_is_consumed_by_production_planning_node(tmp_path: Path)
     assert receipt["usage"]["input_tokens"] == 100
     assert plan["trace_refs"] == selector.planning_trace_refs()
     payload = client.calls[0].messages[1].content
+    assert payload["feature"] == inputs.feature_payload
     assert payload["semantic_feedback"] == [feedback, feedback]
     assert plan["data"]["side_effect_boundaries"].count(feedback) == 1
     obligations = _patch_generation_obligation_projection(

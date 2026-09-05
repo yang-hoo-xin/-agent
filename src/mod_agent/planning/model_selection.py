@@ -157,17 +157,7 @@ class ModelPlanningTargetSelector:
             },
         }
         payload = {
-            "feature": {
-                key: feature_spec.get(key)
-                for key in (
-                    "feature_id",
-                    "user_request",
-                    "target_behavior",
-                    "non_goals",
-                    "acceptance_criteria",
-                    "runtime_verification_plan",
-                )
-            },
+            "feature": dict(feature_spec),
             "semantic_feedback": list(self.semantic_feedback),
             "requirements": evidence_pack["requirement_coverage"]["requirements"],
             "source_observations": observations,
