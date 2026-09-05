@@ -7,7 +7,7 @@ import json
 import os
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 from uuid import uuid4
@@ -121,6 +121,12 @@ class PatchContinuationInputV1:
     feature_spec_ref: ArtifactRef
     evidence_pack_ref: ArtifactRef
     implementation_plan_ref: ArtifactRef
+    repair_parent_proposal_ref: ArtifactRef | None = None
+    repair_parent_review_ref: ArtifactRef | None = None
+    repair_failure_report_ref: Mapping[str, str] | None = None
+    repair_parent_response_ref: Mapping[str, str] | None = None
+    repair_parent_attempt_ref: Mapping[str, str] | None = None
+    attempt_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.contract_version != PATCH_CONTINUATION_CONTRACT_VERSION:
@@ -171,6 +177,32 @@ class PatchContinuationInputV1:
                 "request",
                 "Selected FeatureSpec, EvidencePack, and Plan feature_id values differ.",
             )
+        recovery_fields = (
+            self.repair_parent_proposal_ref, self.repair_parent_review_ref,
+            self.repair_failure_report_ref, self.repair_parent_response_ref,
+            self.repair_parent_attempt_ref,
+        )
+        if any(value is not None for value in recovery_fields):
+            if any(value is None for value in recovery_fields):
+                raise PatchContinuationError(
+                    "PATCH_REPAIR_CONTEXT_INCOMPLETE", "request",
+                    "Repair requires the exact parent Proposal, Review, response, attempt, and failure report.",
+                )
+            if self.attempt_id is None:
+                raise PatchContinuationError("PATCH_REPAIR_ATTEMPT_ID_REQUIRED", "request", "Repair execution requires a stable attempt identity for duplicate-call prevention.")
+            for ref, kind in ((self.repair_parent_proposal_ref, "patch_proposal"),
+                              (self.repair_parent_review_ref, "proposal_review")):
+                try:
+                    _validate_artifact_ref(ref, field_name=kind, expected_type=kind)
+                except PlanningContinuationError as exc:
+                    raise PatchContinuationError("PATCH_REPAIR_REF_INVALID", "request", exc.reason) from exc
+                if ref.feature_id != self.feature_spec_ref.feature_id:
+                    raise PatchContinuationError("PATCH_REPAIR_FEATURE_MISMATCH", "request", "Repair parent belongs to another FeatureSpec.")
+        if self.attempt_id is not None and (
+            type(self.attempt_id) is not str or not self.attempt_id.strip()
+            or len(self.attempt_id) > 200
+        ):
+            raise PatchContinuationError("PATCH_CONTINUATION_ATTEMPT_ID_INVALID", "request", "Attempt identity must be non-empty text of at most 200 characters.")
 
 
 @dataclass(frozen=True)
@@ -307,6 +339,7 @@ class _AdmittedPatchInputs:
     source_validation: dict[str, Any]
     source_tree_snapshot: tuple[tuple[str, str], ...]
     latest_observations: dict[str, dict[str, Any]]
+    repair_context: dict[str, Any] | None = None
 
 
 PatchContinuationFactory = Callable[
@@ -1193,18 +1226,174 @@ def preflight_patch_continuation(
         request.evidence_pack_ref,
         request.implementation_plan_ref,
     )
+    source_tree_snapshot = _csharp_source_snapshot(workspace_root)
+    repair_context = _admit_patch_repair_context(
+        request=request, store=store, feature_spec=feature_spec,
+        evidence_pack=evidence_pack, implementation_plan=implementation_plan,
+        workspace_root=workspace_root, source_tree_snapshot=source_tree_snapshot,
+    ) if request.repair_parent_proposal_ref is not None else None
     return _AdmittedPatchInputs(
         artifact_store=store,
         feature_spec=feature_spec,
         evidence_pack=evidence_pack,
         implementation_plan=implementation_plan,
         source_validation=source_validation,
-        source_tree_snapshot=_csharp_source_snapshot(workspace_root),
+        source_tree_snapshot=source_tree_snapshot,
         latest_observations={
             ref.artifact_type: _latest_observation(store, ref)
             for ref in selected_refs
         },
+        repair_context=repair_context,
     )
+
+
+def _read_hashed_repair_file(ref: Mapping[str, str] | None) -> bytes:
+    if (not isinstance(ref, Mapping) or set(ref) != {"path", "sha256"}
+            or type(ref.get("path")) is not str or not Path(ref["path"]).is_absolute()
+            or not _is_sha256(ref.get("sha256"))):
+        raise PatchContinuationError("PATCH_REPAIR_FILE_REF_INVALID", "repair_admission", "Repair files require exact absolute path and SHA-256.")
+    try:
+        payload = Path(ref["path"]).read_bytes()
+    except OSError as exc:
+        raise PatchContinuationError("PATCH_REPAIR_FILE_MISSING", "repair_admission", "A selected repair input cannot be read.") from exc
+    if hashlib.sha256(payload).hexdigest() != ref["sha256"]:
+        raise PatchContinuationError("PATCH_REPAIR_FILE_HASH_MISMATCH", "repair_admission", "Selected repair file bytes changed.")
+    return payload
+
+
+def _admit_patch_repair_context(
+    *, request: PatchContinuationInputV1, store: ArtifactStore,
+    feature_spec: dict[str, Any], evidence_pack: dict[str, Any],
+    implementation_plan: dict[str, Any], workspace_root: Path,
+    source_tree_snapshot: tuple[tuple[str, str], ...],
+) -> dict[str, Any]:
+    """Bind a real post-Proposal observation without rewriting its Review result."""
+    from src.libs.llm import ChatResponse
+    from src.mod_agent.local_entry import (
+        _external_evidence_items,
+        _patch_generation_obligation_projection,
+    )
+    from src.mod_agent.proposal.code_generator import LLMExactPatchGenerator
+    from src.mod_agent.proposal.patch_agent_loop import (
+        PatchAgentLoopPolicy,
+        PlanBoundSourceInspector,
+    )
+
+    parent_ref = request.repair_parent_proposal_ref
+    review_ref = request.repair_parent_review_ref
+    assert parent_ref is not None and review_ref is not None
+    parent = _read_selected_exact_revision(store, parent_ref, consumer_stage=None)
+    review = _read_selected_exact_revision(store, review_ref, consumer_stage=None)
+    expected_upstream = {
+        "implementation_plan": request.implementation_plan_ref,
+        "evidence_pack": request.evidence_pack_ref,
+    }
+    actual_upstream = {item.get("artifact_type"): item for item in parent.get("inputs", {}).get("upstream_artifacts", [])}
+    for kind, ref in expected_upstream.items():
+        bound = actual_upstream.get(kind, {})
+        if bound.get("path") != ref.path or bound.get("artifact_hash") != ref.artifact_hash:
+            raise PatchContinuationError("PATCH_REPAIR_PARENT_PLAN_MISMATCH", "repair_admission", "Parent Proposal was generated against different Plan or Evidence bytes.")
+    parent_retry_count = 0
+    if "repair_plan" in actual_upstream:
+        recorded = actual_upstream["repair_plan"]
+        parent_repair = _read_selected_exact_revision(store, ArtifactRef(
+            feature_id=parent_ref.feature_id, artifact_type="repair_plan",
+            path=recorded["path"], artifact_hash=recorded["artifact_hash"],
+        ), consumer_stage=None)
+        parent_retry_count = parent_repair["data"].get("retry_count")
+        if type(parent_retry_count) is not int or parent_retry_count < 0:
+            raise PatchContinuationError("PATCH_REPAIR_PARENT_RETRY_INVALID", "repair_admission", "Parent repair retry identity is invalid.")
+    review_inputs = review.get("inputs", {}).get("upstream_artifacts", [])
+    if not any(item.get("artifact_type") == "patch_proposal" and item.get("path") == parent_ref.path and item.get("artifact_hash") == parent_ref.artifact_hash for item in review_inputs):
+        raise PatchContinuationError("PATCH_REPAIR_REVIEW_PARENT_MISMATCH", "repair_admission", "Selected Review does not belong to the parent Proposal.")
+    if parent.get("status") != "success" or review.get("data", {}).get("allowed_next_stage") != "dry_run_apply":
+        raise PatchContinuationError("PATCH_REPAIR_PARENT_REVIEW_INVALID", "repair_admission", "Behavior recovery requires the original successful Proposal and passed deterministic Review.")
+    try:
+        report = json.loads(_read_hashed_repair_file(request.repair_failure_report_ref))
+        attempt = json.loads(_read_hashed_repair_file(request.repair_parent_attempt_ref))
+        previous_response = _read_hashed_repair_file(request.repair_parent_response_ref).decode("utf-8")
+        if not isinstance(report, dict) or not isinstance(attempt, dict):
+            raise ValueError("Repair report and parent receipt must be objects.")
+        factory = attempt.get("factory_receipt", {})
+        response_identity = factory.get("model_response", {})
+        receipt_parent = attempt.get("artifacts", {}).get("patch_proposal", {})
+        workspace_snapshot = _source_tree_snapshot_sha256(source_tree_snapshot)
+        if (receipt_parent.get("artifact_hash") != parent_ref.artifact_hash
+                or receipt_parent.get("path") != parent_ref.path
+                or attempt.get("generated_against_snapshot_sha256") != workspace_snapshot
+                or response_identity.get("output_sha256") != request.repair_parent_response_ref["sha256"]
+                or response_identity.get("path") != request.repair_parent_response_ref["path"]):
+            raise ValueError("Parent attempt, response, Proposal, and current baseline do not match.")
+        inspector = PlanBoundSourceInspector(workspace_root=workspace_root,
+            implementation_plan=implementation_plan, policy=PatchAgentLoopPolicy())
+        if report.get("source_snapshot_sha256") != inspector.source_snapshot_sha256:
+            raise ValueError("Behavior report source snapshot does not match the current edit sources.")
+        obligations = _patch_generation_obligation_projection(
+            feature_spec=feature_spec, implementation=implementation_plan,
+            planned_changes=list(implementation_plan["proposed_changes"]),
+        )
+        generator = LLMExactPatchGenerator(None)  # preparation/materialization never calls this provider
+        prepared = generator.prepare_native_contract(
+            user_request=feature_spec["user_request"],
+            evidence_items=_external_evidence_items(evidence_pack["items"]),
+            binding_registry=implementation_plan["binding_registry"],
+            constraints=obligations["side_effect_boundaries"],
+            target_behavior=obligations["target_behavior"],
+            acceptance_criteria=obligations["acceptance_criteria"],
+            runtime_verification_plan=obligations["runtime_verification_plan"],
+            required_change_units=obligations["required_change_units"],
+            required_validation_by_binding={item["edit_binding_id"]: item["expected_validation"] for item in obligations["required_change_units"]},
+        )
+        generated = generator.materialize_prepared_native(prepared, ChatResponse(content=previous_response, model=response_identity["model"]))
+        native_hash = _canonical_sha256(generated.changes)
+        if native_hash != report.get("generated_changes_sha256"):
+            raise ValueError("Behavior report was measured against different generated code.")
+        parent_changes = parent["data"]["diff_intent"]
+        parent_by_binding = {item["edit_binding_id"]: item for item in parent_changes}
+        if len(parent_by_binding) != len(parent_changes) or set(parent_by_binding) != {item["edit_binding_id"] for item in generated.changes}:
+            raise ValueError("Parent response binding coverage differs from the stored Proposal.")
+        for change in generated.changes:
+            stored = parent_by_binding[change["edit_binding_id"]]
+            if stored.get("patch") != change["patch"] or stored.get("generation", {}).get("model_response_sha256") != request.repair_parent_response_ref["sha256"]:
+                raise ValueError("Parent Proposal code or model response identity differs from its original response.")
+        if report.get("status") not in {"behavior_failed", "needs_evidence", "infrastructure_failed", "identity_failed"}:
+            raise ValueError("Repair input is not a failing behavior observation.")
+        observations = report.get("observations")
+        if not isinstance(observations, list) or not observations or any(not isinstance(item, dict) for item in observations):
+            raise ValueError("Repair requires structured observed behavior.")
+        if "verification_ref" in report:
+            _read_hashed_repair_file(report["verification_ref"])
+        for observation in observations:
+            if "result_ref" in observation:
+                _read_hashed_repair_file(observation["result_ref"])
+        owner_ids = report.get("owner_binding_ids")
+        if not isinstance(owner_ids, list) or len(set(owner_ids)) != len(owner_ids) or any(type(value) is not str for value in owner_ids):
+            raise ValueError("Failure owner binding identities are invalid.")
+    except (ValueError, KeyError, TypeError) as exc:
+        if isinstance(exc, PatchContinuationError):
+            raise
+        raise PatchContinuationError("PATCH_REPAIR_FAILURE_IDENTITY_MISMATCH", "repair_admission", str(exc)) from exc
+    return {
+        "schema_version": "patch_repair_context_v1",
+        "failure_source": "behavior_report",
+        "parent_proposal": _artifact_ref_dict(parent_ref),
+        "parent_review": _artifact_ref_dict(review_ref),
+        "parent_review_decision": review["data"]["decision"],
+        "parent_review_role": "passed_context_lineage_not_failure_evidence",
+        "parent_response_ref": dict(request.repair_parent_response_ref),
+        "parent_attempt_ref": dict(request.repair_parent_attempt_ref),
+        "previous_response": previous_response,
+        "failure_report_ref": dict(request.repair_failure_report_ref),
+        "failure_report": report,
+        "source_snapshot_sha256": inspector.source_snapshot_sha256,
+        "workspace_snapshot_sha256": workspace_snapshot,
+        "generated_changes_sha256": native_hash,
+        "parent_overlay_changes_sha256": attempt.get("generated_changes_sha256"),
+        "allowed_edit_binding_ids": list(inspector.available_binding_ids),
+        "base_relationship": "full_replacement_against_unchanged_parent_base",
+        "approval_inherited": False,
+        "parent_retry_count": parent_retry_count,
+    }
 
 
 def _source_tree_snapshot_sha256(
@@ -1226,6 +1415,7 @@ class PatchContinuationAttemptJournal:
         request_id: str,
         request: PatchContinuationInputV1,
         admitted: _AdmittedPatchInputs,
+        max_model_calls: int = 1,
     ) -> None:
         receipt_locator = hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:32]
         self.path = artifact_root / "cr" / f"{receipt_locator}.json"
@@ -1255,8 +1445,15 @@ class PatchContinuationAttemptJournal:
             "proposal_admitted": False,
             "artifacts": {},
             "events": [],
+            "attempt_identity_sha256": _patch_attempt_identity(request, max_model_calls),
+            "max_model_calls": max_model_calls,
         }
-        self._write()
+        if admitted.repair_context is not None:
+            self._document["repair_context"] = {
+                key: value for key, value in admitted.repair_context.items()
+                if key not in {"previous_response", "failure_report"}
+            }
+        self._write(exclusive=True)
 
     def record(self, event: Mapping[str, Any]) -> None:
         phase = event.get("phase")
@@ -1332,7 +1529,7 @@ class PatchContinuationAttemptJournal:
             ),
         }
 
-    def _write(self) -> None:
+    def _write(self, *, exclusive: bool = False) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_name(f".{self.path.name}.{uuid4().hex}.tmp")
         payload = (
@@ -1346,6 +1543,12 @@ class PatchContinuationAttemptJournal:
             + "\n"
         )
         try:
+            if exclusive:
+                with self.path.open("x", encoding="utf-8", newline="\n") as stream:
+                    stream.write(payload)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                return
             temporary.write_text(payload, encoding="utf-8")
             os.replace(temporary, self.path)
         except OSError as exc:
@@ -1976,6 +2179,13 @@ def _patch_continuation_state(
         "evidence_pack": request.evidence_pack_ref.artifact_hash,
         "implementation_plan": request.implementation_plan_ref.artifact_hash,
     }
+    if admitted.repair_context is not None:
+        state["current_stage"] = "behavior_report"
+        state["next_stage"] = "repair_plan"
+        state["retry_count"] = admitted.repair_context["parent_retry_count"]
+        for ref in (request.repair_parent_proposal_ref, request.repair_parent_review_ref):
+            state["artifacts"][ref.artifact_type] = ref.path
+            state["artifact_hashes"][ref.artifact_type] = ref.artifact_hash
     return state
 
 
@@ -2110,17 +2320,106 @@ def _proposal_source_snippet_char_limit(admitted: _AdmittedPatchInputs) -> int:
     )
 
 
+def _patch_attempt_identity(request: PatchContinuationInputV1, max_model_calls: int) -> str:
+    return _canonical_sha256({"request": asdict(request), "max_model_calls": max_model_calls})
+
+
+def _attempt_receipt_projection(path: Path, document: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "receipt_version": PATCH_CONTINUATION_RECEIPT_VERSION,
+        "path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "status": document.get("status"), "event_count": len(document.get("events", [])),
+        "model_call_count": document.get("model_call_count", 0),
+        "proposal_admitted": document.get("proposal_admitted", False),
+        "generated_against_snapshot_sha256": document.get("generated_against_snapshot_sha256"),
+        "current_snapshot_sha256": document.get("current_snapshot_sha256"),
+    }
+
+
 def run_fresh_patch_continuation(
+    request: PatchContinuationInputV1,
+    *, patch_change_factory: PatchContinuationFactory,
+    dry_run_factory: PatchContinuationDryRunFactory,
+    max_model_calls: int = 1,
+) -> PatchContinuationResultV1:
+    """Run once, or read the same attempt's durable result without replaying tools.
+
+    An interrupted attempt with no terminal result is stopped for recovery review:
+    absence of a recorded response is not proof that the provider did not run.
+    """
+    run_id = (
+        "patch_continuation_" + hashlib.sha256(request.attempt_id.encode("utf-8")).hexdigest()
+        if request.attempt_id is not None else f"patch_continuation_{uuid4().hex}"
+    )
+    path = Path(request.artifact_store_root).resolve() / "cr" / (
+        hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:32] + ".json"
+    )
+    if path.exists():
+        try:
+            document = json.loads(path.read_text(encoding="utf-8"))
+            if document.get("attempt_identity_sha256") != _patch_attempt_identity(request, max_model_calls):
+                raise PatchContinuationError("PATCH_CONTINUATION_ATTEMPT_IDENTITY_CONFLICT", "resume_admission", "An attempt identity cannot be reused with different inputs or a reset budget.")
+            preflight_patch_continuation(request)
+            cached = document.get("terminal_result")
+            if isinstance(cached, dict):
+                if document.get("terminal_result_sha256") != _canonical_sha256(cached):
+                    raise PatchContinuationError("PATCH_CONTINUATION_RESUME_RESULT_INVALID", "resume_admission", "The saved continuation result hash is invalid.")
+                for name, kind in (("patch_proposal_artifact", "patch_proposal"),
+                                   ("proposal_review_artifact", "proposal_review"),
+                                   ("dry_run_artifact", "dry_run_result")):
+                    if isinstance(cached.get(name), dict):
+                        _read_selected_exact_revision(ArtifactStore(Path(request.artifact_store_root)), ArtifactRef(**cached[name]), consumer_stage=None)
+                values = {field.name: cached.get(field.name) for field in fields(PatchContinuationResultV1)}
+                values["attempt_receipt"] = _attempt_receipt_projection(path, document)
+                return PatchContinuationResultV1(**values)
+            return blocked_patch_continuation_result(
+                code="PATCH_CONTINUATION_ATTEMPT_RECOVERY_REQUIRED", stage="resume_admission",
+                duration_seconds=0.0,
+                reason="This attempt is already claimed and has no durable terminal result; it will not send another model request or reset its budget.",
+                run_id=run_id, request_id=str(document.get("request_id") or ""),
+                feature_id=request.feature_spec_ref.feature_id,
+                attempt_receipt=_attempt_receipt_projection(path, document),
+                execution_counts=_failed_patch_execution_counts(None, model_call_count=int(document.get("model_call_count") or 0)),
+            )
+        except (PatchContinuationError, ValueError, OSError) as exc:
+            return blocked_patch_continuation_result(
+                code=getattr(exc, "code", "PATCH_CONTINUATION_RESUME_RECEIPT_INVALID"),
+                duration_seconds=0.0,
+                stage="resume_admission", reason=str(getattr(exc, "reason", exc)),
+                run_id=run_id, request_id="", feature_id=request.feature_spec_ref.feature_id,
+            )
+    try:
+        result = _run_fresh_patch_continuation_once(request,
+            patch_change_factory=patch_change_factory, dry_run_factory=dry_run_factory,
+            max_model_calls=max_model_calls, run_id=run_id)
+    except PatchContinuationError as exc:
+        return blocked_patch_continuation_result(code=exc.code, stage=exc.stage,
+            duration_seconds=0.0,
+            reason=exc.reason, run_id=run_id, request_id="", feature_id=request.feature_spec_ref.feature_id)
+    if result.attempt_receipt is not None:
+        document = json.loads(path.read_text(encoding="utf-8"))
+        cached = result.to_dict()
+        cached.pop("attempt_receipt", None)
+        document["terminal_result"] = cached
+        document["terminal_result_sha256"] = _canonical_sha256(cached)
+        temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+        temporary.write_text(json.dumps(document, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+        os.replace(temporary, path)
+        result = replace(result, attempt_receipt=_attempt_receipt_projection(path, document))
+    return result
+
+
+def _run_fresh_patch_continuation_once(
     request: PatchContinuationInputV1,
     *,
     patch_change_factory: PatchContinuationFactory,
     dry_run_factory: PatchContinuationDryRunFactory,
     max_model_calls: int = 1,
+    run_id: str,
 ) -> PatchContinuationResultV1:
     """Run an exact Plan through Patch, Review, and no-write Dry-run once."""
 
     started = time.perf_counter()
-    run_id = f"patch_continuation_{uuid4().hex}"
     request_id = f"patch_request_{uuid4().hex}"
     feature_id = request.feature_spec_ref.feature_id
     if (
@@ -2160,6 +2459,7 @@ def run_fresh_patch_continuation(
         request_id=request_id,
         request=request,
         admitted=admitted,
+        max_model_calls=max_model_calls,
     )
     try:
         _bind_patch_attempt_recorder(patch_change_factory, journal.record)
@@ -2274,6 +2574,11 @@ def run_fresh_patch_continuation(
         "dry_run_result",
         feature_id=feature_id,
     )
+    if request.repair_parent_proposal_ref is not None:
+        if patch_ref == request.repair_parent_proposal_ref:
+            patch_ref = None
+        if review_ref == request.repair_parent_review_ref:
+            review_ref = None
     artifacts = {
         artifact_type: _artifact_ref_dict(ref)
         for artifact_type, ref in (

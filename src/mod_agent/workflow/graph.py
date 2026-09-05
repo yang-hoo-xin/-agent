@@ -464,13 +464,19 @@ def _validate_patch_continuation_graph_start(
         "evidence_pack": mode.evidence_pack_ref.artifact_hash,
         "implementation_plan": mode.implementation_plan_ref.artifact_hash,
     }
+    recovery = admitted.repair_context is not None
+    if recovery:
+        for ref in (mode.repair_parent_proposal_ref, mode.repair_parent_review_ref):
+            expected_artifacts[ref.artifact_type] = ref.path
+            expected_hashes[ref.artifact_type] = ref.artifact_hash
     if (
         state.get("feature_id") != mode.feature_spec_ref.feature_id
         or state.get("user_request") != admitted.feature_spec["user_request"]
         or state.get("target_mod") != admitted.feature_spec["target_mod"]
         or state.get("risk_level") != admitted.feature_spec["risk_level"]
-        or state.get("current_stage") != "implementation_plan"
-        or state.get("next_stage") != "patch_proposal"
+        or state.get("current_stage") != ("behavior_report" if recovery else "implementation_plan")
+        or state.get("next_stage") != ("repair_plan" if recovery else "patch_proposal")
+        or state.get("retry_count") != (admitted.repair_context["parent_retry_count"] if recovery else 0)
         or state.get("artifacts") != expected_artifacts
         or state.get("artifact_hashes") != expected_hashes
         or state.get("approvals") != {}
@@ -489,7 +495,7 @@ def _validate_patch_continuation_graph_start(
                 "patch_admission",
                 "Patch continuation state identity is incomplete.",
             )
-    return "continue"
+    return "repair" if recovery else "continue"
 
 
 def build_graph(
@@ -1215,6 +1221,8 @@ def build_graph(
                 state,
                 artifact_store,
                 product_execution_mode=validated_product_execution_mode,
+                patch_continuation_mode=validated_patch_continuation_mode,
+                patch_continuation_attempt_recorder=patch_continuation_attempt_recorder,
             ),
         ),
     )
@@ -1318,7 +1326,9 @@ def build_graph(
                 validated_patch_continuation_mode,
                 artifact_store,
             ),
-            {"continue": "generate_patch_proposal"},
+            ({"repair": "create_repair_plan"}
+             if validated_patch_continuation_mode.repair_parent_proposal_ref is not None
+             else {"continue": "generate_patch_proposal"}),
         )
     elif validated_product_execution_mode is not None:
         graph.add_conditional_edges(
@@ -1477,7 +1487,9 @@ def build_graph(
     graph.add_conditional_edges(
         "create_repair_plan",
         route_after_repair_plan,
-        dict(registry["create_repair_plan"]),
+        ({"continue": "generate_patch_proposal", "blocked": END}
+         if validated_patch_continuation_mode is not None
+         else dict(registry["create_repair_plan"])),
     )
     graph.add_conditional_edges(
         "evaluate",
@@ -1955,7 +1967,10 @@ def _valid_patch_agent_loop_receipt(
             and isinstance(correction.get("response"), Mapping)
         ):
             return False
-        correction_calls += 1
+        count = correction.get("model_call_count", 1)
+        if type(count) is not int or count < 1:
+            return False
+        correction_calls += count
     behavior = value.get("behavior_evaluations")
     if behavior is not None and not (
         isinstance(behavior, list) and behavior
@@ -2042,6 +2057,11 @@ def _run_patch_continuation_factory(
             "proposal_admitted": False,
         }
     )
+    if admitted_before.repair_context is not None:
+        binder = getattr(patch_change_factory, "bind_repair_context", None)
+        if not callable(binder):
+            raise PatchContinuationError("PATCH_REPAIR_FACTORY_CONTEXT_UNSUPPORTED", "patch_generation", "The selected Patch worker cannot consume the admitted repair context.")
+        binder(admitted_before.repair_context)
     try:
         generated = tuple(
             patch_change_factory(state, implementation, evidence_pack)
@@ -2189,16 +2209,28 @@ def _run_generate_patch_proposal(
         )
         evidence_pack = _read_artifact_data(state, artifact_store, "evidence_pack")
         if patch_change_factory is not None:
+            generated_changes = (
+                _run_patch_continuation_factory(
+                    state, artifact_store, implementation=implementation,
+                    evidence_pack=evidence_pack, patch_change_factory=patch_change_factory,
+                    mode=patch_continuation_mode, recorder=patch_continuation_attempt_recorder,
+                    max_model_calls=patch_continuation_max_model_calls,
+                ) if patch_continuation_mode is not None and patch_continuation_attempt_recorder is not None
+                else patch_change_factory(state, implementation, evidence_pack)
+            )
             implementation = {
                 **implementation,
-                "proposed_changes": list(
-                    patch_change_factory(state, implementation, evidence_pack)
-                ),
+                "proposed_changes": list(generated_changes),
             }
-        proposal = RepairPatchProposalBuilder().build(
-            repair_plan,
-            implementation_plan=implementation,
-        )
+        if repair_plan.get("failure_source") == "behavior_report":
+            proposal = PatchProposalBuilder().build(
+                implementation, evidence_pack=evidence_pack,
+                artifact_hashes={key: value for key, value in state["artifact_hashes"].items()
+                    if key in {"feature_spec", "evidence_pack", "implementation_plan"}},
+                require_git_binding=False, source_snippet_char_limit=source_snippet_char_limit,
+            )
+        else:
+            proposal = RepairPatchProposalBuilder().build(repair_plan, implementation_plan=implementation)
         repair_context_pack = dict(proposal.context_pack)
         repair_context_pack["artifact_hashes"] = {
             key: value
@@ -2208,12 +2240,24 @@ def _run_generate_patch_proposal(
         repair_context_pack["implementation_plan_hash"] = state[
             "artifact_hashes"
         ].get("implementation_plan")
+        repair_context_pack["repair_lineage"] = {
+            "repair_plan": {
+                "path": state["artifacts"]["repair_plan"],
+                "artifact_hash": state["artifact_hashes"]["repair_plan"],
+            },
+            "parent_proposal": repair_plan.get("source_proposal"),
+            "failure_source": repair_plan.get("failure_source"),
+            "base_relationship": (repair_plan.get("repair_context") or {}).get("base_relationship"),
+            "approval_inherited": False,
+        }
         proposal = replace(proposal, context_pack=repair_context_pack)
         upstream_refs = [
             _artifact_ref_from_state(state, "implementation_plan"),
             _artifact_ref_from_state(state, "repair_plan"),
             _artifact_ref_from_state(state, "evidence_pack"),
         ]
+        if patch_continuation_mode is not None and patch_continuation_mode.repair_parent_proposal_ref is not None:
+            upstream_refs.append(patch_continuation_mode.repair_parent_proposal_ref)
     else:
         implementation = _read_artifact_data(state, artifact_store, "implementation_plan")
         evidence_pack = _read_artifact_data(state, artifact_store, "evidence_pack")
@@ -2260,7 +2304,7 @@ def _run_generate_patch_proposal(
         status="blocked" if proposal.blocked else "success",
         upstream_refs=upstream_refs,
         exact_revision_upstream_types=(
-            {"implementation_plan", "evidence_pack"}
+            {ref.artifact_type for ref in upstream_refs}
             if patch_continuation_mode is not None
             else None
         ),
@@ -4185,6 +4229,8 @@ def _run_create_repair_plan(
     artifact_store: ArtifactStore,
     *,
     product_execution_mode: ProductExecutionGraphModeV1 | None = None,
+    patch_continuation_mode: PatchContinuationInputV1 | None = None,
+    patch_continuation_attempt_recorder: PatchContinuationAttemptRecorder | None = None,
 ) -> ModAgentState:
     feature_spec = _read_artifact_data(state, artifact_store, "feature_spec")
     proposal_ref = _artifact_ref_from_state(state, "patch_proposal")
@@ -4205,7 +4251,18 @@ def _run_create_repair_plan(
     planner = RepairPlanner()
     feature_id = state["feature_id"] or state["request_id"]
     failed_stage = state["current_stage"]
-    if failed_stage == "build" and state["build_summary"].get("status") == "failed":
+    if failed_stage == "behavior_report" and patch_continuation_mode is not None:
+        admitted = preflight_patch_continuation(patch_continuation_mode, artifact_store=artifact_store)
+        if admitted.repair_context is None:
+            raise PatchContinuationError("PATCH_REPAIR_CONTEXT_MISSING", "repair_plan", "Behavior recovery context was not admitted.")
+        plan = planner.from_behavior_failure(
+            repair_context=admitted.repair_context, feature_id=feature_id,
+            target_behavior=str(feature_spec.get("target_behavior") or ""),
+            retry_count=state["retry_count"],
+        )
+        # The Review is a passed parent-stage fact, not the source of this failure.
+        upstream_refs = [proposal_ref, patch_continuation_mode.repair_parent_review_ref]
+    elif failed_stage == "build" and state["build_summary"].get("status") == "failed":
         build_ref = _artifact_ref_from_state(state, "build_result")
         plan = planner.from_build_failure(
             build_result=_read_artifact_data(state, artifact_store, "build_result"),
@@ -4291,7 +4348,7 @@ def _run_create_repair_plan(
         upstream_refs=upstream_refs,
         exact_revision_upstream_types=(
             {ref.artifact_type for ref in upstream_refs}
-            if product_execution_mode is not None
+            if product_execution_mode is not None or patch_continuation_mode is not None
             else {"patch_proposal"}
         ),
     )
@@ -4299,6 +4356,14 @@ def _run_create_repair_plan(
     next_state["current_stage"] = "repair_plan"
     next_state["retry_count"] = plan.retry_count
     _record_artifact(next_state, "repair_plan", artifact_ref)
+    if patch_continuation_attempt_recorder is not None:
+        patch_continuation_attempt_recorder({
+            "phase": "repair_plan_committed",
+            "repair_semantic_decision": plan.semantic_decision,
+            "artifacts": {"repair_plan": {"feature_id": artifact_ref.feature_id,
+                "artifact_type": artifact_ref.artifact_type, "path": artifact_ref.path,
+                "artifact_hash": artifact_ref.artifact_hash}},
+        })
     if plan.blockers:
         next_state["blockers"].extend(plan.blockers)
     return next_state

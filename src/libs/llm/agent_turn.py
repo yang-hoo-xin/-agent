@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 import math
 import time
-from collections.abc import Mapping
-from hashlib import sha256
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Protocol
+from hashlib import sha256
+from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
 
 from src.libs.llm.ollama_llm import build_ollama_context_admission
@@ -52,6 +52,15 @@ class AgentToolResult:
 
 
 @dataclass(frozen=True)
+class AgentToolExchange:
+    """A completed native tool exchange retained at its original message boundary."""
+
+    tool_results: tuple[AgentToolResult, ...]
+    provider_state: object
+    insert_index: int
+
+
+@dataclass(frozen=True)
 class AgentTurnRequest:
     """One bounded structured turn, independent of provider wire format."""
 
@@ -64,6 +73,7 @@ class AgentTurnRequest:
     tool_result_insert_index: int | None = None
     provider_state: object | None = None
     temperature: float = 0.0
+    historical_tool_exchanges: tuple[AgentToolExchange, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -309,8 +319,8 @@ class OllamaChatAgentAdapter:
             and len(request.tools) == 1
             and request.response_format is None
         )
-        if request.tool_results:
-            state = request.provider_state
+        for recorded_exchange in _tool_exchanges(request, len(messages)):
+            state = recorded_exchange.provider_state
             if not isinstance(state, dict) or not isinstance(state.get("tool_calls"), list):
                 raise AgentTurnProviderError("OLLAMA_TOOL_RESULT_STATE_MISSING")
             exchange: list[dict[str, object]] = [
@@ -320,7 +330,7 @@ class OllamaChatAgentAdapter:
                     "tool_calls": state["tool_calls"],
                 }
             ]
-            for result in request.tool_results:
+            for result in recorded_exchange.tool_results:
                 exchange.append(
                     {
                         "role": "tool",
@@ -328,7 +338,7 @@ class OllamaChatAgentAdapter:
                         "content": _json_text(result.output),
                     }
                 )
-            insert_at = _insert_index(request.tool_result_insert_index, len(messages))
+            insert_at = recorded_exchange.insert_index
             messages[insert_at:insert_at] = exchange
         options: dict[str, object] = {
             "temperature": request.temperature,
@@ -512,8 +522,8 @@ class QwenChatAgentAdapter:
 
     def complete_turn(self, request: AgentTurnRequest) -> AgentTurnResponse:
         messages = [_chat_message(item) for item in request.messages]
-        state = request.provider_state
-        if request.tool_results:
+        for recorded_exchange in _tool_exchanges(request, len(messages)):
+            state = recorded_exchange.provider_state
             if not isinstance(state, dict) or not isinstance(state.get("tool_calls"), list):
                 raise AgentTurnProviderError("QWEN_TOOL_RESULT_STATE_MISSING")
             exchange: list[dict[str, object]] = [
@@ -523,7 +533,7 @@ class QwenChatAgentAdapter:
                     "tool_calls": state["tool_calls"],
                 }
             ]
-            for result in request.tool_results:
+            for result in recorded_exchange.tool_results:
                 exchange.append(
                     {
                         "role": "tool",
@@ -532,7 +542,7 @@ class QwenChatAgentAdapter:
                         "content": _json_text(result.output),
                     }
                 )
-            insert_at = _insert_index(request.tool_result_insert_index, len(messages))
+            insert_at = recorded_exchange.insert_index
             messages[insert_at:insert_at] = exchange
         payload: dict[str, object] = {
             "model": self.model,
@@ -644,8 +654,8 @@ class OpenAIResponsesAgentAdapter:
             {"role": item.role, "content": _json_text(item.content)}
             for item in request.messages
         ]
-        if request.tool_results:
-            state = request.provider_state
+        for recorded_exchange in _tool_exchanges(request, len(input_items)):
+            state = recorded_exchange.provider_state
             if not isinstance(state, list):
                 raise AgentTurnProviderError("OPENAI_TOOL_RESULT_STATE_MISSING")
             exchange = [dict(item) for item in state if isinstance(item, dict)]
@@ -655,9 +665,9 @@ class OpenAIResponsesAgentAdapter:
                     "call_id": result.call_id,
                     "output": _json_text(result.output),
                 }
-                for result in request.tool_results
+                for result in recorded_exchange.tool_results
             )
-            insert_at = _insert_index(request.tool_result_insert_index, len(input_items))
+            insert_at = recorded_exchange.insert_index
             input_items[insert_at:insert_at] = exchange
         payload: dict[str, object] = {
             "model": self.model,
@@ -954,6 +964,21 @@ def _json_text(value: object) -> str:
 
 def _int_value(value: object) -> int:
     return int(value) if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _tool_exchanges(request: AgentTurnRequest, message_count: int) -> tuple[AgentToolExchange, ...]:
+    """Render later boundaries first so native exchanges do not shift earlier indexes."""
+
+    exchanges = list(request.historical_tool_exchanges)
+    if any(not isinstance(item, AgentToolExchange) or not item.tool_results
+           or type(item.insert_index) is not int or not 0 <= item.insert_index <= message_count
+           for item in exchanges):
+        raise AgentTurnProviderError("AGENT_TOOL_HISTORY_INVALID")
+    if request.tool_results:
+        exchanges.append(AgentToolExchange(request.tool_results, request.provider_state,
+            _insert_index(request.tool_result_insert_index, message_count)))
+    return tuple(item for _, item in sorted(enumerate(exchanges),
+        key=lambda pair: (pair[1].insert_index, pair[0]), reverse=True))
 
 
 def _insert_index(value: int | None, length: int) -> int:

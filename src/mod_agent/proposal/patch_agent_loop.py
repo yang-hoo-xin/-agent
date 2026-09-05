@@ -7,7 +7,7 @@ import json
 import re
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
@@ -16,6 +16,7 @@ from src.libs.llm.agent_turn import (
     AgentResponseFormat,
     AgentToolCall,
     AgentToolDefinition,
+    AgentToolExchange,
     AgentToolResult,
     AgentTurnClient,
     AgentTurnProviderError,
@@ -24,6 +25,7 @@ from src.libs.llm.agent_turn import (
 )
 
 PATCH_SOURCE_INSPECTION_TOOL_NAME = "inspect_plan_binding_source"
+PATCH_UPSTREAM_REQUEST_TOOL_NAME = "request_patch_upstream"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -44,15 +46,21 @@ class PatchAgentLoopPolicy:
     max_observation_bytes: int = 32_768
     context_radius_lines: int = 64
     finalize_after_first_observation: bool = True
+    enable_supporting_reads: bool = False
+    require_source_inspection: bool = True
+    allow_upstream_request: bool = False
     max_tool_rounds: int = field(default=3, init=False)
     max_total_model_turns: int = field(default=5, init=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.finalize_after_first_observation, bool):
+        if any(type(getattr(self, name)) is not bool for name in (
+            "finalize_after_first_observation", "enable_supporting_reads",
+            "require_source_inspection", "allow_upstream_request",
+        )):
             raise PatchAgentLoopError(
                 "PATCH_AGENT_POLICY_INVALID",
                 stage="policy",
-                reason="finalize_after_first_observation must be a boolean.",
+                reason="Patch strategy switches must be boolean values.",
             )
         for name in ("max_observation_bytes", "context_radius_lines"):
             value = getattr(self, name)
@@ -73,12 +81,13 @@ class PatchSourceObservation:
     source_ref: str
     source_hash: str
     source_snapshot_sha256: str
-    target_span: dict[str, int]
-    excerpt_span: dict[str, int]
+    target_span: dict[str, int] | None
+    excerpt_span: dict[str, int] | None
     excerpt: str
     truncated: bool
     payload_sha256: str
     model_payload_bytes: int
+    registered_evidence_identity: Mapping[str, str] | None = None
 
     def model_view(self) -> dict[str, object]:
         """Return the bounded ref-first payload visible to the model."""
@@ -89,11 +98,12 @@ class PatchSourceObservation:
             "source_ref": self.source_ref,
             "source_hash": self.source_hash,
             "source_snapshot_sha256": self.source_snapshot_sha256,
-            "target_span": dict(self.target_span),
-            "excerpt_span": dict(self.excerpt_span),
+            "target_span": dict(self.target_span) if self.target_span is not None else None,
+            "excerpt_span": dict(self.excerpt_span) if self.excerpt_span is not None else None,
             "excerpt": self.excerpt,
             "truncated": self.truncated,
             "observation_sha256": self.payload_sha256,
+            **(dict(self.registered_evidence_identity) if self.registered_evidence_identity is not None else {}),
         }
 
 
@@ -114,6 +124,7 @@ class PatchAgentLoopResult:
     termination: dict[str, object]
     # In-process context for a subsequent correction; deliberately excluded from receipts.
     final_request: AgentTurnRequest | None = field(default=None, repr=False, compare=False)
+    tool_availability_trace: tuple[dict[str, object], ...] = ()
 
     @property
     def completed(self) -> bool:
@@ -144,6 +155,7 @@ class PatchAgentLoopResult:
                 deepcopy(item) for item in self.observation_trace
             ],
             "termination": deepcopy(self.termination),
+            "tool_availability_trace": [deepcopy(item) for item in self.tool_availability_trace],
         }
 
 
@@ -156,8 +168,20 @@ class _BoundSource:
     target_span: dict[str, int]
 
 
+@dataclass(frozen=True)
+class _RegisteredApiEvidence:
+    """Immutable registered Evidence content; its source file is never opened here."""
+
+    binding_id: str
+    source_hash: str
+    excerpt: str
+    evidence_id: str
+    evidence_item_sha256: str
+    excerpt_sha256: str
+
+
 class PlanBoundSourceInspector:
-    """Read only source bytes already authorized by Plan edit bindings."""
+    """Read current registered source without promoting read scope into edit authority."""
 
     def __init__(
         self,
@@ -165,6 +189,7 @@ class PlanBoundSourceInspector:
         workspace_root: str | Path,
         implementation_plan: Mapping[str, Any],
         policy: PatchAgentLoopPolicy,
+        evidence_pack: Mapping[str, Any] | None = None,
     ) -> None:
         if not isinstance(policy, PatchAgentLoopPolicy):
             raise PatchAgentLoopError(
@@ -262,23 +287,96 @@ class PlanBoundSourceInspector:
             )
         binding_order = selected_binding_ids
 
+        edit_source_hashes = dict(source_hashes)
+        read_binding_order = list(binding_order)
+        registered_api: dict[str, _RegisteredApiEvidence] = {}
+        if policy.enable_supporting_reads:
+            raw_supporting = registry.get("supporting_bindings", [])
+            if not isinstance(raw_supporting, (list, tuple)):
+                raise PatchAgentLoopError("PATCH_AGENT_PLAN_BINDINGS_INVALID",
+                    stage="source_admission", reason="Supporting bindings must be a list.")
+            raw_items = evidence_pack.get("items") if isinstance(evidence_pack, Mapping) else None
+            if raw_supporting and not isinstance(raw_items, (list, tuple)):
+                raise PatchAgentLoopError("PATCH_AGENT_SUPPORTING_EVIDENCE_REQUIRED",
+                    stage="source_admission", reason="Supporting reads require their EvidencePack.")
+            evidence_by_id: dict[str, Mapping[str, Any]] = {}
+            for item in raw_items or ():
+                evidence_id = item.get("evidence_id") if isinstance(item, Mapping) else None
+                if type(evidence_id) is not str or not evidence_id or evidence_id in evidence_by_id:
+                    raise PatchAgentLoopError("PATCH_AGENT_SUPPORTING_EVIDENCE_MISMATCH",
+                        stage="source_admission", reason="Evidence identities must be present and unique.")
+                evidence_by_id[evidence_id] = item
+            for raw_support in raw_supporting:
+                if not isinstance(raw_support, Mapping):
+                    raise PatchAgentLoopError("PATCH_AGENT_PLAN_BINDINGS_INVALID",
+                        stage="source_admission", reason="Every supporting binding must be an object.")
+                if raw_support.get("source_type") not in {"target_source", "decompiled_api"}:
+                    continue
+                item = evidence_by_id.get(raw_support.get("evidence_id"))
+                if item is None or any(raw_support.get(plan_key) != item.get(evidence_key)
+                    for plan_key, evidence_key in (("source_path", "source_path"),
+                        ("source_type", "source_type"), ("target_span", "span"),
+                        ("target_symbol", "symbol"))):
+                    raise PatchAgentLoopError("PATCH_AGENT_SUPPORTING_EVIDENCE_MISMATCH",
+                        stage="source_admission", reason="Supporting source identity differs from its exact Evidence item.")
+                if item["source_type"] == "decompiled_api":
+                    binding_id = raw_support.get("binding_id")
+                    source_hash = item.get("source_hash")
+                    excerpt = item.get("excerpt")
+                    if (type(binding_id) is not str or not binding_id or binding_id in read_binding_order
+                        or type(source_hash) is not str or re.fullmatch(r"[0-9a-fA-F]{64}", source_hash) is None
+                        or type(excerpt) is not str or not excerpt
+                        or (item.get("file_hash") is not None and item["file_hash"] != source_hash)):
+                        raise PatchAgentLoopError("PATCH_AGENT_REGISTERED_API_EVIDENCE_INVALID", stage="source_admission",
+                            reason="Registered API content requires an exact source identity and nonempty excerpt.")
+                    registered_api[binding_id] = _RegisteredApiEvidence(binding_id=binding_id,
+                        source_hash=source_hash, excerpt=excerpt, evidence_id=item["evidence_id"],
+                        evidence_item_sha256=_canonical_sha256(item),
+                        excerpt_sha256=hashlib.sha256(excerpt.encode("utf-8")).hexdigest())
+                    read_binding_order.append(binding_id)
+                    continue
+                binding = self._admit_binding(root, {
+                    "binding_id": raw_support.get("binding_id"),
+                    "canonical_target_path": item.get("source_path"),
+                    "source_hash": item.get("source_hash"), "target_span": item.get("span"),
+                })
+                if binding.binding_id in read_binding_order:
+                    raise PatchAgentLoopError("PATCH_AGENT_PLAN_BINDINGS_INVALID",
+                        stage="source_admission", reason="Read binding ids must be unique across edit and supporting scopes.")
+                if binding.relative_path in source_hashes and source_hashes[binding.relative_path] != binding.source_hash:
+                    raise PatchAgentLoopError("PATCH_AGENT_PLAN_SOURCE_IDENTITY_CONFLICT",
+                        stage="source_admission", reason="Read and edit source identities conflict.")
+                bindings[binding.binding_id] = binding
+                read_binding_order.append(binding.binding_id)
+                source_hashes[binding.relative_path] = binding.source_hash
+                source_paths[binding.relative_path] = binding.path
+
         self.workspace_root = root
         self.policy = policy
         self._bindings = bindings
+        self._registered_api = registered_api
         self._binding_order = tuple(binding_order)
+        self._read_binding_order = tuple(read_binding_order)
         self._source_hashes = source_hashes
         self._source_paths = source_paths
         self._assert_snapshot_current(code="PATCH_AGENT_SOURCE_HASH_MISMATCH")
         self.source_snapshot_sha256 = _canonical_sha256(
             [
-                {"source_path": relative_path, "source_hash": source_hashes[relative_path]}
-                for relative_path in sorted(source_hashes)
+                {"source_path": relative_path, "source_hash": edit_source_hashes[relative_path]}
+                for relative_path in sorted(edit_source_hashes)
             ]
         )
+        self.read_source_snapshot_sha256 = _canonical_sha256([
+            {"source_path": path, "source_hash": source_hashes[path]} for path in sorted(source_hashes)
+        ])
 
     @property
     def available_binding_ids(self) -> tuple[str, ...]:
         return self._binding_order
+
+    @property
+    def available_read_binding_ids(self) -> tuple[str, ...]:
+        return self._read_binding_order
 
     def validate_snapshot(self) -> str:
         """Revalidate every Plan-bound source and return the frozen snapshot hash."""
@@ -292,11 +390,11 @@ class PlanBoundSourceInspector:
         binding_id: str,
         observation_id: str,
     ) -> PatchSourceObservation:
-        if type(binding_id) is not str or binding_id not in self._bindings:
+        if type(binding_id) is not str or binding_id not in self._read_binding_order:
             raise PatchAgentLoopError(
                 "PATCH_AGENT_BINDING_UNKNOWN",
                 stage="tool_admission",
-                reason="The requested binding id is not in the exact Plan edit registry.",
+                reason="The requested binding id is not in the admitted Plan read scope.",
             )
         if type(observation_id) is not str or not observation_id:
             raise PatchAgentLoopError(
@@ -305,6 +403,8 @@ class PlanBoundSourceInspector:
                 reason="The tool observation id must be non-empty text.",
             )
         self.validate_snapshot()
+        if binding_id in self._registered_api:
+            return self._inspect_registered_api(binding_id=binding_id, observation_id=observation_id)
         binding = self._bindings[binding_id]
         try:
             source_bytes = binding.path.read_bytes()
@@ -358,6 +458,30 @@ class PlanBoundSourceInspector:
             payload_sha256=payload_sha256,
             model_payload_bytes=model_payload_bytes,
         )
+
+    def _inspect_registered_api(self, *, binding_id: str, observation_id: str) -> PatchSourceObservation:
+        item = self._registered_api[binding_id]
+        identity = {
+            "observation_kind": "registered_api_evidence",
+            "source_identity_status": "registered_not_live_revalidated",
+            "evidence_id": item.evidence_id,
+            "evidence_item_sha256": item.evidence_item_sha256,
+            "excerpt_sha256": item.excerpt_sha256,
+        }
+        base_payload = {
+            "observation_id": observation_id, "binding_id": binding_id,
+            "source_ref": f"binding://{binding_id}", "source_hash": item.source_hash,
+            "source_snapshot_sha256": self.source_snapshot_sha256,
+            "target_span": None, "excerpt_span": None,
+            "excerpt": item.excerpt, "truncated": False, **identity,
+        }
+        payload_hash = _canonical_sha256(base_payload)
+        return PatchSourceObservation(observation_id=observation_id, binding_id=binding_id,
+            source_ref=f"binding://{binding_id}", source_hash=item.source_hash,
+            source_snapshot_sha256=self.source_snapshot_sha256, target_span=None, excerpt_span=None,
+            excerpt=item.excerpt, truncated=False, payload_sha256=payload_hash,
+            model_payload_bytes=len(_canonical_json({**base_payload, "observation_sha256": payload_hash}).encode("utf-8")),
+            registered_evidence_identity=identity)
 
     @staticmethod
     def _admit_binding(root: Path, raw_binding: Mapping[str, Any]) -> _BoundSource:
@@ -483,10 +607,25 @@ def run_patch_agent_loop(
     final_response_format: AgentResponseFormat,
     source_inspector: PlanBoundSourceInspector,
     policy: PatchAgentLoopPolicy | None = None,
+    resume_request: AgentTurnRequest | None = None,
+    consumed_model_turns: int = 0,
+    consumed_tool_rounds: int = 0,
+    consumed_observation_bytes: int = 0,
+    reserve_model_turns: int = 0,
 ) -> PatchAgentLoopResult:
     """Run bounded source inspection turns and return final Patch content or a receipt."""
 
     selected_policy = policy or source_inspector.policy
+    for value in (consumed_model_turns, consumed_tool_rounds, consumed_observation_bytes, reserve_model_turns):
+        if type(value) is not int or value < 0:
+            raise PatchAgentLoopError("PATCH_AGENT_LOOP_BUDGET_INVALID", stage="loop_admission",
+                reason="Consumed and reserved budget counters must be non-negative integers.")
+    if consumed_model_turns > selected_policy.max_total_model_turns or consumed_tool_rounds > selected_policy.max_tool_rounds:
+        raise PatchAgentLoopError("PATCH_AGENT_LOOP_BUDGET_INVALID", stage="loop_admission",
+            reason="Consumed counters exceed the shared policy.")
+    if resume_request is not None and not isinstance(resume_request, AgentTurnRequest):
+        raise PatchAgentLoopError("PATCH_AGENT_LOOP_INPUT_INVALID", stage="loop_admission",
+            reason="Resuming requires an AgentTurnRequest.")
     if selected_policy != source_inspector.policy:
         raise PatchAgentLoopError(
             "PATCH_AGENT_POLICY_MISMATCH",
@@ -509,20 +648,65 @@ def run_patch_agent_loop(
     usage_by_turn: list[dict[str, object]] = []
     tool_call_trace: list[dict[str, object]] = []
     observation_trace: list[dict[str, object]] = []
-    observations: list[PatchSourceObservation] = []
+    observations: list[PatchSourceObservation | Mapping[str, object]] = []
+    tool_availability_trace: list[dict[str, object]] = []
     inspected_binding_ids: set[str] = set()
     seen_tool_call_ids: set[str] = set()
-    total_observation_bytes = 0
-    tool_rounds_used = 0
+    total_observation_bytes = consumed_observation_bytes
+    tool_rounds_used = consumed_tool_rounds
+    allowed_model_end = selected_policy.max_total_model_turns - reserve_model_turns
+    base_request = deepcopy(resume_request) if resume_request is not None else AgentTurnRequest(messages=initial_messages)
+    old_states = [message.content for message in base_request.messages
+        if _is_loop_state(message)]
+    for state in old_states:
+        for observation in state.get("prior_observations", []):
+            if isinstance(observation, Mapping):
+                observations.append(deepcopy(observation))
+    retained_exchanges = list(base_request.historical_tool_exchanges)
+    if base_request.tool_results:
+        retained_exchanges.append(AgentToolExchange(base_request.tool_results, base_request.provider_state,
+            base_request.tool_result_insert_index if base_request.tool_result_insert_index is not None else len(base_request.messages)))
+    for exchange in retained_exchanges:
+        for tool_result in exchange.tool_results:
+            seen_tool_call_ids.add(tool_result.call_id)
+            if tool_result.name == PATCH_SOURCE_INSPECTION_TOOL_NAME and isinstance(tool_result.output, Mapping):
+                binding_id = tool_result.output.get("binding_id")
+                if isinstance(binding_id, str):
+                    inspected_binding_ids.add(binding_id)
+    for observation in observations:
+        binding_id = observation.get("binding_id")
+        if isinstance(binding_id, str):
+            inspected_binding_ids.add(binding_id)
+    if resume_request is not None:
+        prior_model_floor = max((state.get("budget_state", {}).get("model_turns_used", 0) + 1
+            for state in old_states), default=0)
+        if consumed_model_turns < prior_model_floor or consumed_tool_rounds < len(inspected_binding_ids):
+            raise PatchAgentLoopError("PATCH_AGENT_LOOP_BUDGET_INVALID", stage="loop_admission",
+                reason="Resume counters cannot discard calls or inspections recorded in the prior request.")
+    base_request = _without_loop_states(base_request)
+
+    def result_for_segment(**kwargs: Any) -> PatchAgentLoopResult:
+        kwargs["model_turns_used"] -= consumed_model_turns
+        kwargs["tool_rounds_used"] -= consumed_tool_rounds
+        kwargs["total_observation_bytes"] -= consumed_observation_bytes
+        return replace(_loop_result(**kwargs), tool_availability_trace=tuple(deepcopy(tool_availability_trace)))
     pending_response: AgentTurnResponse | None = None
     pending_observation: PatchSourceObservation | None = None
     force_final = False
 
-    for turn_index in range(1, selected_policy.max_total_model_turns + 1):
+    if consumed_model_turns >= allowed_model_end or consumed_observation_bytes > selected_policy.max_observation_bytes:
+        return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+            model_turns_used=consumed_model_turns, tool_rounds_used=tool_rounds_used,
+            total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+            tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+            termination=_termination("PATCH_AGENT_MODEL_TURN_BUDGET_EXHAUSTED" if consumed_model_turns >= allowed_model_end
+                else "PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED", "No shared budget remains for this segment.", consumed_model_turns))
+
+    for turn_index in range(consumed_model_turns + 1, allowed_model_end + 1):
         try:
             source_inspector.validate_snapshot()
         except PatchAgentLoopError as exc:
-            return _loop_result(
+            return result_for_segment(
                 status="blocked",
                 final_content=None,
                 provider=provider,
@@ -538,11 +722,12 @@ def run_patch_agent_loop(
 
         remaining_binding_ids = tuple(
             binding_id
-            for binding_id in source_inspector.available_binding_ids
+            for binding_id in source_inspector.available_read_binding_ids
             if binding_id not in inspected_binding_ids
         )
         must_finish = (
             force_final
+            or turn_index >= allowed_model_end
             or tool_rounds_used >= selected_policy.max_tool_rounds
             or (
                 selected_policy.finalize_after_first_observation
@@ -550,9 +735,20 @@ def run_patch_agent_loop(
             )
             or not remaining_binding_ids
         )
-        prior_observations = (
-            observations[:-1] if pending_observation is not None else observations
-        )
+        native_observation_ids = {
+            result.output.get("observation_id")
+            for exchange in base_request.historical_tool_exchanges
+            for result in exchange.tool_results
+            if isinstance(result.output, Mapping)
+        }
+        native_observation_ids.update(result.output.get("observation_id")
+            for result in base_request.tool_results if isinstance(result.output, Mapping))
+        if pending_observation is not None:
+            native_observation_ids.add(pending_observation.observation_id)
+        # Keep older non-native observations, but do not duplicate retained native payloads.
+        prior_observations = [observation for observation in observations
+            if (observation.observation_id if isinstance(observation, PatchSourceObservation)
+                else observation.get("observation_id")) not in native_observation_ids]
         state_message = _loop_state_message(
             policy=selected_policy,
             source_inspector=source_inspector,
@@ -561,6 +757,7 @@ def run_patch_agent_loop(
             tool_rounds_used=tool_rounds_used,
             force_final=must_finish,
             final_response_format=final_response_format,
+            reserve_model_turns=reserve_model_turns,
         )
         tool_results = (
             (
@@ -573,32 +770,35 @@ def run_patch_agent_loop(
             if pending_response is not None and pending_observation is not None
             else ()
         )
+        history = base_request.historical_tool_exchanges
+        if tool_results and base_request.tool_results:
+            history = (*history, AgentToolExchange(base_request.tool_results, base_request.provider_state,
+                base_request.tool_result_insert_index if base_request.tool_result_insert_index is not None else len(base_request.messages)))
+        available_tools = (
+            () if must_finish else (_source_tool_definition(source_inspector, binding_ids=remaining_binding_ids),)
+        ) + ((_upstream_tool_definition(source_inspector),) if selected_policy.allow_upstream_request else ())
         request = AgentTurnRequest(
-            messages=(*initial_messages, state_message),
-            tools=(
-                ()
-                if must_finish
-                else (
-                    _source_tool_definition(
-                        source_inspector,
-                        binding_ids=remaining_binding_ids,
-                    ),
-                )
-            ),
+            messages=(*base_request.messages, state_message),
+            tools=available_tools,
             tool_choice=(
                 "none"
-                if must_finish
+                if not available_tools
                 else "required"
-                if turn_index == 1 and tool_rounds_used == 0
+                if selected_policy.require_source_inspection and tool_rounds_used == 0
                 else "auto"
             ),
             parallel_tool_calls=False,
             response_format=final_response_format if must_finish else None,
-            tool_results=tool_results,
-            tool_result_insert_index=(len(initial_messages) if tool_results else None),
-            provider_state=(pending_response.provider_state if tool_results else None),
+            tool_results=tool_results or base_request.tool_results,
+            tool_result_insert_index=(len(base_request.messages) if tool_results else base_request.tool_result_insert_index),
+            provider_state=(pending_response.provider_state if tool_results else base_request.provider_state),
             temperature=0.0,
+            historical_tool_exchanges=history,
         )
+        availability: dict[str, object] = {"turn_index": turn_index,
+            "allowed_tools": [tool.name for tool in request.tools],
+            "selection": "forbidden" if not request.tools else "allowed_not_selected"}
+        tool_availability_trace.append(availability)
         try:
             response = client.complete_turn(request)
         except AgentTurnProviderError as exc:
@@ -613,7 +813,7 @@ def run_patch_agent_loop(
                     "usage_available": False,
                 }
             )
-            return _loop_result(
+            return result_for_segment(
                 status="blocked",
                 final_content=None,
                 provider=provider,
@@ -632,7 +832,7 @@ def run_patch_agent_loop(
                 ),
             )
         if not isinstance(response, AgentTurnResponse):
-            return _loop_result(
+            return result_for_segment(
                 status="blocked",
                 final_content=None,
                 provider=provider,
@@ -651,6 +851,8 @@ def run_patch_agent_loop(
             )
         provider = response.provider
         model = response.model
+        if response.tool_calls:
+            availability["selection"] = "selected" if request.tools else "forbidden_attempt"
         usage_by_turn.append(_usage_record(turn_index, response))
         pending_response = None
         pending_observation = None
@@ -661,7 +863,7 @@ def run_patch_agent_loop(
                 tool_call_trace.append(
                     _tool_trace(call, turn_index=turn_index, status="rejected", code=code)
                 )
-            return _loop_result(
+            return result_for_segment(
                 status="blocked",
                 final_content=None,
                 provider=provider,
@@ -681,6 +883,20 @@ def run_patch_agent_loop(
 
         if response.tool_calls:
             call = response.tool_calls[0]
+            if call.name == PATCH_UPSTREAM_REQUEST_TOOL_NAME:
+                code, upstream = _validate_upstream_request(call, source_inspector, selected_policy,
+                    tool_available=any(tool.name == PATCH_UPSTREAM_REQUEST_TOOL_NAME for tool in request.tools))
+                tool_call_trace.append(_tool_trace(call, turn_index=turn_index,
+                    status="accepted" if upstream is not None else "rejected", code=code,
+                    dispatch_started=False))
+                termination = _termination(code, "The model requested upstream assessment; no route or authority was granted.", turn_index)
+                if upstream is not None:
+                    termination["upstream_request"] = upstream
+                return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                    model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                    total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                    tool_call_trace=tool_call_trace, observation_trace=observation_trace, termination=termination,
+                    final_request=request)
             code: str | None = None
             reason = ""
             if type(call.call_id) is not str or not call.call_id:
@@ -692,7 +908,7 @@ def run_patch_agent_loop(
             elif tool_rounds_used >= selected_policy.max_tool_rounds:
                 code = "PATCH_AGENT_TOOL_ROUND_BUDGET_EXHAUSTED"
                 reason = "The fixed source-inspection tool-round budget was exhausted."
-            elif turn_index >= selected_policy.max_total_model_turns:
+            elif turn_index >= allowed_model_end:
                 code = "PATCH_AGENT_MODEL_TURN_BUDGET_EXHAUSTED"
                 reason = "No model turn remains to consume another tool observation."
             elif (
@@ -710,14 +926,17 @@ def run_patch_agent_loop(
                 elif call.call_id in seen_tool_call_ids:
                     code = "PATCH_AGENT_TOOL_CALL_ID_REUSED"
                     reason = "The provider reused a tool call id."
-                elif binding_id not in source_inspector.available_binding_ids:
+                elif binding_id not in source_inspector.available_read_binding_ids:
                     code = "PATCH_AGENT_BINDING_UNKNOWN"
                     reason = "The requested binding id is not selected by the Plan."
+                elif not any(tool.name == PATCH_SOURCE_INSPECTION_TOOL_NAME for tool in request.tools):
+                    code = "PATCH_AGENT_TOOL_FORBIDDEN"
+                    reason = "Source inspection is disabled for this turn."
             if code is not None:
                 tool_call_trace.append(
                     _tool_trace(call, turn_index=turn_index, status="rejected", code=code)
                 )
-                return _loop_result(
+                return result_for_segment(
                     status="blocked",
                     final_content=None,
                     provider=provider,
@@ -740,6 +959,7 @@ def run_patch_agent_loop(
                     observation_id=f"patch-observation-{tool_rounds_used:03d}",
                 )
             except PatchAgentLoopError as exc:
+                availability["selection"] = "execution_failed"
                 tool_call_trace.append(
                     _tool_trace(
                         call,
@@ -749,7 +969,7 @@ def run_patch_agent_loop(
                         dispatch_started=True,
                     )
                 )
-                return _loop_result(
+                return result_for_segment(
                     status="blocked",
                     final_content=None,
                     provider=provider,
@@ -784,7 +1004,7 @@ def run_patch_agent_loop(
                         dispatch_started=True,
                     )
                 )
-                return _loop_result(
+                return result_for_segment(
                     status="blocked",
                     final_content=None,
                     provider=provider,
@@ -813,11 +1033,12 @@ def run_patch_agent_loop(
             observations.append(observation)
             pending_response = response
             pending_observation = observation
+            base_request = _without_loop_states(request)
             continue
 
         content = response.content
-        if turn_index == 1 and tool_rounds_used == 0:
-            return _loop_result(
+        if selected_policy.require_source_inspection and tool_rounds_used == 0:
+            return result_for_segment(
                 status="blocked",
                 final_content=None,
                 provider=provider,
@@ -838,7 +1059,7 @@ def run_patch_agent_loop(
             try:
                 source_inspector.validate_snapshot()
             except PatchAgentLoopError as exc:
-                return _loop_result(
+                return result_for_segment(
                     status="blocked",
                     final_content=None,
                     provider=provider,
@@ -851,7 +1072,7 @@ def run_patch_agent_loop(
                     observation_trace=observation_trace,
                     termination=_termination(exc.code, exc.reason, turn_index),
                 )
-            return _loop_result(
+            return result_for_segment(
                 status="completed",
                 final_content=content,
                 final_request=request,
@@ -871,8 +1092,8 @@ def run_patch_agent_loop(
                 ),
             )
 
-        if turn_index >= selected_policy.max_total_model_turns:
-            return _loop_result(
+        if turn_index >= allowed_model_end:
+            return result_for_segment(
                 status="blocked",
                 final_content=None,
                 provider=provider,
@@ -899,12 +1120,14 @@ def _source_tool_definition(
     *,
     binding_ids: tuple[str, ...] | None = None,
 ) -> AgentToolDefinition:
-    allowed_binding_ids = binding_ids or inspector.available_binding_ids
+    allowed_binding_ids = inspector.available_read_binding_ids if binding_ids is None else binding_ids
     return AgentToolDefinition(
         name=PATCH_SOURCE_INSPECTION_TOOL_NAME,
         description=(
             "Read a bounded current-source excerpt for one exact ImplementationPlan "
-            "edit binding. Select only a listed binding_id; paths are not accepted."
+            "read binding. Reading supporting source does not grant edit permission. "
+            "Registered API bindings return the complete saved Evidence excerpt, not a new live API inspection. "
+            "Select only a listed binding_id; paths are not accepted."
         ),
         parameters={
             "type": "object",
@@ -925,30 +1148,39 @@ def _loop_state_message(
     *,
     policy: PatchAgentLoopPolicy,
     source_inspector: PlanBoundSourceInspector,
-    prior_observations: list[PatchSourceObservation],
+    prior_observations: list[PatchSourceObservation | Mapping[str, object]],
     model_turns_used: int,
     tool_rounds_used: int,
     force_final: bool,
     final_response_format: AgentResponseFormat,
+    reserve_model_turns: int = 0,
 ) -> AgentMessage:
     return AgentMessage(
         role="user",
         content={
             "message_type": "patch_agent_loop_state",
             "allowed_binding_ids": list(source_inspector.available_binding_ids),
+            "allowed_read_binding_ids": list(source_inspector.available_read_binding_ids),
             "source_snapshot_sha256": source_inspector.source_snapshot_sha256,
+            "read_source_snapshot_sha256": source_inspector.read_source_snapshot_sha256,
             "prior_observations": [
-                observation.model_view() for observation in prior_observations
+                observation.model_view() if isinstance(observation, PatchSourceObservation) else deepcopy(dict(observation))
+                for observation in prior_observations
             ],
             "budget_state": {
                 "model_turns_used": model_turns_used,
                 "remaining_model_turns": policy.max_total_model_turns
-                - model_turns_used,
+                - model_turns_used - reserve_model_turns,
+                "reserved_model_turns": reserve_model_turns,
                 "tool_rounds_used": tool_rounds_used,
                 "remaining_tool_rounds": policy.max_tool_rounds
                 - tool_rounds_used,
             },
-            "required_next_action": "finish" if force_final else "inspect_or_finish",
+            "required_next_action": (
+                "finish_or_request_upstream" if force_final and policy.allow_upstream_request
+                else "finish" if force_final else "inspect_or_finish_or_request_upstream"
+                if policy.allow_upstream_request else "inspect_or_finish"
+            ),
             "final_response_contract": {
                 "name": final_response_format.name,
                 "description": final_response_format.description,
@@ -958,6 +1190,68 @@ def _loop_state_message(
             },
         },
     )
+
+
+def _is_loop_state(message: AgentMessage) -> bool:
+    return (message.role == "user" and isinstance(message.content, Mapping)
+        and message.content.get("message_type") == "patch_agent_loop_state")
+
+
+def _without_loop_states(request: AgentTurnRequest) -> AgentTurnRequest:
+    """Replace dynamic loop state while preserving native exchange message boundaries."""
+
+    kept_indexes = [index for index, message in enumerate(request.messages) if not _is_loop_state(message)]
+
+    def remap(index: int | None) -> int | None:
+        if index is None:
+            return None
+        if type(index) is not int or not 0 <= index <= len(request.messages):
+            raise PatchAgentLoopError("PATCH_AGENT_LOOP_INPUT_INVALID", stage="loop_admission",
+                reason="A historical tool exchange has an invalid insertion boundary.")
+        return sum(old_index < index for old_index in kept_indexes)
+
+    return replace(request, messages=tuple(request.messages[index] for index in kept_indexes),
+        tool_result_insert_index=remap(request.tool_result_insert_index),
+        historical_tool_exchanges=tuple(replace(exchange, insert_index=remap(exchange.insert_index))
+            for exchange in request.historical_tool_exchanges))
+
+
+def _upstream_tool_definition(inspector: PlanBoundSourceInspector) -> AgentToolDefinition:
+    return AgentToolDefinition(name=PATCH_UPSTREAM_REQUEST_TOOL_NAME,
+        description="Request Evidence or Planning assessment with bound facts. This does not change routing or edit authority.",
+        parameters={"type": "object", "additionalProperties": False,
+            "required": ["required_owner", "reason", "source_refs"], "properties": {
+                "required_owner": {"type": "string", "enum": ["evidence", "planning"]},
+                "reason": {"type": "string", "minLength": 1, "maxLength": 2000},
+                "source_refs": {"type": "array", "minItems": 1, "uniqueItems": True,
+                    "items": {"type": "string", "enum": [f"binding://{binding}" for binding in inspector.available_read_binding_ids]}}
+            }})
+
+
+def _validate_upstream_request(call: AgentToolCall, inspector: PlanBoundSourceInspector,
+    policy: PatchAgentLoopPolicy, *, tool_available: bool) -> tuple[str, dict[str, object] | None]:
+    if not policy.allow_upstream_request or not tool_available:
+        return "PATCH_AGENT_TOOL_FORBIDDEN", None
+    arguments = call.arguments
+    refs = arguments.get("source_refs")
+    reason = arguments.get("reason")
+    if (not isinstance(call.call_id, str) or not call.call_id
+        or set(arguments) != {"required_owner", "reason", "source_refs"}
+        or arguments.get("required_owner") not in ("evidence", "planning")
+        or not isinstance(reason, str) or not reason.strip() or len(reason) > 2000
+        or not isinstance(refs, list) or not refs
+        or any(not isinstance(ref, str) for ref in refs)
+        or len(refs) != len(set(refs))
+        or not set(refs) <= {f"binding://{binding}" for binding in inspector.available_read_binding_ids}):
+        return "PATCH_AGENT_UPSTREAM_REQUEST_INVALID", None
+    try:
+        inspector.validate_snapshot()
+    except PatchAgentLoopError as exc:
+        return exc.code, None
+    return "PATCH_AGENT_UPSTREAM_REQUESTED", {**deepcopy(arguments),
+        "source_snapshot_sha256": inspector.source_snapshot_sha256,
+        "read_source_snapshot_sha256": inspector.read_source_snapshot_sha256,
+        "assessment_required": True}
 
 
 def _usage_record(turn_index: int, response: AgentTurnResponse) -> dict[str, object]:
@@ -1018,6 +1312,7 @@ def _observation_trace(
         "observation_sha256": observation.payload_sha256,
         "model_payload_bytes": observation.model_payload_bytes,
         "admitted_to_model": admitted_to_model,
+        **(dict(observation.registered_evidence_identity) if observation.registered_evidence_identity is not None else {}),
     }
 
 

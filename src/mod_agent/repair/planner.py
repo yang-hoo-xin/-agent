@@ -17,7 +17,7 @@ from src.mod_agent.proposal.models import (
 )
 from src.mod_agent.runtime.evidence import normalize_runtime_failure_ownership
 
-FailureSource = Literal["build", "runtime", "eval", "proposal_review"]
+FailureSource = Literal["build", "runtime", "eval", "proposal_review", "behavior_report"]
 RepairSemanticDecisionKind = Literal[
     "repair_ready",
     "evidence_insufficient",
@@ -140,6 +140,67 @@ class RepairPlanner:
         if retry_budget < 0:
             raise ValueError("retry_budget must be non-negative")
         self.retry_budget = retry_budget
+
+    def from_behavior_failure(
+        self, *, repair_context: dict[str, Any], feature_id: str,
+        target_behavior: str, retry_count: int,
+    ) -> RepairPlan:
+        """Route admitted observations; a passed Review remains passed history."""
+        report = repair_context["failure_report"]
+        allowed = tuple(repair_context["allowed_edit_binding_ids"])
+        owner_ids = tuple(report["owner_binding_ids"])
+        owner = report.get("failure_owner")
+        exhausted = retry_count >= self.retry_budget
+        if exhausted:
+            decision, action, code = "retry_budget_exhausted", "human_review", "PATCH_REPAIR_RETRY_EXHAUSTED"
+        elif owner == "planning" or (owner == "patch_implementation" and not set(owner_ids).issubset(allowed)):
+            decision, action, code = "binding_insufficient", "planning", "PATCH_REPAIR_REPLAN_REQUIRED"
+        elif owner == "evidence":
+            decision, action, code = "evidence_insufficient", "evidence", "PATCH_REPAIR_EVIDENCE_REQUIRED"
+        elif owner in {"validator", "environment"} or report.get("status") == "infrastructure_failed":
+            decision, action, code = "verification_unavailable", "validator", "PATCH_REPAIR_VERIFIER_REQUIRED"
+        elif report.get("status") == "identity_failed":
+            decision, action, code = "source_identity_invalid", "evidence", "PATCH_REPAIR_SOURCE_IDENTITY_REQUIRED"
+        elif owner in {"unknown", None} and report.get("status") in {"needs_evidence", "behavior_failed"}:
+            decision, action, code = "investigation_ready", "generate_patch_proposal", None
+        elif owner == "patch_implementation" and owner_ids and report.get("status") == "behavior_failed":
+            decision, action, code = "repair_ready", "generate_patch_proposal", None
+        else:
+            decision, action, code = "evidence_insufficient", "evidence", "PATCH_REPAIR_OWNER_UNRESOLVED"
+        refs = (repair_context["failure_report_ref"]["path"],)
+        reason = (
+            "The failure owner is unresolved. Investigate within the existing read scope and shared budget; this working hypothesis grants no new edit authority."
+            if decision == "investigation_ready" else
+            "The bound behavior observations identify an implementation failure within the existing Plan."
+            if code is None else "The behavior observation requires its named upstream owner before another Patch."
+        )
+        blockers = () if code is None else ({
+            "stage": "repair_plan", "code": code, "message": reason,
+            "required_next_owner": action, "failure_evidence_refs": list(refs),
+        },)
+        # The parent has not been Applied: this is a whole-Patch replacement,
+        # including previously correct changes, never an owner-only delta.
+        minimal_changes = tuple({
+            "edit_binding_id": binding_id,
+            "intent": "Regenerate the complete approved-scope proposal against the unchanged base; preserve all FeatureSpec obligations.",
+        } for binding_id in allowed) if code is None else ()
+        next_count = retry_count if exhausted else retry_count + 1
+        return RepairPlan(
+            repair_id=stable_repair_id(feature_id=feature_id, failure_source="behavior_report",
+                failure_class="observed_behavior_failure", retry_count=next_count, evidence_refs=refs),
+            feature_id=feature_id, failure_source="behavior_report", failure_class="observed_behavior_failure",
+            evidence_refs=refs, hypothesis=reason, minimal_changes=minimal_changes,
+            retry_count=next_count, retry_budget=self.retry_budget,
+            retry_budget_remaining=max(self.retry_budget - next_count, 0), retry_exhausted=exhausted,
+            scope_expansion_allowed=False, stop_condition="Stop after this bounded replacement or request the recorded upstream owner; never inherit approval.",
+            forbidden_regressions=("Preserve the original FeatureSpec and behavior matrix.", "Do not modify outside existing edit bindings.", "Do not reuse the parent approval or claim Build/Runtime success."),
+            requires_new_evidence=decision == "evidence_insufficient", allowed_next_stage=action if code is None else None,
+            blockers=blockers, target_behavior=target_behavior, allowed_edit_binding_ids=allowed,
+            source_proposal=dict(repair_context["parent_proposal"]),
+            failure_findings=tuple(dict(item) for item in report["observations"]),
+            repair_context={key: value for key, value in repair_context.items() if key != "previous_response"},
+            semantic_decision={"decision": decision, "required_next_owner": action, "authority_granted": False, "reason": reason},
+        )
 
     @staticmethod
     def assess_stagger_semantic_decision(

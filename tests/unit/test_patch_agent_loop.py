@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import pytest
 
@@ -615,3 +615,213 @@ def test_loop_records_provider_failure_as_usage_unavailable(tmp_path: Path) -> N
             "usage_available": False,
         },
     )
+
+
+def _supporting_fixture(tmp_path: Path):
+    workspace, _, plan, baseline = _fixture(tmp_path)
+    support = workspace / "Mod" / "Consumer.cs"
+    support.write_text("void Consume() {}\n", encoding="utf-8")
+    item = {"evidence_id": "evidence-consumer", "source_type": "target_source",
+            "source_path": "Mod/Consumer.cs", "source_hash": hashlib.sha256(support.read_bytes()).hexdigest(),
+            "span": {"start_line": 1, "end_line": 1}, "symbol": "Consume"}
+    plan["binding_registry"]["supporting_bindings"] = [{
+        "binding_id": "support_binding_consumer", "evidence_id": item["evidence_id"],
+        "source_type": item["source_type"], "source_path": item["source_path"],
+        "target_span": item["span"], "target_symbol": item["symbol"]}]
+    return workspace, support, plan, baseline, {"items": [item]}
+
+
+def test_supporting_read_preserves_edit_authority_and_snapshot(tmp_path: Path) -> None:
+    workspace, source, plan, baseline, evidence = _supporting_fixture(tmp_path)
+    inspector = PlanBoundSourceInspector(workspace_root=workspace, implementation_plan=plan,
+        evidence_pack=evidence, policy=PatchAgentLoopPolicy(enable_supporting_reads=True))
+    assert inspector.available_binding_ids == baseline.available_binding_ids
+    assert inspector.source_snapshot_sha256 == baseline.source_snapshot_sha256
+    assert inspector.read_source_snapshot_sha256 != inspector.source_snapshot_sha256
+    assert inspector.available_read_binding_ids == ("edit_binding_001", "support_binding_consumer")
+    observation = inspector.inspect(binding_id="support_binding_consumer", observation_id="read-1")
+    assert "Consume" in observation.excerpt
+    source.write_text("changed\n", encoding="utf-8")
+    with pytest.raises(PatchAgentLoopError, match="PATCH_AGENT_SOURCE_SNAPSHOT_DRIFT"):
+        inspector.validate_snapshot()
+
+
+def test_supporting_read_requires_matching_evidence(tmp_path: Path) -> None:
+    workspace, _, plan, _, evidence = _supporting_fixture(tmp_path)
+    evidence["items"][0]["span"]["end_line"] = 2
+    plan["binding_registry"]["supporting_bindings"][0]["target_span"] = {"start_line": 1, "end_line": 1}
+    with pytest.raises(PatchAgentLoopError, match="PATCH_AGENT_SUPPORTING_EVIDENCE_MISMATCH"):
+        PlanBoundSourceInspector(workspace_root=workspace, implementation_plan=plan,
+            evidence_pack=evidence, policy=PatchAgentLoopPolicy(enable_supporting_reads=True))
+
+
+def test_optional_inspection_can_finish_without_forced_read(tmp_path: Path) -> None:
+    _, _, _, inspector = _fixture(tmp_path, policy=PatchAgentLoopPolicy(require_source_inspection=False))
+    client = _ScriptedClient([_response(turn=1, content='{"changes":[]}')])
+    result = _run(client, inspector)
+    assert result.completed
+    assert client.requests[0].tool_choice == "auto"
+    assert result.to_dict()["tool_availability_trace"][0]["selection"] == "allowed_not_selected"
+
+
+def test_resume_keeps_tool_history_and_shares_budgets(tmp_path: Path) -> None:
+    from dataclasses import replace
+    _, _, _, inspector = _fixture(tmp_path, binding_count=2,
+        policy=PatchAgentLoopPolicy(require_source_inspection=False, finalize_after_first_observation=False))
+    original = _ScriptedClient([_response(turn=1, tool_calls=(_tool_call("edit_binding_001", turn=1),)),
+                                _response(turn=2, content='{"changes":[]}')])
+    first = _run(original, inspector)
+    previous = replace(first.final_request, messages=(*first.final_request.messages,
+        AgentMessage(role="assistant", content=first.final_content), AgentMessage(role="user", content="failure")))
+    resumed = _ScriptedClient([_response(turn=3, tool_calls=(_tool_call("edit_binding_002", turn=3),)),
+                              _response(turn=4, content='{"changes":[]}')])
+    result = run_patch_agent_loop(client=resumed, initial_messages=previous.messages,
+        resume_request=previous, final_response_format=_final_format(), source_inspector=inspector,
+        consumed_model_turns=2, consumed_tool_rounds=1, consumed_observation_bytes=first.total_observation_bytes,
+        reserve_model_turns=1)
+    assert result.completed and result.model_turns_used == 2 and result.tool_rounds_used == 1
+    assert resumed.requests[0].tool_results == previous.tool_results
+    assert resumed.requests[0].provider_state == previous.provider_state
+    states = [m.content for m in resumed.requests[0].messages if isinstance(m.content, dict)
+              and m.content.get("message_type") == "patch_agent_loop_state"]
+    assert len(states) == 1 and states[0]["budget_state"]["model_turns_used"] == 2
+    assert resumed.requests[1].tools == ()
+    assert resumed.requests[1].historical_tool_exchanges[0].tool_results == previous.tool_results
+    assert resumed.requests[1].historical_tool_exchanges[0].provider_state == previous.provider_state
+    assert resumed.requests[1].tool_results[0].output["binding_id"] == "edit_binding_002"
+
+
+def test_reserved_budget_stops_before_provider_call(tmp_path: Path) -> None:
+    _, _, _, inspector = _fixture(tmp_path)
+    client = _ScriptedClient([])
+    result = run_patch_agent_loop(client=client, initial_messages=(AgentMessage(role="user", content="patch"),),
+        source_inspector=inspector, final_response_format=_final_format(), consumed_model_turns=4, reserve_model_turns=1)
+    assert not client.requests and result.model_turns_used == 0
+    assert result.termination["code"] == "PATCH_AGENT_MODEL_TURN_BUDGET_EXHAUSTED"
+
+
+def test_upstream_request_is_validated_and_does_not_edit(tmp_path: Path) -> None:
+    _, source, _, inspector = _fixture(tmp_path, policy=PatchAgentLoopPolicy(
+        require_source_inspection=False, allow_upstream_request=True))
+    before = source.read_bytes()
+    client = _ScriptedClient([_response(turn=1, tool_calls=(AgentToolCall(call_id="upstream-1",
+        name="request_patch_upstream", arguments={"required_owner": "planning", "reason": "Required edit is outside current bindings.",
+        "source_refs": ["binding://edit_binding_001"]}),))])
+    result = _run(client, inspector)
+    assert result.termination["code"] == "PATCH_AGENT_UPSTREAM_REQUESTED"
+    assert result.termination["upstream_request"]["required_owner"] == "planning"
+    assert source.read_bytes() == before and result.tool_rounds_used == 0
+
+
+@pytest.mark.parametrize("arguments", [
+    {"required_owner": "apply", "reason": "request", "source_refs": ["binding://edit_binding_001"]},
+    {"required_owner": "planning", "reason": "request", "source_refs": ["binding://unregistered"]},
+    {"required_owner": "evidence", "reason": "", "source_refs": ["binding://edit_binding_001"]},
+])
+def test_upstream_request_cannot_create_route_or_source_authority(tmp_path: Path, arguments) -> None:
+    _, _, _, inspector = _fixture(tmp_path, policy=PatchAgentLoopPolicy(
+        require_source_inspection=False, allow_upstream_request=True))
+    result = _run(_ScriptedClient([_response(turn=1, tool_calls=(AgentToolCall(
+        call_id="request-1", name="request_patch_upstream", arguments=arguments),))]), inspector)
+    assert result.termination["code"] == "PATCH_AGENT_UPSTREAM_REQUEST_INVALID"
+    assert "upstream_request" not in result.termination
+
+
+def test_resume_cannot_repeat_prior_read_or_reset_observation_budget(tmp_path: Path) -> None:
+    _, _, _, inspector = _fixture(tmp_path, binding_count=2)
+    first = _run(_ScriptedClient([
+        _response(turn=1, tool_calls=(_tool_call("edit_binding_001", turn=1),)),
+        _response(turn=2, content='{"changes":[]}'),
+    ]), inspector)
+    repeated = _ScriptedClient([_response(turn=3, tool_calls=(_tool_call("edit_binding_001", turn=3),))])
+    result = run_patch_agent_loop(client=repeated, initial_messages=first.final_request.messages,
+        resume_request=first.final_request, final_response_format=_final_format(), source_inspector=inspector,
+        consumed_model_turns=2, consumed_tool_rounds=1, consumed_observation_bytes=first.total_observation_bytes)
+    assert result.termination["code"] == "PATCH_AGENT_REPEATED_TOOL_CALL"
+    assert result.model_turns_used == 1 and result.tool_rounds_used == 0
+    no_budget = _ScriptedClient([_response(turn=3, tool_calls=(_tool_call("edit_binding_002", turn=3),))])
+    result = run_patch_agent_loop(client=no_budget, initial_messages=first.final_request.messages,
+        resume_request=first.final_request, final_response_format=_final_format(), source_inspector=inspector,
+        consumed_model_turns=2, consumed_tool_rounds=1, consumed_observation_bytes=inspector.policy.max_observation_bytes)
+    assert result.termination["code"] == "PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED"
+    assert result.total_observation_bytes > 0
+
+
+def test_loop_source_policy_disable_is_traced_separately(tmp_path: Path) -> None:
+    _, _, _, inspector = _fixture(tmp_path, binding_count=2, policy=PatchAgentLoopPolicy())
+    result = _run(_ScriptedClient([
+        _response(turn=1, tool_calls=(_tool_call("edit_binding_001", turn=1),)),
+        _response(turn=2, tool_calls=(_tool_call("edit_binding_002", turn=2),)),
+    ]), inspector)
+    assert result.termination["code"] == "PATCH_AGENT_TOOL_FORBIDDEN"
+    assert result.tool_availability_trace[-1]["selection"] == "forbidden_attempt"
+    assert result.tool_rounds_used == 1
+
+
+def test_final_budgeted_turn_can_request_upstream_instead_of_forcing_patch(tmp_path: Path) -> None:
+    _, _, _, inspector = _fixture(tmp_path, policy=PatchAgentLoopPolicy(
+        require_source_inspection=False, allow_upstream_request=True))
+    client = _ScriptedClient([_response(turn=5, tool_calls=(AgentToolCall(call_id="upstream-5",
+        name="request_patch_upstream", arguments={"required_owner": "evidence", "reason": "More evidence is required.",
+        "source_refs": ["binding://edit_binding_001"]}),))])
+    result = run_patch_agent_loop(client=client, initial_messages=(AgentMessage(role="user", content="failure"),),
+        source_inspector=inspector, final_response_format=_final_format(), consumed_model_turns=4)
+    assert result.model_turns_used == 1
+    assert result.termination["code"] == "PATCH_AGENT_UPSTREAM_REQUESTED"
+    assert [tool.name for tool in client.requests[0].tools] == ["request_patch_upstream"]
+
+
+def _api_fixture(tmp_path: Path):
+    workspace, source, plan, baseline = _fixture(tmp_path)
+    item = {
+        "evidence_id": "api-method-1", "source_type": "decompiled_api",
+        "source_path": "Library.dll", "source_ref": "source://registered/Library.dll",
+        "source_hash": "A1" * 32, "file_hash": "A1" * 32,
+        "span": None, "symbol": "Library.ReadState",
+        "module_mvid": "85155e68-33a5-4fa5-a419-c563e7ea5e60",
+        "metadata_token": "0x06003CAC", "signature_blob": "2001010C",
+        "excerpt": "registered IL information " * 100 + "END_OF_REGISTERED_EVIDENCE",
+    }
+    plan["binding_registry"]["supporting_bindings"] = [{
+        "binding_id": "support_api_1", "evidence_id": item["evidence_id"],
+        "source_type": item["source_type"], "source_path": item["source_path"],
+        "target_span": None, "target_symbol": item["symbol"],
+    }]
+    inspector = PlanBoundSourceInspector(workspace_root=workspace, implementation_plan=plan,
+        evidence_pack={"items": [item]}, policy=PatchAgentLoopPolicy(enable_supporting_reads=True))
+    return source, baseline, inspector, item
+
+
+def test_registered_api_read_returns_complete_evidence_without_live_read_or_edit_authority(tmp_path: Path) -> None:
+    _, baseline, inspector, item = _api_fixture(tmp_path)
+    assert inspector.available_binding_ids == baseline.available_binding_ids
+    assert inspector.source_snapshot_sha256 == baseline.source_snapshot_sha256
+    assert inspector.read_source_snapshot_sha256 == baseline.read_source_snapshot_sha256
+    assert "support_api_1" in inspector.available_read_binding_ids
+    observation = inspector.inspect(binding_id="support_api_1", observation_id="api-read-1")
+    payload = observation.model_view()
+    assert payload["excerpt"] == item["excerpt"] and not payload["truncated"]
+    assert payload["observation_kind"] == "registered_api_evidence"
+    assert payload["source_identity_status"] == "registered_not_live_revalidated"
+    assert payload["source_hash"] == item["source_hash"]
+    assert payload["source_hash"] != payload["excerpt_sha256"]
+    assert payload["target_span"] is None and payload["excerpt_span"] is None
+    assert payload["evidence_id"] == item["evidence_id"]
+    assert len(payload["evidence_item_sha256"]) == 64
+    item["excerpt"] = "caller mutation after admission"
+    assert inspector.inspect(binding_id="support_api_1", observation_id="api-read-2").excerpt == observation.excerpt
+
+
+def test_registered_api_read_uses_same_observation_budget_and_checks_live_drift(tmp_path: Path) -> None:
+    source, _, inspector, _ = _api_fixture(tmp_path)
+    client = _ScriptedClient([
+        _response(turn=1, tool_calls=(_tool_call("support_api_1", turn=1),)),
+        _response(turn=2, content='{"changes":[]}'),
+    ])
+    result = _run(client, inspector)
+    assert result.completed and result.tool_rounds_used == 1
+    assert result.observation_trace[0]["observation_kind"] == "registered_api_evidence"
+    assert result.total_observation_bytes > 1024
+    source.write_text("source drift", encoding="utf-8")
+    with pytest.raises(PatchAgentLoopError, match="PATCH_AGENT_SOURCE_SNAPSHOT_DRIFT"):
+        inspector.inspect(binding_id="support_api_1", observation_id="api-read-2")

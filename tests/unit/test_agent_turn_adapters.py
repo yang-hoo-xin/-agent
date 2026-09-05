@@ -13,12 +13,13 @@ from src.libs.llm import (
     AgentToolCall,
     AgentToolDefinition,
     AgentToolResult,
-    AgentTurnRequest,
     AgentTurnProviderError,
+    AgentTurnRequest,
     OllamaChatAgentAdapter,
     OpenAIResponsesAgentAdapter,
     QwenChatAgentAdapter,
 )
+from src.libs.llm.agent_turn import AgentToolExchange
 
 
 def _tool() -> AgentToolDefinition:
@@ -314,6 +315,7 @@ def test_ollama_request_identity_matches_actual_httpx_body(monkeypatch) -> None:
     monkeypatch.setattr(
         httpx, "Client", lambda **kwargs: client_type(transport=httpx.MockTransport(respond), **kwargs)
     )
+
     adapter = OllamaChatAgentAdapter(
         base_url="http://127.0.0.1:11434", model="local-code-model", max_output_tokens=128,
         context_window=4096,
@@ -328,6 +330,56 @@ def test_ollama_request_identity_matches_actual_httpx_body(monkeypatch) -> None:
         "provider_body_utf8_bytes": len(captured[0]),
         "hash_basis": "httpx_json_body_bytes",
     }
+
+
+@pytest.mark.parametrize("provider", ["ollama", "qwen", "openai"])
+def test_provider_preserves_multiple_native_exchanges_at_message_boundaries(provider: str) -> None:
+    captured = []
+
+    def send(_url, payload, _headers):
+        captured.append(payload)
+        if provider == "ollama":
+            return {"model": "model", "message": {"content": "done"}}
+        if provider == "qwen":
+            return {"model": "model", "choices": [{"message": {"content": "done"}, "finish_reason": "stop"}]}
+        return {"model": "model", "output": [{"type": "message", "role": "assistant",
+            "content": [{"type": "output_text", "text": "done"}]}]}
+
+    if provider == "ollama":
+        adapter = OllamaChatAgentAdapter(base_url="http://127.0.0.1:11434", model="model", max_output_tokens=64, request_sender=send)
+    elif provider == "qwen":
+        adapter = QwenChatAgentAdapter(api_key="test", base_url="https://example.invalid/v1", model="model", max_completion_tokens=64, request_sender=send)
+    else:
+        adapter = OpenAIResponsesAgentAdapter(api_key="test", model="model", max_output_tokens=64, request_sender=send)
+
+    def state(call_id):
+        if provider == "openai":
+            return [{"type": "function_call", "call_id": call_id, "name": "inspect", "arguments": "{}"}]
+        return {"content": "", "tool_calls": [{"id": call_id, "type": "function", "function": {"name": "inspect", "arguments": "{}"}}]}
+
+    request = AgentTurnRequest(messages=(AgentMessage(role="user", content="initial"),
+        AgentMessage(role="assistant", content="draft"), AgentMessage(role="user", content="failure")),
+        historical_tool_exchanges=(AgentToolExchange((AgentToolResult("old", "inspect", {"value": "old-source"}),), state("old"), 1),),
+        tool_results=(AgentToolResult("new", "inspect", {"value": "new-source"}),),
+        provider_state=state("new"), tool_result_insert_index=3)
+    adapter.complete_turn(request)
+    messages = captured[0]["input" if provider == "openai" else "messages"]
+    assert len(messages) == 7
+    assert messages[0]["content"] == "initial"
+    assert messages[3]["content"] == "draft"
+    assert messages[4]["content"] == "failure"
+    assert "old-source" in json.dumps(messages[2])
+    assert "new-source" in json.dumps(messages[6])
+    assert "old" in json.dumps(messages[1]) and "new" in json.dumps(messages[5])
+
+
+def test_historical_exchange_invalid_boundary_is_rejected_before_send() -> None:
+    adapter = OllamaChatAgentAdapter(base_url="http://127.0.0.1:11434", model="model", max_output_tokens=64,
+        request_sender=lambda *_: pytest.fail("Invalid tool history must not be sent"))
+    request = AgentTurnRequest(messages=(AgentMessage(role="user", content="initial"),),
+        historical_tool_exchanges=(AgentToolExchange((AgentToolResult("old", "inspect", {}),), {}, 2),))
+    with pytest.raises(AgentTurnProviderError, match="AGENT_TOOL_HISTORY_INVALID"):
+        adapter.complete_turn(request)
 
 
 def test_ollama_request_identity_survives_transport_failure() -> None:
