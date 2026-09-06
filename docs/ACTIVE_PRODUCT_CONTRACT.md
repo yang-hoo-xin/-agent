@@ -41,7 +41,14 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
-The current platform implementation checkpoint is `54dff43`. Covered visible
+The current platform implementation checkpoint is `54dff43`. Independent 009
+used the corrected acceptance auditor and completed five real Qwen calls,
+post-failure tool responses, correction and both original matrices. Both code
+outputs stayed unchanged at 33/36; no budget or auditor rejection occurred.
+The next bounded qualification comparison selects the local 27B profile under
+the same inputs, while A4 upstream recovery and A7 qualified routing are being
+implemented in isolated worktrees. These preparations are not completed claims;
+see reconciliation 0.13. Covered visible
 source windows are reused with separate new-window, reuse and dispatch accounting
 in the same worker; Graph admission, recovery and the read-only index agree.
 008 made three real model calls and nine tool dispatches (three new windows,

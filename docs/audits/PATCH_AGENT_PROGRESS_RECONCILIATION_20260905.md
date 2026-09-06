@@ -8,7 +8,13 @@
 
 **更新时间：2026-09-06；最新生产代码：`54dff43`。本节为当前读入口，旧章节保留当时事实。**
 
-**最新008：源码覆盖复用已真实生效，但验收脚本在第四请求发送前误拒绝，真实修订尚未完成。**
+**最新009：修正验收器后，5次真实模型调用和修订/重验完整执行，但两份代码仍相同、两次33/36。**
+源代码覆盖复用和可见C1引用都在实际请求中成立，未出现008的误拒绝；总11次工具执行为3新窗口＋8复用。
+失败后模型只重读已见001/005，未选择新源码；原三项First Shot失败未消除。
+当前明确转入一次独立本地27B对照准备，并在隔离工作树推进A4上游回流与A7资格路由，不能把这些准备写成能力通过。
+具体009事实见第0.13节；不把本次结果推广为任意模型或跨任务结论。
+
+**008历史结果：源码覆盖复用已真实生效，但验收脚本在第四请求发送前误拒绝，真实修订当时未完成。**
 固定54dff43、同Qwen/006+r6/c760；3次真实模型发送与返回，9次工具执行为3个新窗口＋6次复用。
 唯一代码仍等于旧失败版本，原矩阵33/36。第四请求保留完整C1、B0、F1与原义务，但旧auditor硬取
 紧邻前一消息（实际为tool），不识别earlier-visible Patch引用，触发RuntimeError。账本4是客户端调用次数，
@@ -125,12 +131,14 @@ Fresh/A3/A8支线另见第11.4、12.4、12.5节，不混进下列P0调用总数�
 | 新公开入口轮：public_cli_repair_006 | 固定`af36b5d`；执行器/runner中途未改 | 2 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_006/actual/result.json)；5读实际入模→返回原失败代码→验证器261字符路径失败；独立短目录复验见0.9 |
 | 自动绑定轮：public_cli_repair_007 | 固定`6d38184`；短验证目录r7 | 4 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_007/actual/result.json)；5读→旧代码→33/36→请求5个supporting被预算拒绝→直接返回旧代码→33/36，停止 |
 | 覆盖复用轮：public_cli_repair_008 | 固定`54dff43`；短验证目录r8 | 3 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_008/actual/result.json)；9工具＝3新窗口＋6复用→旧代码→33/36→第四请求被旧auditor误拒绝，未发送；非模型修订失败 |
+| 验收器修正版：public_cli_repair_009 | 生产`54dff43`，冻结HEAD`62a996b`，修正auditor；r9 | 5 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_009/actual/result.json)；11工具＝3新＋8复用，完整修订/两次矩阵均33/36，代码相同 |
 
 001–004窗口新请求为0+1+2+2=5；004收据中的4是2回放+2新响应，不能重复累计。
 后续独立005另有2次新调用；两个已结束窗口合计7次新调用，不包含2份历史响应回放。
 006再新增2次真实调用，001–006合计9次；006预览的内部requested=1不是实际发送，不加入推理总数。
 007新增4次，001–007合计13次真实调用；各轮preview与2份历史回放均不加入这个数。
 008新增3次，001–008合计16次真实调用。008客户端计数4包含一次发送前被auditor拒绝，物理发送仍为3。
+009新增5次，001–009合计21次真实调用，0新增回放；009无发送前误拒绝。
 001收据中的requested计数也不能冒充HTTP发送，其外层实发计数为0。
 
 ### 0.3 最新剩余能力矩阵
@@ -144,7 +152,7 @@ Fresh/A3/A8支线另见第11.4、12.4、12.5节，不混进下列P0调用总数�
 | C1与失败可见、原义务保留 | 008前三实发保留原语义；第四待发送请求的唯一完整C1与新F1仍在、8项原字段相等 | 第四请求未发送；准备阶段漏测旧auditor对引用表示的兼容，不能声称模型消费了该次新F1 |
 | 只读范围／三部分上下文 | 29读/5编辑；完整源码与3份登记API可按需读取 | 本次只实际选读2个edit binding；未真实消费新增API工具 |
 | 行为修订与Revalidation | 同一产品循环实际完成一次反馈修订和原矩阵重验 | 五项代码均等于旧父版本，原3个First Shot失败未消除 |
-| 新草稿失败后再查证 | 54dff43公开CLI离线5＋5路径通过；008失败点仍余2模型调用/3新窗口/6913观察字节 | 008第四请求在模型发送前被验收脚本误拒绝；真实失败后查证与有效修订仍未由该轮证明 |
+| 新草稿失败后再查证 | 54dff43公开CLI离线5＋5路径通过；009失败后001/005引用实际进入第五请求并获得修订 | 只选择已见信息，没有新增源码；两份代码和三项失败不变，有效修复未证明 |
 | 停止与来源 | 失败未流入新Proposal/Apply；同B0实际代码比较、无变化反馈和显式确定性结果复用已测试 | 原矩阵仍决定行为结果；旧报告缺完整验证身份则不复用；不宣称通用恢复 |
 | 可查询执行索引 | 单Store薄投影显示v2新增/复用计数、每轮观察进展、代码比较轮次与来源；008查询已生成 | 旧attempt缺失保持unknown；查询不等于真实发送证明，未接通全部旧Trace/Eval/Langfuse |
 | 接续与预算 | 精确原JSON值、类型及文本校验；2原响应回放不新发网；全工作5次新调用 | 仅限定0已执行读的工具选择前缀；不是任意节点或副作用的自动恢复 |
@@ -577,9 +585,34 @@ hash `d20833308084e2fb36211112d799fe457da20f9b17bc7357f70145aba3496a47`。
 [离线结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/auditor_008_visible_c1_353a1738/offline-audit-result.json)
 保留原错误与新解释；新auditor未用于另一真实运行，未将008第四请求记成发送。
 
+后续两小时窗口内，faulthandler将收尾停顿定位到`_pytest.cacheprovider.pytest_sessionfinish`调用
+`tempfile.mkdtemp`创建缓存目录。显式设置可写短`cache_dir`后同12项测试完整通过，1.95秒、exit0；
+此前中断记录仍保留，不倒改为通过。见
+[缓存路径复验](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/auditor_008_visible_c1_353a1738/pytest-cache-location-result.json)。
+修正版auditor随后用于独立009，结果如下。
+
 证据：[008结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_008/actual/summary.json)、
 [第四请求检查](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_008/actual/request-004.json)、
 [单Store查询](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_008/actual/execution-query.json)。
+
+### 0.13 独立009：真实修订完成，当前模型/profile仍未修复
+
+009使用新auditor，真实runner先对008四份保留请求零网络复验，直接C1与引用C1均通过；
+固定177文件，HEAD62a996b，生产代码相对54dff43没有变化；原006+r6、Feature/Evidence/c760、
+Qwen3-Coder digest、5模型/6新窗口/32768观察字节和原矩阵保持。首轮44241字节及hash与008相同。
+
+5次真实POST及5次响应，另4次身份GET，0回放；worker持续453.04秒。
+第1轮请求5个edit位置，3新＋2复用；第2轮请求4个supporting，均复用；第3轮生成原失败代码；
+原矩阵33/36。第4轮收到新F1与可见C1引用后请求001/005，2次均复用；结果实际进入第5请求，
+第5轮完整修订仍等于原代码，矩阵再次33/36。原始响应hash两次均2b4f580c...b720df。
+累计11次工具执行=3新窗口＋8复用；第二/第四轮没有新增源码，不声称所有回合均取得语义进展。
+最终`PATCH_BEHAVIOR_CORRECTION_FAILED`；无验收器或预算拒绝，无新Proposal/Review/Dry-run/Apply/Build/Runtime。
+这证明当前执行路径能够完成真实反馈、工具往返、修订和重验；该输入/模型/profile组合没有产生有效修复。
+不继续为同一30B轨迹追加特殊规则；另行准备同冻结输入的本地27B独立比较，不覆盖009、不宣称通用模型no-go。
+
+证据：[009实际记录](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_009/actual/summary.json)、
+[第五实际请求](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_009/actual/request-005.body.json)、
+[查询](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_009/actual/execution-query.json)。
 
 ## 1. 结论与范围
 

@@ -24,7 +24,16 @@ execution instruction. The [short execution card](PATCH_ACCEPTANCE_SPRINT_CARD_2
 records the selected exact inputs and single Patch-attempt owner. User messages,
 not either document, authorize actions; new exact diffs still require new approval.
 
-Current checkpoint: `54dff43`. Covered-source reuse, versioned read accounting,
+Current execution selection: retain completed 009 (five real calls, correction,
+two 33/36 matrices, unchanged code, no auditor/budget blocker) and prepare one
+independent local 27B qualification comparison under the same P0 inputs. Do not
+keep adding case-specific rules to force the 30B model to succeed. In parallel,
+isolated A4 work connects an explicit bound upstream request to existing Evidence/
+Planning owners, and A7 work connects role selection to evidence-based profile
+qualification. Integrate tested code after the frozen P0 run; do not replace its
+Plan or mix these branch results into its success claim. See reconciliation 0.13.
+
+Previous checkpoint: `54dff43`. Covered-source reuse, versioned read accounting,
 Graph admission and query projection are implemented and tested through the public
 CLI. Real 008 used three new source windows plus six reuses, but unchanged code
 still failed three First Shot checks. Its fourth request was stopped before model

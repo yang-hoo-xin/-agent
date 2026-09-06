@@ -11,7 +11,13 @@ Platform implementation: `54dff43`; automatic Repair binding: `6d38184`; public 
 Branch: `codex/rag-capability-mainline`.
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 
-- Latest real result: 008 exercised visible source coverage reuse in the shared
+- Latest real result: 009 completed the corrected public-entry acceptance with
+  five real Qwen calls, eleven tool dispatches (three new windows, eight reuses),
+  post-failure feedback, correction and two matrices at 33/36. Both code outputs
+  stayed identical to the failed version. No auditor/budget rejection or new
+  Proposal/Review/Dry-run/Apply/Build/Runtime. A separate local 27B comparison is
+  being prepared; A4/A7 implementation is isolated from P0. See reconciliation 0.13.
+- Previous real result: 008 exercised visible source coverage reuse in the shared
   worker: three real model calls, nine tool dispatches, three new windows and six
   reuses. One unchanged code output ran the original matrix at 33/36. The fourth
   client invocation was rejected before sending by the acceptance auditor's
