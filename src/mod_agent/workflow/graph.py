@@ -1994,6 +1994,7 @@ def _valid_patch_agent_loop_receipt(
         and isinstance(behavior[-1], Mapping)
         and behavior[-1].get("status") == "passed"
         and behavior[-1].get("admission") == "accepted"
+        and behavior[-1].get("execution_origin") != "incomplete"
     ):
         return False
     return (

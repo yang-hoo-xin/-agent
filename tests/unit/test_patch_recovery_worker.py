@@ -249,3 +249,41 @@ def test_failure_capacity_counts_prior_correction_reads_and_actual_policy(tmp_pa
 @pytest.mark.parametrize("policy", [None, [], "invalid-policy", 5])
 def test_graph_rejects_malformed_worker_policy_without_crashing(policy):
     assert _valid_patch_agent_loop_receipt({"policy": policy}, model_call_count=1) is False
+
+
+@pytest.mark.parametrize("origin", ["incomplete", "unknown", "executed"])
+def test_passed_behavior_report_cannot_claim_incomplete_execution(tmp_path, origin):
+    class OriginOracle(_BehaviorOracle):
+        def __call__(self, context):
+            report = super().__call__(context)
+            report["execution_origin"] = origin
+            path = Path(report["report_ref"]["path"])
+            persisted = {key: value for key, value in report.items() if key != "report_ref"}
+            raw = json.dumps(persisted, sort_keys=True).encode()
+            path.write_bytes(raw)
+            report["report_ref"] = {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest()}
+            return report
+
+    inputs = _inputs(tmp_path)
+    client = _PatchAgentTurnClient()
+    oracle = OriginOracle(tmp_path / "verification")
+    adapter = _adapter(inputs, client, oracle)
+    adapter.enable_recovery_loop = True
+    result = run_fresh_patch_continuation(
+        _patch_request(inputs), patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace), max_model_calls=5)
+    receipt = adapter.patch_attempt_receipt()
+    report = receipt["patch_agent_loop"]["behavior_evaluations"][-1]
+    if origin == "incomplete":
+        assert result.reason == "PATCH_BEHAVIOR_OBSERVATION_INVALID"
+        assert result.patch_proposal_artifact is None
+        assert report["admission"] == "rejected"
+        assert len(oracle.contexts) == 1
+    else:
+        assert result.status == "terminal", result.to_dict()
+        assert report["execution_origin"] == origin
+        # Graph admission must also reject an explicitly contradictory report
+        # supplied through a different factory, without rejecting legacy unknown.
+        loop = deepcopy(receipt["patch_agent_loop"])
+        loop["behavior_evaluations"][-1]["execution_origin"] = "incomplete"
+        assert _valid_patch_agent_loop_receipt(loop, model_call_count=receipt["model_call_count"]) is False

@@ -1945,6 +1945,8 @@ class LocalOllamaInitialPatchAdapter:
                 raise ValueError("Only the execution owner may produce a verified reuse record.")
             if origin != persisted.get("execution_origin", "unknown"):
                 raise ValueError("Validation execution origin differs from its persisted report.")
+            if report["status"] == "passed" and origin == "incomplete":
+                raise ValueError("A passed behavior report cannot declare incomplete execution.")
             report["admission"] = "accepted"
         except (ValueError, TypeError, KeyError, OSError) as exc:
             report["admission"] = "rejected"
