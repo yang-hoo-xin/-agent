@@ -36,6 +36,7 @@ VIEW_NAMES = (
     "api-usage",
     "behavior-dataflow",
     "verification-claims",
+    "patch-execution",  # Compatibility alias for a Verification/Claim subquery.
     "product-api",
     "all",
 )
@@ -1432,11 +1433,39 @@ def build_projection(
     root: Path | None = None,
     kind: str | None = None,
     name: str | None = None,
+    artifact_store_root: Path | str | None = None,
+    feature_id: str | None = None,
+    run_id: str | None = None,
+    attempt_locator: str | None = None,
+    query: str | None = None,
 ) -> dict[str, Any]:
     """Build one deterministic projection from the current repository."""
 
     selected_root = (root or repository_root()).resolve()
-    if kind is not None or name is not None:
+    execution_filters = (artifact_store_root, feature_id, run_id, attempt_locator)
+    execution_query = view == "patch-execution" or (
+        view == "verification-claims" and query == "patch-execution"
+    )
+    if query is not None and not execution_query:
+        raise EngineeringCognitionError("--query patch-execution requires --view verification-claims.")
+    if any(value is not None for value in execution_filters) and not execution_query:
+        raise EngineeringCognitionError("Execution filters require the patch-execution subquery.")
+    if execution_query:
+        if artifact_store_root is None or kind is not None or name is not None:
+            raise EngineeringCognitionError(
+                "patch-execution requires --artifact-store-root and no entity query."
+            )
+        from src.observability.patch_execution_index import project_patch_executions
+
+        try:
+            data = project_patch_executions(
+                artifact_store_root, feature_id=feature_id, run_id=run_id,
+                attempt_locator=attempt_locator,
+            )
+        except (OSError, ValueError) as exc:
+            raise EngineeringCognitionError(str(exc)) from exc
+        selected_view = view
+    elif kind is not None or name is not None:
         if kind is None or name is None:
             raise EngineeringCognitionError("--kind and --name must be provided together.")
         data = query_entity(selected_root, kind, name)
@@ -1471,6 +1500,8 @@ def build_projection(
         "repository_root": str(selected_root),
         "schema_version": SCHEMA_VERSION,
         "view": selected_view,
+        **({"view_family": "verification-claims", "subquery": "patch-execution"}
+           if execution_query else {}),
     }
 
 
@@ -1482,6 +1513,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--kind", choices=ENTITY_KINDS)
     parser.add_argument("--name", help="Exact entity identifier; no fuzzy or case matching.")
     parser.add_argument("--pretty", action="store_true")
+    parser.add_argument("--query", choices=("patch-execution",),
+                        help="Bounded subquery within verification-claims.")
+    parser.add_argument("--artifact-store-root", type=Path, help="Read-only Patch journal store.")
+    parser.add_argument("--feature-id", help="Exact journal feature_id filter.")
+    parser.add_argument("--run-id", help="Exact journal run_id filter.")
+    parser.add_argument("--attempt-locator", help="Exact journal path within the store cr directory.")
     return parser
 
 
@@ -1491,7 +1528,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if (args.kind is None) is not (args.name is None):
         parser.error("--kind and --name must be provided together")
     try:
-        payload = build_projection(args.view, kind=args.kind, name=args.name)
+        payload = build_projection(
+            args.view, kind=args.kind, name=args.name,
+            artifact_store_root=args.artifact_store_root, feature_id=args.feature_id,
+            run_id=args.run_id, attempt_locator=args.attempt_locator,
+            query=args.query,
+        )
     except EngineeringCognitionError as exc:
         sys.stderr.write(f"engineering-cognition: {exc}\n")
         return 2
