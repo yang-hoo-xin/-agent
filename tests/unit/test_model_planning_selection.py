@@ -234,6 +234,20 @@ def test_source_identity_sharing_is_lossless_for_complete_planning_input(tmp_pat
     assert len(json.dumps(encoded, sort_keys=True)) < len(json.dumps(original, sort_keys=True))
 
 
+def test_editable_identity_displays_exact_path_and_rejects_contradictory_label(tmp_path):
+    inputs = _inputs(tmp_path)
+    selector = _selector(inputs, _Client())
+    evidence = inputs.store.read(inputs.evidence_ref)["data"]
+    encoded = deepcopy(selector.prepare(inputs.feature_payload, evidence).messages[1].content)
+    choices = [row for row in encoded["source_observations"] if row["selectable_for_edit"]]
+    assert choices
+    for row in choices:
+        assert row["source_path"] == encoded["source_identity_table"][row["source_identity_ref"]]["source_path"]
+    choices[0]["source_path"] = "another/Unrelated.cs"
+    with pytest.raises(ValueError, match="conflicts with its exact source identity"):
+        _restore_source_identities(encoded)
+
+
 @pytest.mark.parametrize("kind", ["missing", "unknown", "duplicate", "malformed"])
 def test_model_selection_failure_stores_blocked_plan_without_fallback(
     tmp_path: Path, kind: str

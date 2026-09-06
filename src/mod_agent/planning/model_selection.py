@@ -49,6 +49,8 @@ def _share_source_identities(payload: dict[str, Any]) -> dict[str, Any]:
             {
                 **{key: value for key, value in observation.items() if key not in identity_keys},
                 "source_identity_ref": table.index(identity),
+                **({"source_path": identity["source_path"]}
+                   if observation.get("selectable_for_edit") is True else {}),
             }
         )
     shared = {
@@ -56,7 +58,8 @@ def _share_source_identities(payload: dict[str, Any]) -> dict[str, Any]:
         "source_observations": observations,
         "source_identity_table": table,
         "source_identity_guide": (
-            "Merge source_identity_table[source_identity_ref] (zero-based) into each observation."
+            "Merge source_identity_table[source_identity_ref] (zero-based) into each observation. "
+            "Editable choices also show their exact source_path beside the evidence_id; it is the same table value."
         ),
     }
     if _json(_restore_source_identities(shared)) != _json(payload):
@@ -66,6 +69,10 @@ def _share_source_identities(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _restore_source_identities(payload: dict[str, Any]) -> dict[str, Any]:
     table = payload["source_identity_table"]
+    for observation in payload["source_observations"]:
+        identity = table[observation["source_identity_ref"]]
+        if "source_path" in observation and observation["source_path"] != identity["source_path"]:
+            raise ValueError("Planning inline source path conflicts with its exact source identity.")
     restored = {
         key: value
         for key, value in payload.items()
