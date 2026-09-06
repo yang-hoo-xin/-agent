@@ -6,7 +6,12 @@
 
 ## 0. 最新状态快照
 
-**更新时间：2026-09-06；最新生产代码：`6411f01`，恢复执行变更：`e892e3e`。本节为当前读入口，旧章节保留当时事实。**
+**更新时间：2026-09-06；最新生产代码：`b4c519a`，报告准入修复：`7508971`。本节为当前读入口，旧章节保留当时事实。**
+
+**最新审查落实：补齐本次输出Artifact查询，响应引用损坏时降级来源展示，并拒绝明确声明执行未完成的passed报告。**
+本轮新增真实模型调用0；005仍是最后一次真实运行，执行时固定6411f01，不能归给本次新提交。
+此前“生产路径验证”准确指注入行为callback后调用生产Adapter/Graph的Python API路径；
+公开`continue-fresh-patch` CLI尚未接入同等Repair输入、行为callback和恢复策略，见第0.7节。
 
 **本轮最新：失败后查证预算、实际文件字节比较、保守验证复用和单 Store 查询已经提交并通过离线验证。**
 生产 Adapter/Graph 的合成项目实际执行“读取→生成→检查失败→再次读取→修订→重验通过”；
@@ -53,6 +58,8 @@ Qwen在工具预算反馈后由请求5处改选2处；修正执行ID记账后，
 | 已提交 `269b37d` | 未执行批次不占执行ID；严格校验原响应、原请求、模型、上游、源码后接续，明确回放来源 | 124项组合回归通过；实际004复用2旧响应、只新增2次调用 |
 | 已提交 `e892e3e` | 共用预算预留/释放；失败点按最终反馈检查实际剩余读取能力；复用正式物化算法比较B0下全文件字节；相同代码反馈及显式确定性验证复用 | 离线完整恢复分支通过，首次直接通过不强迫查证；不同代码不代表修复成功 |
 | 已提交 `6411f01` | 单Store只读Patch执行查询，挂入verification-claims；显示请求/执行/重放/验证来源与缺失项 | 真实004查询已生成；未关联到的事实保持unknown，不成为业务准入层 |
+| 已提交 `7508971` | 报告接收与Graph准入共同拒绝passed+incomplete；保留缺字段unknown兼容 | 合成回归先复现错误放行再验证修复；不追改历史结果 |
+| 已提交 `b4c519a` | 查询本次Artifact及终态exact refs；响应/回放引用缺失损坏时降级；无终态缓存不推断未结束 | 真实成功旧运行和005失败均已查询；无新增模型/行为执行 |
 | 本轮生产代码WIP | 无；以上生产变更均已提交 | 文档状态不能代替Actual成功 |
 | 文档整理 | 本文顶部快照、历史标签、统一Attempt索引、剩余矩阵及短控制文档同步 | 不增加产品能力；文档提交单独记录 |
 | 用户原有WIP | ARCHITECTURE_OVERVIEW、ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT、SPEC_COVERAGE_MATRIX，以及3份未跟踪草案 | 六份文件hash与本轮开始完全一致；不混入本轮提交 |
@@ -189,6 +196,50 @@ Ruff：其余本轮文件通过；local_entry既有10项、graph既有2项仍在
 [005正式查询输出](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/mature_repair_005/execution-query.json)
 显示2份live、0重放、10条not_executed、无代码/行为记录，终态hash通过而attempt定义无法核验。
 查询本身新增模型/验证调用0；不把缺关联解释成行为测试失败。
+
+### 0.7 后续审查纠偏：查询成果关联、报告完整性与公开入口
+
+本节核验了另页在6411f01时点的审查，实施仅针对本页已交付路径的具体缺口。
+审查时的四份文档WIP后来已由6a14aa9提交；六份原有用户WIP仍未修改。
+三阶段Trace/Eval/Dashboard迁移保留为参考，没有整套启动。
+
+- `b4c519a`分别读取journal.artifacts与terminal_result已有Proposal/Review/Dry-run引用，
+  标明原字段位置、复用ArtifactStore核验；不从Repair父版本推断本次成果。
+  response_origin及计数明确为journal声明；响应或原回放引用缺失/损坏，send_observation降为unknown。
+  即便引用匹配，也不叫独立发送证明。没有terminal_result缓存只记录“缓存未保存”。
+- [有Proposal的真实旧运行查询](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/query_adoption_review/d80_proposal_review_dry_run_query.json)
+  已关联af803 Proposal、965b Review与28e5 Dry-run，并由Store核验。
+  [005失败运行查询](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/query_adoption_review/mature_repair_005_query.json)
+  查到本次RepairPlan，终态三个下游引用保持recorded_null；旧父Proposal仍只在父关系中。
+  原journal未改；查询不新增模型或验证执行。
+- `7508971`修复passed+execution_origin=incomplete被准入的问题。
+  三项合成用例先复现：这种矛盾报告原先可到Dry-run，Graph也接受它；修复后在原报告owner与Graph阻断。
+  缺字段或显式unknown仍兼容旧callback，因为unknown不等于没有执行；后续Eval不能把它自动计为已观测成功。
+  005未生成行为报告，没有证据表明005实际发生过这种假成功。
+- 公开入口缺口确认：CLI没有传behavior_evaluator、enable_recovery_loop，也没有构造已有Repair父引用。
+  005通过scratch runner注入这些对象后调用生产API，未经过CLI.main。公开caller接线仍未完成，
+  不应将注入式生产类测试称为CLI验收，也不应把RAG EvaluatorFactory硬套给行为报告接口。
+- [005读取负载测量](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/query_adoption_review/read-budget-sizing.json)
+  显示五份观察共23,912字节；002/003/004均返回相同配置文件1–80行全文。
+  这是确定性尺寸检查，未调用模型、未调整读取配置、未实现去重。只提高读取次数未必同时解决观察字节与后续修订空间。
+
+报告准入修复受影响验证：
+
+```powershell
+python -B -m pytest tests/unit/test_patch_recovery_worker.py tests/unit/test_patch_behavior_feedback.py tests/unit/test_patch_repair_continuation.py tests/unit/test_fresh_planning_continuation.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\report-origin-$PID"
+```
+
+88 passed，65.92秒；包含legacy unknown、显式executed与incomplete，以及原修订/续跑路径。
+查询9项故障回归先失败后通过；其完整组合为：
+
+```powershell
+python -B -m pytest tests/unit/test_patch_execution_index.py tests/unit/test_engineering_cognition.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\pxi-adopt-check-$PID"
+```
+
+38 passed、1 failed，21.20秒。索引29项全部通过；既有失败为
+`test_surface_projection_keeps_mcp_as_two_bounded_surfaces`，期望product_cli=21而实际22，
+修复前6a14aa9也为22，本轮未修改CLI/engineering_cognition或旧断言分母。
+本轮测试文件及查询代码Ruff通过；local_entry/graph既有lint问题见第0.6节。以上测试集合不应跨轮相加。
 
 ## 1. 结论与范围
 

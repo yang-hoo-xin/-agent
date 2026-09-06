@@ -41,7 +41,11 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
-The current platform implementation checkpoint is `6411f01`; `e892e3e` adds shared
+The current platform implementation checkpoint is `b4c519a`; `7508971` rejects
+explicitly incomplete passed reports and the query now includes current output
+Artifact refs. Public CLI behavior-Repair wiring is still absent: recent tests
+and 005 use the production Python API with an injected evaluator, not CLI.main.
+See reconciliation section 0.7. Earlier `e892e3e` adds shared
 post-failure investigation capacity and whole-file code comparison. The new
 single-Store query is read-only and does not decide recovery or approval.
 Offline production-path verification passed. Independent real acceptance 005

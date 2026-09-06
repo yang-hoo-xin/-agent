@@ -24,7 +24,17 @@ execution instruction. The [short execution card](PATCH_ACCEPTANCE_SPRINT_CARD_2
 records the selected exact inputs and single Patch-attempt owner. User messages,
 not either document, authorize actions; new exact diffs still require new approval.
 
-Current checkpoint: `6411f01`. Recovery capacity and actual-code comparison in
+Current checkpoint: `b4c519a`. Current output-Artifact query and contradictory
+passed/incomplete report handling are fixed; no new model attempt was made.
+The next complete caller capability must expose the existing Repair inputs,
+behavior evaluator and shared worker policy through the public entry, with an
+offline acceptance that exercises the actual caller rather than replacing its
+constructor. Keep the retained 005 read-budget problem in that same capability;
+three identical source excerpts were measured, not yet deduplicated. Full
+Trace/Eval/Dashboard migration remains a reference, not this task's prerequisite.
+See reconciliation section 0.7 for precise current limits.
+
+Previous checkpoint `6411f01`: recovery capacity and actual-code comparison in
 `e892e3e` passed offline production-path tests; the single-Store read-only query
 is complete. Independent fixed-version 005 stopped after two repeated selections
 of five reads against four currently available. No source read, code generation

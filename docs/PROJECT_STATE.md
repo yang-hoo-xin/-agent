@@ -7,11 +7,16 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
-Platform implementation: `6411f01`; recovery budget/materialized-code handling: `e892e3e`.
+Platform implementation: `b4c519a`; behavior report admission: `7508971`; recovery budget/materialized-code handling: `e892e3e`.
 Branch: `codex/rag-capability-mainline`.
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 
-- Latest implementation: production-worker offline recovery now consumes reserved
+- Latest review corrections: query current Proposal/Review/Dry-run refs separately
+  from parents; degrade response provenance when evidence is unavailable; reject
+  explicitly incomplete passed reports. No new real model run occurred.
+  Recent recovery verification uses an injected production Python API path;
+  public CLI wiring for behavior Repair remains incomplete. See section 0.7.
+- Previous implementation: production-worker offline recovery now consumes reserved
   reads and model turns after an executed failure, then revises and revalidates.
   Same-code detection and explicit deterministic verification reuse are tested.
   The single-Store Patch query consumes retained receipts without becoming a
