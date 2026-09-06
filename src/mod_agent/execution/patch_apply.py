@@ -7,8 +7,12 @@ import difflib
 import hashlib
 import json
 import os
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from pathlib import Path, PurePosixPath
-from typing import Any, Mapping
+from types import MappingProxyType
+from typing import Any
 
 from src.mod_agent.bindings import BindingResolver
 from src.mod_agent.proposal.models import SemanticAssuranceV1
@@ -52,6 +56,215 @@ _HUMAN_SEMANTIC_DECISION_FIELDS = (
 )
 
 
+@dataclass(frozen=True)
+class MaterializedPatchBytes:
+    """In-memory exact output bytes, with no review, approval, or behavior verdict.
+
+    Only touched files are included. Compare outputs only with the same baseline
+    and file set. File identities exclude rationale, change ordering, and JSON
+    formatting; differing code is not evidence that a repair succeeded.
+    """
+
+    baseline_files: Mapping[str, bytes]
+    files: Mapping[str, bytes]
+    _file_results: tuple[dict[str, Any], ...] = dataclass_field(repr=False, compare=False)
+    _diff_preview: tuple[dict[str, Any], ...] = dataclass_field(repr=False, compare=False)
+    _binding_span_checks: tuple[dict[str, Any], ...] = dataclass_field(repr=False, compare=False)
+
+    @property
+    def baseline_sha256(self) -> str:
+        return _materialized_files_sha256(self.baseline_files)
+
+    @property
+    def code_sha256(self) -> str:
+        return _materialized_files_sha256(self.files)
+
+
+def _materialized_files_sha256(files: Mapping[str, bytes]) -> str:
+    return _sha256_json([
+        {"path": path, "raw_bytes_sha256": _sha256_bytes(files[path])}
+        for path in sorted(files)
+    ])
+
+
+def materialize_exact_text_patch(
+    *,
+    workspace_root: str | Path,
+    diff_intent: Sequence[Mapping[str, Any]],
+    implementation_plan: dict[str, Any],
+) -> MaterializedPatchBytes:
+    """Resolve and materialize existing exact replacements without writing.
+
+    This is the byte-materialization portion of the formal applier, not a
+    replacement Review or Dry-run. It enforces path, provided source hashes,
+    spans, occurrence count, encoding, and BOM rules. Formal static checks and
+    all write/semantic approval gates remain in ``ExactTextPatchApplier.run``.
+    Legacy plans without source_hash retain their existing exact-text checks;
+    current production callers provide source-hashed bindings.
+    """
+    root = Path(workspace_root).resolve()
+    if not root.is_dir():
+        raise PatchApplyError("Patch workspace does not exist or is not a directory.")
+
+    resolver = BindingResolver.from_implementation_plan(implementation_plan)
+    staged: dict[Path, bytes] = {}
+    original_by_target: dict[Path, bytes] = {}
+    file_results: list[dict[str, Any]] = []
+    diff_preview: list[dict[str, Any]] = []
+    binding_span_checks: list[dict[str, Any]] = []
+    for index, change in enumerate(diff_intent, start=1):
+        binding_id = str(change.get("edit_binding_id") or "")
+        paths = resolver.display_files_for_edit_ids([binding_id])
+        if len(paths) != 1:
+            raise PatchApplyError(f"Change {index} does not resolve to one edit path.")
+        relative = _safe_relative_path(paths[0])
+        target = (root / relative).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise PatchApplyError(f"Change {index} escapes the isolated workspace.") from exc
+        if not target.is_file():
+            raise PatchApplyError(f"Change {index} target file is missing: {relative}")
+
+        patch = change.get("patch")
+        if not isinstance(patch, dict) or patch.get("kind") != "exact_text_replace":
+            raise PatchApplyError(f"Change {index} has no executable exact-text patch.")
+        before = patch.get("before_text")
+        after = patch.get("after_text")
+        if not isinstance(before, str) or not isinstance(after, str) or before == after:
+            raise PatchApplyError(f"Change {index} patch text is invalid or a no-op.")
+
+        original = original_by_target.get(target)
+        if original is None:
+            original = target.read_bytes()
+            _validate_utf8(original, change_index=index)
+            original_by_target[target] = original
+        source_hash = (resolver.edit_bindings.get(binding_id) or {}).get("source_hash")
+        if source_hash is not None and source_hash != _sha256_bytes(original):
+            raise PatchApplyError(
+                f"Change {index} source_hash does not match the live source baseline."
+            )
+        current = staged.get(target, original)
+        try:
+            before_bytes = before.encode("utf-8")
+            after_bytes = after.encode("utf-8")
+        except UnicodeEncodeError as exc:
+            raise PatchApplyError(
+                f"Change {index} patch text is not valid UTF-8 text."
+            ) from exc
+        match_mode = patch.get("match_mode", "unique")
+        if match_mode == "bound_span_exact":
+            if current != original:
+                raise PatchApplyError(
+                    f"Change {index} bound-span match must be the first "
+                    "change for its file."
+                )
+            bound_position = _bound_span_match_position(
+                original=original,
+                before=before_bytes,
+                binding=resolver.edit_bindings.get(binding_id) or {},
+                change_index=index,
+            )
+            binding_span_checks.append(
+                _binding_span_check(
+                    original=original,
+                    before=before_bytes,
+                    binding=resolver.edit_bindings.get(binding_id) or {},
+                    position=bound_position,
+                    change_index=index,
+                    binding_id=binding_id,
+                )
+            )
+            count = 1
+            updated = (
+                current[:bound_position]
+                + after_bytes
+                + current[bound_position + len(before_bytes) :]
+            )
+        elif match_mode == "unique":
+            binding_span_check = _validate_bound_source_span(
+                original=original,
+                before=before_bytes,
+                binding=resolver.edit_bindings.get(binding_id) or {},
+                change_index=index,
+                binding_id=binding_id,
+            )
+            if binding_span_check is not None:
+                binding_span_checks.append(binding_span_check)
+            count = current.count(before_bytes)
+            if patch.get("expected_occurrences") != 1 or count != 1:
+                raise PatchApplyError(
+                    f"Change {index} expected one live source match but "
+                    f"found {count}."
+                )
+            updated = current.replace(before_bytes, after_bytes, 1)
+        else:
+            raise PatchApplyError(
+                f"Change {index} patch match_mode is unsupported."
+            )
+        if patch.get("expected_occurrences") != 1:
+            raise PatchApplyError(
+                f"Change {index} must expect exactly one occurrence."
+            )
+        if current.startswith(codecs.BOM_UTF8) != updated.startswith(codecs.BOM_UTF8):
+            raise PatchApplyError(f"Change {index} must preserve the UTF-8 BOM.")
+        staged[target] = updated
+        before_sha256 = _sha256_bytes(current)
+        after_sha256 = _sha256_bytes(updated)
+        encoding = "utf-8-bom" if current.startswith(codecs.BOM_UTF8) else "utf-8"
+        file_results.append(
+            {
+                "change_id": change.get("change_id"),
+                "edit_binding_id": binding_id,
+                "path": relative.as_posix(),
+                "before_sha256": before_sha256,
+                "after_sha256": after_sha256,
+                "raw_before_sha256": before_sha256,
+                "raw_after_sha256": after_sha256,
+                "hash_mode": "raw_bytes",
+                "encoding": encoding,
+                "bom_preserved": current.startswith(codecs.BOM_UTF8)
+                == updated.startswith(codecs.BOM_UTF8),
+                "matched_occurrences": count,
+            }
+        )
+        preview = {
+            "change_id": change.get("change_id"),
+            "edit_binding_id": binding_id,
+            "path": relative.as_posix(),
+            "before_text": before,
+            "after_text": after,
+            "expected_occurrences": 1,
+            "before_sha256": before_sha256,
+            "after_sha256": after_sha256,
+            "raw_before_sha256": before_sha256,
+            "raw_after_sha256": after_sha256,
+            "hash_mode": "raw_bytes",
+            "encoding": encoding,
+            "bom_preserved": current.startswith(codecs.BOM_UTF8)
+            == updated.startswith(codecs.BOM_UTF8),
+        }
+        if "match_mode" in patch:
+            preview["match_mode"] = match_mode
+        diff_preview.append(preview)
+
+    if not staged:
+        raise PatchApplyError("Proposal contains no executable changes.")
+    return MaterializedPatchBytes(
+        baseline_files=MappingProxyType({
+            target.relative_to(root).as_posix(): content
+            for target, content in original_by_target.items()
+        }),
+        files=MappingProxyType({
+            target.relative_to(root).as_posix(): content
+            for target, content in staged.items()
+        }),
+        _file_results=tuple(file_results),
+        _diff_preview=tuple(diff_preview),
+        _binding_span_checks=tuple(binding_span_checks),
+    )
+
+
 class ExactTextPatchApplier:
     """Validate exact replacements and optionally write them inside one workspace."""
 
@@ -75,149 +288,20 @@ class ExactTextPatchApplier:
             semantic_contract_present
             and semantic_assurance.verdict == "unproven"
         )
+        materialized = materialize_exact_text_patch(
+            workspace_root=workspace_root,
+            diff_intent=proposal.get("diff_intent") or [],
+            implementation_plan=implementation_plan,
+        )
         root = Path(workspace_root).resolve()
-        if not root.is_dir():
-            raise PatchApplyError("Patch workspace does not exist or is not a directory.")
-
-        resolver = BindingResolver.from_implementation_plan(implementation_plan)
-        staged: dict[Path, bytes] = {}
-        original_by_target: dict[Path, bytes] = {}
-        file_results: list[dict[str, Any]] = []
-        diff_preview: list[dict[str, Any]] = []
-        binding_span_checks: list[dict[str, Any]] = []
-        for index, change in enumerate(proposal.get("diff_intent") or [], start=1):
-            binding_id = str(change.get("edit_binding_id") or "")
-            paths = resolver.display_files_for_edit_ids([binding_id])
-            if len(paths) != 1:
-                raise PatchApplyError(f"Change {index} does not resolve to one edit path.")
-            relative = _safe_relative_path(paths[0])
-            target = (root / relative).resolve()
-            try:
-                target.relative_to(root)
-            except ValueError as exc:
-                raise PatchApplyError(f"Change {index} escapes the isolated workspace.") from exc
-            if not target.is_file():
-                raise PatchApplyError(f"Change {index} target file is missing: {relative}")
-
-            patch = change.get("patch")
-            if not isinstance(patch, dict) or patch.get("kind") != "exact_text_replace":
-                raise PatchApplyError(f"Change {index} has no executable exact-text patch.")
-            before = patch.get("before_text")
-            after = patch.get("after_text")
-            if not isinstance(before, str) or not isinstance(after, str) or before == after:
-                raise PatchApplyError(f"Change {index} patch text is invalid or a no-op.")
-
-            original = original_by_target.get(target)
-            if original is None:
-                original = target.read_bytes()
-                _validate_utf8(original, change_index=index)
-                original_by_target[target] = original
-            current = staged.get(target, original)
-            try:
-                before_bytes = before.encode("utf-8")
-                after_bytes = after.encode("utf-8")
-            except UnicodeEncodeError as exc:
-                raise PatchApplyError(
-                    f"Change {index} patch text is not valid UTF-8 text."
-                ) from exc
-            match_mode = patch.get("match_mode", "unique")
-            if match_mode == "bound_span_exact":
-                if current != original:
-                    raise PatchApplyError(
-                        f"Change {index} bound-span match must be the first "
-                        "change for its file."
-                    )
-                bound_position = _bound_span_match_position(
-                    original=original,
-                    before=before_bytes,
-                    binding=resolver.edit_bindings.get(binding_id) or {},
-                    change_index=index,
-                )
-                binding_span_checks.append(
-                    _binding_span_check(
-                        original=original,
-                        before=before_bytes,
-                        binding=resolver.edit_bindings.get(binding_id) or {},
-                        position=bound_position,
-                        change_index=index,
-                        binding_id=binding_id,
-                    )
-                )
-                count = 1
-                updated = (
-                    current[:bound_position]
-                    + after_bytes
-                    + current[bound_position + len(before_bytes) :]
-                )
-            elif match_mode == "unique":
-                binding_span_check = _validate_bound_source_span(
-                    original=original,
-                    before=before_bytes,
-                    binding=resolver.edit_bindings.get(binding_id) or {},
-                    change_index=index,
-                    binding_id=binding_id,
-                )
-                if binding_span_check is not None:
-                    binding_span_checks.append(binding_span_check)
-                count = current.count(before_bytes)
-                if patch.get("expected_occurrences") != 1 or count != 1:
-                    raise PatchApplyError(
-                        f"Change {index} expected one live source match but "
-                        f"found {count}."
-                    )
-                updated = current.replace(before_bytes, after_bytes, 1)
-            else:
-                raise PatchApplyError(
-                    f"Change {index} patch match_mode is unsupported."
-                )
-            if patch.get("expected_occurrences") != 1:
-                raise PatchApplyError(
-                    f"Change {index} must expect exactly one occurrence."
-                )
-            if current.startswith(codecs.BOM_UTF8) != updated.startswith(codecs.BOM_UTF8):
-                raise PatchApplyError(f"Change {index} must preserve the UTF-8 BOM.")
-            staged[target] = updated
-            before_sha256 = _sha256_bytes(current)
-            after_sha256 = _sha256_bytes(updated)
-            encoding = "utf-8-bom" if current.startswith(codecs.BOM_UTF8) else "utf-8"
-            file_results.append(
-                {
-                    "change_id": change.get("change_id"),
-                    "edit_binding_id": binding_id,
-                    "path": relative.as_posix(),
-                    "before_sha256": before_sha256,
-                    "after_sha256": after_sha256,
-                    "raw_before_sha256": before_sha256,
-                    "raw_after_sha256": after_sha256,
-                    "hash_mode": "raw_bytes",
-                    "encoding": encoding,
-                    "bom_preserved": current.startswith(codecs.BOM_UTF8)
-                    == updated.startswith(codecs.BOM_UTF8),
-                    "matched_occurrences": count,
-                }
-            )
-            preview = {
-                "change_id": change.get("change_id"),
-                "edit_binding_id": binding_id,
-                "path": relative.as_posix(),
-                "before_text": before,
-                "after_text": after,
-                "expected_occurrences": 1,
-                "before_sha256": before_sha256,
-                "after_sha256": after_sha256,
-                "raw_before_sha256": before_sha256,
-                "raw_after_sha256": after_sha256,
-                "hash_mode": "raw_bytes",
-                "encoding": encoding,
-                "bom_preserved": current.startswith(codecs.BOM_UTF8)
-                == updated.startswith(codecs.BOM_UTF8),
-            }
-            if "match_mode" in patch:
-                preview["match_mode"] = match_mode
-            diff_preview.append(preview)
-
-        if not staged:
-            raise PatchApplyError("Proposal contains no executable changes.")
+        staged = {root / relative: content for relative, content in materialized.files.items()}
+        original_by_target = {
+            root / relative: content
+            for relative, content in materialized.baseline_files.items()
+        }
+        file_results = list(materialized._file_results)
+        diff_preview = list(materialized._diff_preview)
+        binding_span_checks = list(materialized._binding_span_checks)
         structural_checks = _run_low_cost_static_checks(staged)
         unified_diff = _build_unified_diff(
             root=root,

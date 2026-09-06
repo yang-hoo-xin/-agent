@@ -41,7 +41,7 @@ class PatchAgentLoopError(RuntimeError):
 
 @dataclass(frozen=True)
 class PatchAgentLoopPolicy:
-    """Fixed turn limits plus bounded source-observation controls."""
+    """Shared model and binding-read limits plus source-observation controls."""
 
     max_observation_bytes: int = 32_768
     context_radius_lines: int = 64
@@ -50,7 +50,8 @@ class PatchAgentLoopPolicy:
     require_source_inspection: bool = True
     allow_upstream_request: bool = False
     allow_batched_reads: bool = False
-    max_tool_rounds: int = field(default=3, init=False)
+    # One dispatched binding read consumes one unit, including in a batch.
+    max_tool_rounds: int = 3
     max_total_model_turns: int = 5
 
     def __post_init__(self) -> None:
@@ -66,6 +67,9 @@ class PatchAgentLoopPolicy:
         if type(self.max_total_model_turns) is not int or not 1 <= self.max_total_model_turns <= 5:
             raise PatchAgentLoopError("PATCH_AGENT_POLICY_INVALID", stage="policy",
                 reason="The selected model-turn limit must be between one and the shared maximum of five.")
+        if type(self.max_tool_rounds) is not int or self.max_tool_rounds < 1:
+            raise PatchAgentLoopError("PATCH_AGENT_POLICY_INVALID", stage="policy",
+                reason="The selected binding-read limit must be a positive integer.")
         for name in ("max_observation_bytes", "context_radius_lines"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
@@ -616,17 +620,25 @@ def run_patch_agent_loop(
     consumed_tool_rounds: int = 0,
     consumed_observation_bytes: int = 0,
     reserve_model_turns: int = 0,
+    reserve_tool_reads: int = 0,
+    reserve_observation_bytes: int = 0,
 ) -> PatchAgentLoopResult:
     """Run bounded source inspection turns and return final Patch content or a receipt."""
 
     selected_policy = policy or source_inspector.policy
-    for value in (consumed_model_turns, consumed_tool_rounds, consumed_observation_bytes, reserve_model_turns):
+    for value in (consumed_model_turns, consumed_tool_rounds, consumed_observation_bytes,
+                  reserve_model_turns, reserve_tool_reads, reserve_observation_bytes):
         if type(value) is not int or value < 0:
             raise PatchAgentLoopError("PATCH_AGENT_LOOP_BUDGET_INVALID", stage="loop_admission",
                 reason="Consumed and reserved budget counters must be non-negative integers.")
     if consumed_model_turns > selected_policy.max_total_model_turns or consumed_tool_rounds > selected_policy.max_tool_rounds:
         raise PatchAgentLoopError("PATCH_AGENT_LOOP_BUDGET_INVALID", stage="loop_admission",
             reason="Consumed counters exceed the shared policy.")
+    if (reserve_model_turns > selected_policy.max_total_model_turns
+            or reserve_tool_reads > selected_policy.max_tool_rounds
+            or reserve_observation_bytes > selected_policy.max_observation_bytes):
+        raise PatchAgentLoopError("PATCH_AGENT_LOOP_BUDGET_INVALID", stage="loop_admission",
+            reason="Reserved counters exceed the shared policy.")
     if resume_request is not None and not isinstance(resume_request, AgentTurnRequest):
         raise PatchAgentLoopError("PATCH_AGENT_LOOP_INPUT_INVALID", stage="loop_admission",
             reason="Resuming requires an AgentTurnRequest.")
@@ -660,6 +672,8 @@ def run_patch_agent_loop(
     total_observation_bytes = consumed_observation_bytes
     tool_rounds_used = consumed_tool_rounds
     allowed_model_end = selected_policy.max_total_model_turns - reserve_model_turns
+    allowed_read_end = selected_policy.max_tool_rounds - reserve_tool_reads
+    allowed_observation_end = selected_policy.max_observation_bytes - reserve_observation_bytes
     base_request = deepcopy(resume_request) if resume_request is not None else AgentTurnRequest(messages=initial_messages)
     old_states = [message.content for message in base_request.messages
         if _is_loop_state(message)]
@@ -706,7 +720,7 @@ def run_patch_agent_loop(
     pending_tool_results: tuple[AgentToolResult, ...] = ()
     force_final = False
 
-    if consumed_model_turns >= allowed_model_end or consumed_observation_bytes > selected_policy.max_observation_bytes:
+    if consumed_model_turns >= allowed_model_end or consumed_observation_bytes > allowed_observation_end:
         return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
             model_turns_used=consumed_model_turns, tool_rounds_used=tool_rounds_used,
             total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
@@ -740,7 +754,8 @@ def run_patch_agent_loop(
         must_finish = (
             force_final
             or turn_index >= allowed_model_end
-            or tool_rounds_used >= selected_policy.max_tool_rounds
+            or tool_rounds_used >= allowed_read_end
+            or total_observation_bytes >= allowed_observation_end
             or (
                 selected_policy.finalize_after_first_observation
                 and tool_rounds_used >= 1
@@ -772,6 +787,9 @@ def run_patch_agent_loop(
             force_final=must_finish,
             final_response_format=final_response_format,
             reserve_model_turns=reserve_model_turns,
+            reserve_tool_reads=reserve_tool_reads,
+            total_observation_bytes=total_observation_bytes,
+            reserve_observation_bytes=reserve_observation_bytes,
         )
         tool_results = pending_tool_results or (
             (
@@ -811,6 +829,7 @@ def run_patch_agent_loop(
         )
         availability: dict[str, object] = {"turn_index": turn_index,
             "allowed_tools": [tool.name for tool in request.tools],
+            "budget_state": deepcopy(state_message.content["budget_state"]),
             "selection": "forbidden" if not request.tools else "allowed_not_selected"}
         tool_availability_trace.append(availability)
         try:
@@ -911,7 +930,7 @@ def run_patch_agent_loop(
                     total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
                     tool_call_trace=tool_call_trace, observation_trace=observation_trace,
                     termination=_termination(code, reason, turn_index))
-            remaining_reads = selected_policy.max_tool_rounds - tool_rounds_used
+            remaining_reads = allowed_read_end - tool_rounds_used
             if len(calls) > remaining_reads:
                 code = "PATCH_AGENT_TOOL_BATCH_BUDGET_EXCEEDED"
                 batch_identity = _canonical_sha256(sorted(call.arguments["binding_id"] for call in calls))
@@ -932,6 +951,8 @@ def run_patch_agent_loop(
                     "status": "not_executed", "error_code": code, "reason": "budget_exceeded",
                     "binding_id": call.arguments["binding_id"], "requested_read_count": len(calls),
                     "remaining_read_count": remaining_reads,
+                    "total_remaining_read_count": selected_policy.max_tool_rounds - tool_rounds_used,
+                    "reserved_read_count": reserve_tool_reads,
                     "required_action": "Select no more than the remaining read count, or finish from existing context.",
                     "source_snapshot_sha256": source_inspector.source_snapshot_sha256,
                 }) for call in calls)
@@ -943,7 +964,7 @@ def run_patch_agent_loop(
                     trace["feedback_payload_bytes"] = feedback_bytes
                     tool_call_trace.append(trace)
                 availability["selection"] = "rejected_not_executed"
-                if total_observation_bytes > selected_policy.max_observation_bytes:
+                if total_observation_bytes > allowed_observation_end:
                     return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
                         model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
                         total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
@@ -963,7 +984,7 @@ def run_patch_agent_loop(
                     observation = source_inspector.inspect(binding_id=call.arguments["binding_id"],
                         observation_id=f"patch-observation-{tool_rounds_used:03d}")
                     total_observation_bytes += observation.model_payload_bytes
-                    admitted = total_observation_bytes <= selected_policy.max_observation_bytes
+                    admitted = total_observation_bytes <= allowed_observation_end
                     observation_trace.append(_observation_trace(observation, turn_index=turn_index, admitted_to_model=admitted))
                     if not admitted:
                         raise PatchAgentLoopError("PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED", stage="tool_execution",
@@ -1012,9 +1033,12 @@ def run_patch_agent_loop(
             elif call.name != PATCH_SOURCE_INSPECTION_TOOL_NAME:
                 code = "PATCH_AGENT_UNKNOWN_TOOL"
                 reason = "The model requested an unregistered Patch tool."
-            elif tool_rounds_used >= selected_policy.max_tool_rounds:
+            elif tool_rounds_used >= allowed_read_end:
                 code = "PATCH_AGENT_TOOL_ROUND_BUDGET_EXHAUSTED"
-                reason = "The fixed source-inspection tool-round budget was exhausted."
+                reason = "The binding-read budget available to this segment was exhausted."
+            elif total_observation_bytes >= allowed_observation_end:
+                code = "PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED"
+                reason = "No observation bytes remain available to this segment."
             elif turn_index >= allowed_model_end:
                 code = "PATCH_AGENT_MODEL_TURN_BUDGET_EXHAUSTED"
                 reason = "No model turn remains to consume another tool observation."
@@ -1091,7 +1115,7 @@ def run_patch_agent_loop(
                 )
             total_observation_bytes += observation.model_payload_bytes
             admitted_to_model = (
-                total_observation_bytes <= selected_policy.max_observation_bytes
+                total_observation_bytes <= allowed_observation_end
             )
             observation_trace.append(
                 _observation_trace(
@@ -1288,6 +1312,9 @@ def _loop_state_message(
     force_final: bool,
     final_response_format: AgentResponseFormat,
     reserve_model_turns: int = 0,
+    reserve_tool_reads: int = 0,
+    total_observation_bytes: int = 0,
+    reserve_observation_bytes: int = 0,
 ) -> AgentMessage:
     return AgentMessage(
         role="user",
@@ -1297,20 +1324,28 @@ def _loop_state_message(
             "allowed_read_binding_ids": list(source_inspector.available_read_binding_ids),
             "source_snapshot_sha256": source_inspector.source_snapshot_sha256,
             "read_source_snapshot_sha256": source_inspector.read_source_snapshot_sha256,
-            **({"read_execution": {"allow_batched_reads": True, "execution": "sequential",
-                "batch_must_fit_remaining_reads": True}} if policy.allow_batched_reads else {}),
+            "read_execution": {"allow_batched_reads": policy.allow_batched_reads,
+                "execution": "sequential", "count_unit": "one_dispatched_binding_read",
+                "batch_must_fit_remaining_reads": True},
             "prior_observations": [
                 observation.model_view() if isinstance(observation, PatchSourceObservation) else deepcopy(dict(observation))
                 for observation in prior_observations
             ],
             "budget_state": {
                 "model_turns_used": model_turns_used,
-                "remaining_model_turns": policy.max_total_model_turns
-                - model_turns_used - reserve_model_turns,
+                "total_remaining_model_turns": policy.max_total_model_turns - model_turns_used,
+                "remaining_model_turns": max(0, policy.max_total_model_turns
+                - model_turns_used - reserve_model_turns),
                 "reserved_model_turns": reserve_model_turns,
                 "tool_rounds_used": tool_rounds_used,
-                "remaining_tool_rounds": policy.max_tool_rounds
-                - tool_rounds_used,
+                "total_remaining_tool_rounds": policy.max_tool_rounds - tool_rounds_used,
+                "remaining_tool_rounds": max(0, policy.max_tool_rounds - tool_rounds_used - reserve_tool_reads),
+                "reserved_tool_reads": reserve_tool_reads,
+                "observation_bytes_used": total_observation_bytes,
+                "total_remaining_observation_bytes": max(0, policy.max_observation_bytes - total_observation_bytes),
+                "remaining_observation_bytes": max(0, policy.max_observation_bytes
+                - total_observation_bytes - reserve_observation_bytes),
+                "reserved_observation_bytes": reserve_observation_bytes,
             },
             "required_next_action": (
                 "finish_or_request_upstream" if force_final and policy.allow_upstream_request

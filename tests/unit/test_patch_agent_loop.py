@@ -160,7 +160,7 @@ def _run(client: _ScriptedClient, inspector: PlanBoundSourceInspector):
     )
 
 
-def test_policy_has_fixed_turn_limits_and_real_context_default() -> None:
+def test_policy_keeps_default_limits_and_real_context_default() -> None:
     policy = PatchAgentLoopPolicy()
 
     assert policy.max_tool_rounds == 3
@@ -745,7 +745,7 @@ def test_resume_cannot_repeat_prior_read_or_reset_observation_budget(tmp_path: P
         resume_request=first.final_request, final_response_format=_final_format(), source_inspector=inspector,
         consumed_model_turns=2, consumed_tool_rounds=1, consumed_observation_bytes=inspector.policy.max_observation_bytes)
     assert result.termination["code"] == "PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED"
-    assert result.total_observation_bytes > 0
+    assert result.total_observation_bytes == 0
 
 
 def test_loop_source_policy_disable_is_traced_separately(tmp_path: Path) -> None:
@@ -945,3 +945,180 @@ def test_resume_budget_feedback_does_not_mark_rejected_reads_as_executed(tmp_pat
     result = run_patch_agent_loop(client=client, initial_messages=previous.messages, resume_request=previous,
         source_inspector=inspector, final_response_format=_final_format(), consumed_model_turns=1)
     assert result.completed and result.tool_rounds_used == 1
+
+
+def _budget_state(request: AgentTurnRequest) -> dict[str, object]:
+    return next(message.content["budget_state"] for message in request.messages
+        if isinstance(message.content, dict) and message.content.get("message_type") == "patch_agent_loop_state")
+
+
+def _checked_patch_output(content: str) -> dict[str, object]:
+    """Execute a fixed test-only Python function; this is not a product model or Mod."""
+    code = json.loads(content)["changes"][0]["after_text"]
+    namespace: dict[str, object] = {}
+    exec(compile(code, "offline_patch_behavior", "exec"), namespace)
+    actual = namespace["scale"](2)
+    return {"status": "passed" if actual == 4 else "behavior_failed", "input": 2,
+        "expected": 4, "observed": actual, "code_sha256": hashlib.sha256(code.encode()).hexdigest()}
+
+
+def _after_behavior_check(result, observation: dict[str, object]) -> AgentTurnRequest:
+    from dataclasses import replace
+    assert result.final_request is not None
+    return replace(result.final_request, messages=(*result.final_request.messages,
+        AgentMessage(role="assistant", content=result.final_content),
+        AgentMessage(role="user", content=observation)))
+
+
+@pytest.mark.parametrize("initial_reads", [1, 5])
+def test_reserved_read_and_model_budget_is_used_after_executed_behavior_failure(tmp_path: Path, initial_reads: int) -> None:
+    policy = PatchAgentLoopPolicy(require_source_inspection=False, finalize_after_first_observation=False,
+        allow_batched_reads=True, max_tool_rounds=initial_reads + 1, context_radius_lines=2)
+    _, source, _, inspector = _fixture(tmp_path, binding_count=initial_reads + 1, policy=policy)
+    baseline = source.read_bytes()
+    failed = json.dumps({"changes": [{"after_text": "def scale(value):\n    return value + 1\n"}]})
+    revised = json.dumps({"changes": [{"after_text": "def scale(value):\n    return value * 2\n"}]})
+    next_binding = f"edit_binding_{initial_reads + 1:03d}"
+    client = _ScriptedClient([
+        _response(turn=1, tool_calls=tuple(_tool_call(f"edit_binding_{index:03d}", turn=index)
+            for index in range(1, initial_reads + 1))),
+        _response(turn=2, content=failed),
+        _response(turn=3, tool_calls=(_tool_call(next_binding, turn=initial_reads + 10),)),
+        _response(turn=4, content=revised),
+    ])
+    first = run_patch_agent_loop(client=client,
+        initial_messages=(AgentMessage(role="user", content="Repair scale(2) to return 4; keep the baseline unchanged."),),
+        final_response_format=_final_format(), source_inspector=inspector,
+        reserve_model_turns=2, reserve_tool_reads=1)
+    assert first.completed and first.tool_rounds_used == initial_reads
+    first_check = _checked_patch_output(first.final_content)
+    assert first_check["status"] == "behavior_failed" and first_check["observed"] == 3
+    assert len(client.requests[1].tool_results) == initial_reads
+    initial_budget = _budget_state(client.requests[0])
+    assert initial_budget["total_remaining_tool_rounds"] == initial_reads + 1
+    assert initial_budget["remaining_tool_rounds"] == initial_reads
+    assert initial_budget["reserved_tool_reads"] == 1
+    assert _budget_state(client.requests[1])["remaining_tool_rounds"] == 0
+    assert client.requests[1].tools == ()
+
+    previous = _after_behavior_check(first, first_check)
+    feedback_bytes = len(json.dumps(first_check).encode())
+    second = run_patch_agent_loop(client=client, initial_messages=previous.messages, resume_request=previous,
+        final_response_format=_final_format(), source_inspector=inspector,
+        consumed_model_turns=first.model_turns_used, consumed_tool_rounds=first.tool_rounds_used,
+        consumed_observation_bytes=first.total_observation_bytes + feedback_bytes)
+    assert second.completed and second.tool_rounds_used == 1
+    assert first.model_turns_used + second.model_turns_used == 4 < policy.max_total_model_turns
+    failure_request, revision_request = client.requests[2:]
+    assert any(tool.name == PATCH_SOURCE_INSPECTION_TOOL_NAME for tool in failure_request.tools)
+    assert _budget_state(failure_request)["remaining_tool_rounds"] == 1
+    assert _budget_state(failure_request)["remaining_model_turns"] >= 2
+    assert second.to_dict()["tool_availability_trace"][0]["budget_state"] == _budget_state(failure_request)
+    assert first_check in [message.content for message in failure_request.messages]
+    assert failed in [message.content for message in failure_request.messages if message.role == "assistant"]
+    assert revision_request.tool_results[0].output["binding_id"] == next_binding
+    assert revision_request.tool_results[0].output["excerpt"]
+    assert all(entry["admitted_to_model"] for entry in second.observation_trace)
+    assert _checked_patch_output(second.final_content)["status"] == "passed"
+    assert source.read_bytes() == baseline
+
+
+@pytest.mark.parametrize("exhausted", ["reads", "model", "observation_bytes"])
+def test_executed_failure_does_not_hide_missing_post_failure_read_capacity(tmp_path: Path, exhausted: str) -> None:
+    initial_reads = 3 if exhausted == "model" else 1
+    policy = PatchAgentLoopPolicy(require_source_inspection=False, finalize_after_first_observation=False,
+        max_tool_rounds=initial_reads if exhausted == "reads" else initial_reads + 1, context_radius_lines=2)
+    _, _, _, inspector = _fixture(tmp_path, binding_count=initial_reads + 1, policy=policy)
+    failed = json.dumps({"changes": [{"after_text": "def scale(value):\n    return value + 1\n"}]})
+    client = _ScriptedClient([
+        *[_response(turn=index, tool_calls=(_tool_call(f"edit_binding_{index:03d}", turn=index),))
+            for index in range(1, initial_reads + 1)],
+        _response(turn=initial_reads + 1, content=failed),
+        _response(turn=initial_reads + 2, tool_calls=(_tool_call(f"edit_binding_{initial_reads + 1:03d}", turn=20),)),
+    ])
+    first = _run(client, inspector)
+    check = _checked_patch_output(first.final_content)
+    assert check["status"] == "behavior_failed"
+    previous = _after_behavior_check(first, check)
+    second = run_patch_agent_loop(client=client, initial_messages=previous.messages, resume_request=previous,
+        final_response_format=_final_format(), source_inspector=inspector,
+        consumed_model_turns=first.model_turns_used, consumed_tool_rounds=first.tool_rounds_used,
+        consumed_observation_bytes=(policy.max_observation_bytes if exhausted == "observation_bytes"
+            else first.total_observation_bytes))
+    assert second.status == "blocked" and second.tool_rounds_used == 0
+    assert client.requests[-1].tools == ()
+    assert second.termination["code"] == {"reads": "PATCH_AGENT_TOOL_ROUND_BUDGET_EXHAUSTED",
+        "model": "PATCH_AGENT_MODEL_TURN_BUDGET_EXHAUSTED",
+        "observation_bytes": "PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED"}[exhausted]
+    remaining = _budget_state(client.requests[-1])
+    if exhausted == "reads":
+        assert remaining["remaining_tool_rounds"] == 0
+    elif exhausted == "model":
+        assert remaining["remaining_model_turns"] == 1
+    else:
+        assert remaining["remaining_observation_bytes"] == 0
+
+
+def test_reservations_do_not_force_reads_when_first_output_passes(tmp_path: Path) -> None:
+    _, _, _, inspector = _fixture(tmp_path, policy=PatchAgentLoopPolicy(require_source_inspection=False))
+    client = _ScriptedClient([_response(turn=1,
+        content=json.dumps({"changes": [{"after_text": "def scale(value):\n    return value * 2\n"}]}))])
+    result = run_patch_agent_loop(client=client, initial_messages=(AgentMessage(role="user", content="Repair scale."),),
+        final_response_format=_final_format(), source_inspector=inspector,
+        reserve_model_turns=2, reserve_tool_reads=1)
+    assert result.completed and result.model_turns_used == 1 and result.tool_rounds_used == 0
+    assert client.requests[0].tool_choice == "auto"
+    assert _checked_patch_output(result.final_content)["status"] == "passed"
+    assert not client.responses
+
+
+def test_failed_output_can_be_revised_without_forcing_a_new_read(tmp_path: Path) -> None:
+    _, _, _, inspector = _fixture(tmp_path, policy=PatchAgentLoopPolicy(
+        require_source_inspection=False, finalize_after_first_observation=False))
+    failed = json.dumps({"changes": [{"after_text": "def scale(value):\n    return value + 1\n"}]})
+    revised = json.dumps({"changes": [{"after_text": "def scale(value):\n    return value * 2\n"}]})
+    client = _ScriptedClient([_response(turn=1, content=failed), _response(turn=2, content=revised)])
+    first = run_patch_agent_loop(client=client, initial_messages=(AgentMessage(role="user", content="Repair scale."),),
+        final_response_format=_final_format(), source_inspector=inspector, reserve_model_turns=2, reserve_tool_reads=1)
+    check = _checked_patch_output(first.final_content)
+    assert check["status"] == "behavior_failed"
+    previous = _after_behavior_check(first, check)
+    second = run_patch_agent_loop(client=client, initial_messages=previous.messages, resume_request=previous,
+        final_response_format=_final_format(), source_inspector=inspector, consumed_model_turns=first.model_turns_used)
+    assert second.completed and second.tool_rounds_used == 0
+    assert client.requests[1].tool_choice == "auto"
+    assert any(tool.name == PATCH_SOURCE_INSPECTION_TOOL_NAME for tool in client.requests[1].tools)
+    assert _checked_patch_output(second.final_content)["status"] == "passed"
+
+
+def test_observation_reservation_limits_initial_segment_and_is_visible(tmp_path: Path) -> None:
+    _, _, _, inspector = _fixture(tmp_path, policy=PatchAgentLoopPolicy(require_source_inspection=False))
+    client = _ScriptedClient([_response(turn=1, tool_calls=(_tool_call("edit_binding_001", turn=1),))])
+    reserved = inspector.policy.max_observation_bytes - 1
+    result = run_patch_agent_loop(client=client, initial_messages=(AgentMessage(role="user", content="Repair."),),
+        final_response_format=_final_format(), source_inspector=inspector, reserve_observation_bytes=reserved)
+    assert result.termination["code"] == "PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED"
+    assert result.observation_trace[0]["admitted_to_model"] is False
+    budget = _budget_state(client.requests[0])
+    assert budget["total_remaining_observation_bytes"] == 32768
+    assert budget["remaining_observation_bytes"] == 1
+    assert budget["reserved_observation_bytes"] == reserved
+
+
+@pytest.mark.parametrize("limit", [0, -1, True, 1.5])
+def test_binding_read_limit_rejects_non_positive_integers(limit) -> None:
+    with pytest.raises(PatchAgentLoopError, match="PATCH_AGENT_POLICY_INVALID"):
+        PatchAgentLoopPolicy(max_tool_rounds=limit)
+
+
+@pytest.mark.parametrize("reservations", [
+    {"reserve_tool_reads": True}, {"reserve_tool_reads": 4},
+    {"reserve_observation_bytes": -1}, {"reserve_observation_bytes": 32769},
+])
+def test_reservations_cannot_create_extra_shared_budget(tmp_path: Path, reservations: dict[str, object]) -> None:
+    _, _, _, inspector = _fixture(tmp_path)
+    client = _ScriptedClient([])
+    with pytest.raises(PatchAgentLoopError, match="PATCH_AGENT_LOOP_BUDGET_INVALID"):
+        run_patch_agent_loop(client=client, initial_messages=(AgentMessage(role="user", content="Repair."),),
+            final_response_format=_final_format(), source_inspector=inspector, **reservations)
+    assert not client.requests

@@ -1954,6 +1954,14 @@ def _valid_patch_agent_loop_receipt(
     termination = value.get("termination")
     tool_rounds = value.get("tool_rounds_used")
     loop_model_turns = value.get("model_turns_used")
+    policy = value.get("policy", {})
+    if not isinstance(policy, Mapping):
+        return False
+    read_limit = policy.get("max_tool_rounds", 3)
+    require_read = policy.get("require_source_inspection", True)
+    if type(read_limit) is not int or read_limit < 1 or type(require_read) is not bool:
+        return False
+    recovery_reads = 0
     correction_calls = 0
     for key in ("validator_correction", "behavior_correction"):
         correction = value.get(key)
@@ -1971,6 +1979,15 @@ def _valid_patch_agent_loop_receipt(
         if type(count) is not int or count < 1:
             return False
         correction_calls += count
+        execution = correction.get("execution")
+        if execution is not None:
+            if not isinstance(execution, Mapping):
+                return False
+            reads = execution.get("tool_rounds_used")
+            refs = execution.get("observation_trace")
+            if type(reads) is not int or reads < 0 or not isinstance(refs, list) or len(refs) != reads:
+                return False
+            recovery_reads += reads
     behavior = value.get("behavior_evaluations")
     if behavior is not None and not (
         isinstance(behavior, list) and behavior
@@ -1987,7 +2004,8 @@ def _valid_patch_agent_loop_receipt(
         and isinstance(usage, list)
         and len(usage) == loop_model_turns
         and type(tool_rounds) is int
-        and 1 <= tool_rounds <= 3
+        and (1 if require_read else 0) <= tool_rounds
+        and tool_rounds + recovery_reads <= read_limit
         and isinstance(observations, list)
         and len(observations) == tool_rounds
         and all(
