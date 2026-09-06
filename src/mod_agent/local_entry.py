@@ -915,6 +915,8 @@ class LocalOllamaInitialPatchAdapter:
         ) = None,
         behavior_evaluator: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
         enable_recovery_loop: bool = False,
+        replay_attempt_ref: Mapping[str, str] | None = None,
+        replay_request_refs: tuple[Mapping[str, str], ...] = (),
     ) -> None:
         if patch_agent_loop_policy is not None and workspace_root is None:
             raise LocalEntryError("LOCAL_PATCH_AGENT_WORKSPACE_REQUIRED")
@@ -935,6 +937,10 @@ class LocalOllamaInitialPatchAdapter:
         self.enable_recovery_loop = enable_recovery_loop
         self._repair_context: dict[str, Any] | None = None
         self._recovery_observation_bytes = 0
+        self._replay_attempt_ref = deepcopy(replay_attempt_ref)
+        self._replay_request_refs = deepcopy(replay_request_refs)
+        self._replay_prefix: list[dict[str, Any]] = []
+        self._replayed_turn_count = 0
         self.llm_factory = llm_factory or self._default_llm
         self.agent_turn_client_factory = (
             agent_turn_client_factory or self._default_agent_turn_client
@@ -1039,6 +1045,8 @@ class LocalOllamaInitialPatchAdapter:
                 requested_context_window=self.profile.context_window,
             )
             feature_spec = self._read_feature_spec(state)
+            if self._replay_attempt_ref is not None:
+                self._prepare_verified_tool_replay(state, identity)
             planned_changes = [
                 dict(item)
                 for item in implementation.get("proposed_changes") or []
@@ -1149,6 +1157,7 @@ class LocalOllamaInitialPatchAdapter:
                 )
                 agent_client = self.agent_turn_client_factory(self.profile)
                 if self.enable_recovery_loop:
+                    self._install_verified_tool_replay(agent_client)
                     agent_client = self._recording_agent_client(agent_client, run_id)
                 agent_messages = _patch_agent_initial_messages(
                     prepared.messages,
@@ -1457,6 +1466,7 @@ class LocalOllamaInitialPatchAdapter:
             }
             turns.append(record)
             self._emit("local_patch_worker_turn_requested")
+            replayed_before = self._replayed_turn_count
             try:
                 response = client.complete_turn(request)
             except Exception as exc:
@@ -1464,15 +1474,28 @@ class LocalOllamaInitialPatchAdapter:
                 self._emit("local_patch_worker_turn_failed")
                 raise
             payload = asdict(response)
-            path = _local_patch_response_sidecar_path(
-                self.artifact_store.root, run_id=run_id, response_label=f"worker-turn-{number:03d}",
-            ).with_suffix(".json")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            raw = _patch_agent_context_json(payload).encode("utf-8")
-            with path.open("xb") as stream:
-                stream.write(raw)
+            record["response_origin"] = (
+                "verified_prior_response" if self._replayed_turn_count > replayed_before else "live_provider_response"
+            )
+            if self._replayed_turn_count > replayed_before:
+                record["original_response_ref"] = deepcopy(self._replay_prefix[replayed_before]["response_ref"])
+            self._receipt["replayed_model_turns"] = self._replayed_turn_count
+            self._receipt["live_response_count"] = sum(
+                turn.get("response_origin") == "live_provider_response" for turn in turns
+            )
+            if record["response_origin"] == "verified_prior_response":
+                response_ref = deepcopy(record["original_response_ref"])
+            else:
+                path = _local_patch_response_sidecar_path(
+                    self.artifact_store.root, run_id=run_id, response_label=f"worker-turn-{number:03d}",
+                ).with_suffix(".json")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                raw = _patch_agent_context_json(payload).encode("utf-8")
+                with path.open("xb") as stream:
+                    stream.write(raw)
+                response_ref = {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest()}
             record.update(
-                status="responded", response_ref={"path": str(path), "sha256": hashlib.sha256(raw).hexdigest()},
+                status="responded", response_ref=response_ref,
                 provider_diagnostic=deepcopy(response.provider_diagnostic),
                 usage=response.usage.to_dict(),
                 tool_action=("requested" if response.tool_calls else
@@ -1481,6 +1504,103 @@ class LocalOllamaInitialPatchAdapter:
             self._emit("local_patch_worker_turn_response_retained")
             return response
         return SimpleNamespace(provider=client.provider, model=client.model, complete_turn=complete_turn)
+
+    @staticmethod
+    def _read_verified_response_json(ref: Mapping[str, str]) -> dict[str, Any]:
+        if not isinstance(ref, Mapping) or set(ref) != {"path", "sha256"}:
+            raise LocalEntryError("PATCH_REPLAY_REFERENCE_INVALID")
+        data = Path(ref["path"]).read_bytes()
+        if hashlib.sha256(data).hexdigest() != ref["sha256"]:
+            raise LocalEntryError("PATCH_REPLAY_REFERENCE_HASH_MISMATCH")
+        value = json.loads(data.decode("utf-8"))
+        if not isinstance(value, dict):
+            raise LocalEntryError("PATCH_REPLAY_REFERENCE_INVALID")
+        return value
+
+    def _prepare_verified_tool_replay(self, state: Mapping[str, Any], identity: Mapping[str, Any]) -> None:
+        """Resume only a retained tool-selection prefix with no executed source reads."""
+        from src.libs.llm.agent_turn import _parse_ollama_tool_call
+        from src.mod_agent.fresh_planning_continuation import (
+            _csharp_source_snapshot,
+            _source_tree_snapshot_sha256,
+        )
+        if not self.enable_recovery_loop or self._replay_prefix:
+            raise LocalEntryError("PATCH_REPLAY_NOT_AVAILABLE")
+        document = self._read_verified_response_json(self._replay_attempt_ref)
+        factory = document.get("factory_receipt") or {}
+        prior_loop = factory.get("patch_agent_loop") or {}
+        if (factory.get("profile") != self.profile.to_dict()
+                or prior_loop.get("policy") != asdict(self.patch_agent_loop_policy)
+                or prior_loop.get("tool_rounds_used") != 0 or document.get("proposal_admitted") is not False):
+            raise LocalEntryError("PATCH_REPLAY_EXECUTION_BOUNDARY_MISMATCH")
+        _assert_ollama_model_identity_stable(expected=factory.get("model_identity") or {}, observed=identity)
+        if document.get("generated_against_snapshot_sha256") != _source_tree_snapshot_sha256(
+            _csharp_source_snapshot(Path(self.workspace_root).resolve())
+        ):
+            raise LocalEntryError("PATCH_REPLAY_SOURCE_CHANGED")
+        selected = document.get("selected_artifacts") or {}
+        if any((selected.get(key) or {}).get("artifact_hash") != (state.get("artifact_hashes") or {}).get(key)
+               for key in ("feature_spec", "evidence_pack", "implementation_plan")):
+            raise LocalEntryError("PATCH_REPLAY_UPSTREAM_CHANGED")
+        turns = factory.get("worker_turns") or []
+        if (not turns or len(turns) != factory.get("model_call_count")
+                or len(turns) >= self.patch_agent_loop_policy.max_total_model_turns
+                or len(self._replay_request_refs) != len(turns)):
+            raise LocalEntryError("PATCH_REPLAY_PREFIX_INCOMPLETE")
+        prefix = []
+        for turn, request_ref in zip(turns, self._replay_request_refs, strict=True):
+            if turn.get("status") != "responded" or turn.get("response_origin", "live_provider_response") != "live_provider_response":
+                raise LocalEntryError("PATCH_REPLAY_PREFIX_INCOMPLETE")
+            retained = self._read_verified_response_json(turn.get("response_ref"))
+            calls = retained.get("tool_calls") or []
+            wire_hash = (retained.get("provider_diagnostic", {}).get("request_identity") or {}).get("provider_body_sha256")
+            if (retained.get("model") != self.profile.model or retained.get("content")
+                    or not calls or any(call.get("name") != "inspect_plan_binding_source" for call in calls)
+                    or not isinstance(retained.get("raw_response"), dict) or not isinstance(wire_hash, str)):
+                raise LocalEntryError("PATCH_REPLAY_RESPONSE_NOT_TOOL_SELECTION")
+            raw_response = retained["raw_response"]
+            raw_message = raw_response.get("message")
+            if not isinstance(raw_message, dict) or raw_response.get("model") != retained["model"] or raw_message.get("content"):
+                raise LocalEntryError("PATCH_REPLAY_RESPONSE_NOT_TOOL_SELECTION")
+            raw_calls = [asdict(_parse_ollama_tool_call(call)) for call in raw_message.get("tool_calls") or []]
+            if _sha256_json(raw_calls) != _sha256_json(calls):
+                raise LocalEntryError("PATCH_REPLAY_RESPONSE_NOT_TOOL_SELECTION")
+            original_request = self._read_verified_response_json(request_ref)
+            if request_ref["sha256"] != wire_hash:
+                raise LocalEntryError("PATCH_REPLAY_REQUEST_CHANGED")
+            prefix.append({"request_sha256": wire_hash, "request_payload": original_request,
+                           "request_ref": deepcopy(request_ref), "response_ref": deepcopy(turn["response_ref"]),
+                           "raw_response": retained["raw_response"]})
+        self._replay_prefix = prefix
+        self._receipt["verified_replay"] = {
+            "source_attempt_ref": deepcopy(self._replay_attempt_ref), "prefix_turn_count": len(prefix),
+            "maximum_new_model_calls": self.patch_agent_loop_policy.max_total_model_turns - len(prefix),
+            "requires_exact_provider_json_values": True, "original_attempt_modified": False,
+        }
+
+    def _install_verified_tool_replay(self, client: AgentTurnClient) -> None:
+        if not self._replay_prefix:
+            return
+        from src.libs.llm.agent_turn import _httpx_json_body_identity
+        if not isinstance(client, OllamaChatAgentAdapter):
+            raise LocalEntryError("PATCH_REPLAY_PROVIDER_UNSUPPORTED")
+        send = client._send
+        def replay_or_send(url, payload, headers):
+            if self._replayed_turn_count >= len(self._replay_prefix):
+                return send(url, payload, headers)
+            item = self._replay_prefix[self._replayed_turn_count]
+            wire_hash = _httpx_json_body_identity(url, payload)["provider_body_sha256"]
+            if _sha256_json(payload) != _sha256_json(item["request_payload"]):
+                raise LocalEntryError("PATCH_REPLAY_REQUEST_CHANGED")
+            self._receipt.setdefault("replay_request_matches", []).append({
+                "original_request_ref": deepcopy(item["request_ref"]),
+                "current_wire_sha256": wire_hash, "exact_wire_bytes_match": wire_hash == item["request_sha256"],
+                "all_json_values_and_text_exact": True,
+            })
+            self._replayed_turn_count += 1
+            self._emit("local_patch_verified_response_replayed")
+            return deepcopy(item["raw_response"])
+        client._send = replay_or_send
 
     def _recovery_observation_usage(self) -> tuple[int, int]:
         loop = self._receipt["patch_agent_loop"]

@@ -678,9 +678,9 @@ def run_patch_agent_loop(
         if rejected_bindings and all(isinstance(binding, str) for binding in rejected_bindings):
             rejected_read_batches.add(_canonical_sha256(sorted(rejected_bindings)))
         for tool_result in exchange.tool_results:
-            seen_tool_call_ids.add(tool_result.call_id)
             if (tool_result.name == PATCH_SOURCE_INSPECTION_TOOL_NAME and isinstance(tool_result.output, Mapping)
                 and isinstance(tool_result.output.get("observation_sha256"), str)):
+                seen_tool_call_ids.add(tool_result.call_id)
                 binding_id = tool_result.output.get("binding_id")
                 if isinstance(binding_id, str):
                     inspected_binding_ids.add(binding_id)
@@ -950,7 +950,8 @@ def run_patch_agent_loop(
                         tool_call_trace=tool_call_trace, observation_trace=observation_trace,
                         termination=_termination("PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED",
                             "The bounded batch rejection feedback exceeds the observation budget.", turn_index))
-                seen_tool_call_ids.update(call.call_id for call in calls)
+                # A denied batch did not execute. Provider-derived ids may recur when
+                # the model selects a smaller subset; only executed ids are reserved.
                 pending_response, pending_tool_results = response, results
                 base_request = _without_loop_states(request)
                 continue

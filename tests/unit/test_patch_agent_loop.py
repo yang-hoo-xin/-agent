@@ -905,3 +905,43 @@ def test_batch_stops_on_snapshot_drift_without_executing_remaining_reads(tmp_pat
     assert result.termination["code"] == "PATCH_AGENT_SOURCE_SNAPSHOT_DRIFT"
     assert result.tool_rounds_used == 2
     assert [item["dispatch_started"] for item in result.tool_call_trace] == [True, True, False]
+
+
+def test_real_budget_reselection_does_not_reserve_unexecuted_provider_call_ids(tmp_path: Path) -> None:
+    from src.libs.llm import OllamaChatAgentAdapter
+    fixture_root = Path(__file__).parents[1] / "fixtures"
+    replies = [json.loads((fixture_root / name).read_text(encoding="utf-8")) for name in (
+        "patch_multi_read_budget_response_20260905.json", "patch_multi_read_reselection_response_20260905.json")]
+    replies.append({"model": "qwen3-coder:30b", "done": True, "message": {"content": '{"changes":[]}'}})
+    requests = []
+    def send(_url, payload, _headers):
+        requests.append(payload)
+        return replies.pop(0)
+    client = OllamaChatAgentAdapter(base_url="http://127.0.0.1:11434", model="qwen3-coder:30b",
+        max_output_tokens=4096, request_sender=send)
+    _, _, _, inspector = _fixture(tmp_path, binding_count=5, policy=PatchAgentLoopPolicy(
+        allow_batched_reads=True, require_source_inspection=False, finalize_after_first_observation=False,
+        max_total_model_turns=4))
+    result = _run(client, inspector)
+    assert result.completed, result.termination
+    assert result.model_turns_used == 3 and result.tool_rounds_used == 2
+    assert result.tool_call_trace[0]["tool_call_id"] == result.tool_call_trace[5]["tool_call_id"]
+    assert [entry["binding_id"] for entry in result.observation_trace] == ["edit_binding_001", "edit_binding_005"]
+    assert all(entry["dispatch_started"] is False for entry in result.tool_call_trace[:5])
+    assert len(requests) == 3 and not replies
+
+
+def test_resume_budget_feedback_does_not_mark_rejected_reads_as_executed(tmp_path: Path) -> None:
+    from src.libs.llm.agent_turn import AgentToolExchange, AgentToolResult
+    _, _, _, inspector = _fixture(tmp_path, binding_count=2, policy=PatchAgentLoopPolicy(
+        require_source_inspection=False, allow_batched_reads=True, finalize_after_first_observation=False))
+    previous = AgentTurnRequest(messages=(AgentMessage(role="user", content="source request"),),
+        historical_tool_exchanges=(AgentToolExchange(tool_results=(AgentToolResult(
+            call_id="call-001", name="inspect_plan_binding_source", output={"status": "not_executed",
+                "error_code": "PATCH_AGENT_TOOL_BATCH_BUDGET_EXCEEDED", "binding_id": "edit_binding_001"}),),
+            provider_state={"content": "", "tool_calls": [{"id": "call-001"}]}, insert_index=1),))
+    client = _ScriptedClient([_response(turn=2, tool_calls=(_tool_call("edit_binding_001", turn=1),)),
+        _response(turn=3, content='{"changes":[]}')])
+    result = run_patch_agent_loop(client=client, initial_messages=previous.messages, resume_request=previous,
+        source_inspector=inspector, final_response_format=_final_format(), consumed_model_turns=1)
+    assert result.completed and result.tool_rounds_used == 1
