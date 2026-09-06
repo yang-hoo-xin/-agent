@@ -1089,6 +1089,55 @@ def _symbol_connection(root: Path, name: str) -> dict[str, Any]:
     }
 
 
+def _fresh_api_augmentation_wiring(root: Path) -> dict[str, Any]:
+    """Index the existing cross-module callback chain; never execute providers."""
+    paths = {name: root / relative for name, relative in {
+        "cli": "src/mod_agent/cli.py", "fresh": "src/mod_agent/fresh_coverage.py",
+        "provider": "src/mod_agent/evidence/requirement_coverage_provider.py",
+        "factories": "src/mod_agent/intelligent_evidence_only.py",
+    }.items()}
+    trees = {name: _parse_python(path) for name, path in paths.items() if path.is_file()}
+
+    def calls(owner: str, name: str, *, forwarded: bool = False) -> list[str]:
+        tree = trees.get(owner)
+        if tree is None:
+            return []
+        result = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = node.func.id if isinstance(node.func, ast.Name) else (
+                node.func.attr if isinstance(node.func, ast.Attribute) else None)
+            if callee != name:
+                continue
+            if forwarded and not any(keyword.arg == "source_augmentation_factory"
+                    and isinstance(keyword.value, ast.Name) and keyword.value.id == "source_augmentation_factory"
+                    for keyword in node.keywords):
+                continue
+            result.append(_source_ref(paths[owner], node.lineno, root))
+        return result
+
+    factory_names = (
+        "make_fresh_api_source_augmentation_factory",
+        "make_fresh_assisted_api_source_augmentation_factory",
+    )
+    definitions = {node.name: _source_ref(paths["factories"], node.lineno, root)
+                   for node in ast.walk(trees["factories"])
+                   if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))} if "factories" in trees else {}
+    factories = {name: calls("cli", name) for name in factory_names if name in definitions}
+    seams = {
+        "cli_to_fresh": calls("cli", "run_fresh_requirement_coverage", forwarded=True),
+        "fresh_to_provider": calls("fresh", "make_requirement_coverage_evidence_provider", forwarded=True),
+        "provider_constructor": calls("provider", "RequirementCoverageEvidenceProvider", forwarded=True),
+        "augmentation_invocation": calls("provider", "source_augmentation_factory"),
+    }
+    connected = len(factories) == len(factory_names) and all(factories.values()) and all(seams.values())
+    return {"connected": connected, "api_factory_names": sorted(name for name, refs in factories.items() if refs),
+            "source_refs": sorted({ref for refs in (*factories.values(), *seams.values()) for ref in refs}
+                                  | {definitions[name] for name in factories}),
+            "seams": seams, "verification_status": "source_wiring_not_executed_by_projection"}
+
+
 def project_product_api(root: Path) -> dict[str, Any]:
     """Project current product-Agent API evidence connections and honest gaps."""
 
@@ -1120,6 +1169,7 @@ def project_product_api(root: Path) -> dict[str, Any]:
         "RunLocalMemberAccessResolver",
     }
     connected_names = sorted(name for name in assembly_names if name in fresh_text)
+    augmentation = _fresh_api_augmentation_wiring(root)
     intelligent_path = root / "src/mod_agent/intelligent_evidence_only.py"
     local_entry_path = root / "src/mod_agent/local_entry.py"
     metadata_path = root / "src/mod_agent/evidence/dotnet_metadata.py"
@@ -1183,12 +1233,15 @@ def project_product_api(root: Path) -> dict[str, Any]:
             "evidence_provider": (
                 "RgLiveEvidenceProvider" if "RgLiveEvidenceProvider" in fresh_text else None
             ),
-            "provider_scope": "RgLive_only",
+            "provider_scope": "RgLive_plus_optional_API_augmentation" if augmentation["connected"] else "RgLive_only",
             "source_ref": _definition_ref(root, "run_fresh_requirement_coverage"),
-            "status": "not_connected_to_fresh" if not connected_names else "partially_connected",
+            "status": "partially_connected" if connected_names or augmentation["connected"] else "not_connected_to_fresh",
+            "api_factory_names": augmentation["api_factory_names"],
+            "augmentation_source_refs": augmentation["source_refs"],
+            "verification_status": augmentation["verification_status"],
         },
         "general_documentation_gap": {
-            "reason": "Fresh Coverage source search is CSharp-only and the general documentation/API evidence path is not connected to Fresh.",
+            "reason": "Fresh has optional registered assembly/API augmentation; these source links do not establish a general documentation ingestion or discovery path.",
             "source_refs": _text_refs_in_paths(
                 root, "*.cs", (root / "src/mod_agent/evidence/rg_live.py",)
             ),
@@ -1265,7 +1318,8 @@ def _summary(root: Path) -> dict[str, Any]:
     contracts = _artifact_contract_rows(root)
     producer_counts = Counter(str(row["producer_stage"]) for row in contracts)
     fresh_text = _read_text(root / "src/mod_agent/fresh_coverage.py")
-    fresh_api_connected = any(name in fresh_text for name in _PRODUCT_API_SYMBOLS)
+    fresh_api_connected = (_fresh_api_augmentation_wiring(root)["connected"]
+                           or any(name in fresh_text for name in _PRODUCT_API_SYMBOLS))
     return {
         "current": {
             "branch": current["git"]["branch"],

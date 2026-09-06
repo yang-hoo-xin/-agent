@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from scripts.engineering_cognition import (
+    _fresh_api_augmentation_wiring,
     build_projection,
     project_current,
     project_ownership,
@@ -17,6 +18,27 @@ from scripts.engineering_cognition import (
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_fresh_api_wiring_requires_forwarding_not_names_in_comments(tmp_path):
+    modules = {
+        "src/mod_agent/cli.py": "# make_fresh_api_source_augmentation_factory\n# make_fresh_assisted_api_source_augmentation_factory\n",
+        "src/mod_agent/fresh_coverage.py": "def run_fresh_requirement_coverage(): pass\n",
+        "src/mod_agent/evidence/requirement_coverage_provider.py": "# source_augmentation_factory\n",
+        "src/mod_agent/intelligent_evidence_only.py": "def make_fresh_api_source_augmentation_factory(): pass\ndef make_fresh_assisted_api_source_augmentation_factory(): pass\n",
+    }
+    for name, source in modules.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+    result = _fresh_api_augmentation_wiring(tmp_path)
+    assert result["connected"] is False
+    assert result["api_factory_names"] == []
+
+
+def test_summary_and_detail_agree_on_optional_fresh_api_wiring():
+    summary = build_projection("summary", root=REPOSITORY_ROOT)
+    assert summary["data"]["product_api"]["fresh_status"] == project_product_api(REPOSITORY_ROOT)["fresh_coverage"]["status"]
 
 
 def _run(*args: str, cwd: Path = REPOSITORY_ROOT) -> subprocess.CompletedProcess[str]:
@@ -131,7 +153,8 @@ def test_surface_projection_keeps_mcp_as_two_bounded_surfaces() -> None:
         "/features/{feature_id}/status",
         "/health",
     }
-    assert surfaces["product_cli"]["entry_count"] == 21
+    assert surfaces["product_cli"]["entry_count"] == 22
+    assert "continue-fresh-patch" in {entry["name"] for entry in surfaces["product_cli"]["entries"]}
     assert surfaces["product_cli"]["entrypoint_alignment"] == "match"
     assert surfaces["standard_rag_mcp"]["package_entrypoint"] == "main:main"
     assert surfaces["standard_rag_mcp"]["implementation_entrypoint"] == (
@@ -189,7 +212,7 @@ def test_ownership_anchor_is_not_observed_without_source_refs() -> None:
     assert anchor["status"] == "not_observed"
 
 
-def test_product_api_reports_narrow_connections_and_fresh_gap() -> None:
+def test_product_api_reports_optional_fresh_wiring_without_claiming_semantic_success() -> None:
     result = project_product_api(REPOSITORY_ROOT)
     components = {item["name"]: item for item in result["components"]}
 
@@ -210,8 +233,13 @@ def test_product_api_reports_narrow_connections_and_fresh_gap() -> None:
     )
     assert result["fresh_coverage"]["evidence_provider"] == "RgLiveEvidenceProvider"
     assert result["fresh_coverage"]["source_ref"].startswith("src/mod_agent/fresh_coverage.py:")
-    assert result["fresh_coverage"]["provider_scope"] == "RgLive_only"
-    assert result["fresh_coverage"]["status"] == "not_connected_to_fresh"
+    assert result["fresh_coverage"]["provider_scope"] == "RgLive_plus_optional_API_augmentation"
+    assert result["fresh_coverage"]["status"] == "partially_connected"
+    assert result["fresh_coverage"]["verification_status"] == "source_wiring_not_executed_by_projection"
+    assert result["fresh_coverage"]["api_factory_names"] == [
+        "make_fresh_api_source_augmentation_factory",
+        "make_fresh_assisted_api_source_augmentation_factory",
+    ]
     assert len(result["connection_boundaries"]) == 3
     assert result["general_documentation_gap"]["status"] == "not_connected_to_fresh"
     assert result["general_product_api_semantics"]["status"] == ("general_semantics_unproven")
