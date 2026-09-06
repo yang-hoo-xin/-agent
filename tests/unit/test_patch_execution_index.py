@@ -436,3 +436,56 @@ def test_missing_journal_is_reported_and_network_paths_are_not_read(tmp_path):
     assert result["unreadable_journals"][0]["status"] == "missing_or_invalid_journal"
     with pytest.raises(ValueError, match="network_path"):
         project_patch_executions("//untrusted/share")
+
+
+def _retain_worker_configuration(root, journal):
+    marker = root.parent / "factory-executed.txt"
+    factory_path = root.parent / "query-must-not-load.py"
+    factory_path.write_text(f"from pathlib import Path\nPath({str(marker)!r}).write_text('executed')\n")
+    configuration_ref = _retain(root.parent / "worker-config.json", {
+        "kwargs": {"private_input": "NEVER_EXPOSE_QUERY_KWARGS"},
+    })
+    journal["worker_configuration_ref"] = configuration_ref
+    journal["worker_profile_sha256"] = "1" * 64
+    journal["factory_receipt"]["behavior_evaluator_configuration"] = {
+        "configuration_ref": configuration_ref,
+        "factory_ref": {"path": str(factory_path), "sha256": hashlib.sha256(factory_path.read_bytes()).hexdigest()},
+        "factory_name": "build_evaluator", "kwargs_sha256": "2" * 64,
+        "kwargs": {"private_input": "NEVER_EXPOSE_QUERY_KWARGS"},
+    }
+    return marker
+
+
+def test_worker_configuration_identity_is_optional_and_query_does_not_load_python(tmp_path):
+    root, path, journal, _ = _fixture(tmp_path)
+    legacy = project_patch_executions(root)["attempts"][0]
+    assert legacy["worker_configuration_ref"] is None
+    assert legacy["worker_profile_sha256"] is None
+    assert legacy["worker_profile_identity_verification"] == "unknown"
+    assert legacy["behavior_evaluator_configuration"] is None
+    marker = _retain_worker_configuration(root, journal)
+    _retain(path, journal)
+    row = project_patch_executions(root)["attempts"][0]
+    assert row["worker_configuration_ref"]["integrity"] == "verified_bytes"
+    assert row["worker_profile_sha256"] == "1" * 64
+    assert row["worker_profile_identity_verification"] == "recorded_not_recomputed"
+    evaluator = row["behavior_evaluator_configuration"]
+    assert evaluator["factory_ref"]["integrity"] == "verified_bytes"
+    assert evaluator["factory_name"] == "build_evaluator"
+    assert evaluator["kwargs_sha256"] == "2" * 64
+    assert "NEVER_EXPOSE_QUERY_KWARGS" not in json.dumps(row)
+    assert "kwargs" not in evaluator
+    assert not marker.exists()
+
+
+@pytest.mark.parametrize("reference", ["configuration_ref", "factory_ref"])
+def test_worker_configuration_reference_damage_is_not_reported_verified(tmp_path, reference):
+    root, path, journal, _ = _fixture(tmp_path)
+    marker = _retain_worker_configuration(root, journal)
+    _retain(path, journal)
+    ref = journal["factory_receipt"]["behavior_evaluator_configuration"][reference]
+    Path(ref["path"]).write_text("changed after the recorded hash")
+    row = project_patch_executions(root)["attempts"][0]
+    assert row["behavior_evaluator_configuration"][reference]["integrity"] == "hash_mismatch"
+    assert row["integrity"] == "references_need_attention"
+    assert not marker.exists()

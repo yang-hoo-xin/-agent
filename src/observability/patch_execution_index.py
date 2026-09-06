@@ -286,6 +286,20 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
     repair = _object(journal.get("repair_context"))
     selected = _object(journal.get("selected_artifacts"))
     terminal = _object(journal.get("terminal_result"))
+    worker_config_ref = (
+        refs.check(journal["worker_configuration_ref"])[0]
+        if journal.get("worker_configuration_ref") is not None else None
+    )
+    worker_profile = journal.get("worker_profile_sha256")
+    worker_profile = worker_profile if isinstance(worker_profile, str) else None
+    evaluator_config = _object(factory.get("behavior_evaluator_configuration"))
+    evaluator_identity = {
+        **_fields(evaluator_config, "factory_name", "kwargs_sha256"),
+        "configuration_ref": refs.check(evaluator_config.get("configuration_ref"))[0],
+        "factory_ref": refs.check(evaluator_config.get("factory_ref"))[0],
+        "source_field": "factory_receipt.behavior_evaluator_configuration",
+        "factory_execution": "not_performed_by_query",
+    } if evaluator_config else None
     upstream = {name: refs.check(ref)[0] for name, ref in sorted(selected.items())}
     current_artifacts = {
         name: {"source_field": f"artifacts.{name}", "ref": refs.check(ref)[0]}
@@ -357,6 +371,10 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
         ),
         "reference_integrity_counts": dict(sorted(integrity.items())),
         "source_currentness": "not_rechecked_by_index",
+        "worker_configuration_ref": worker_config_ref,
+        "worker_profile_sha256": worker_profile,
+        "worker_profile_identity_verification": "recorded_not_recomputed" if worker_profile else "unknown",
+        "behavior_evaluator_configuration": evaluator_identity,
         "selected_upstreams": upstream,
         "current_artifacts": current_artifacts,
         "terminal_artifacts": terminal_artifacts,

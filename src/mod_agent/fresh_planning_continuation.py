@@ -127,6 +127,8 @@ class PatchContinuationInputV1:
     repair_parent_response_ref: Mapping[str, str] | None = None
     repair_parent_attempt_ref: Mapping[str, str] | None = None
     attempt_id: str | None = None
+    worker_configuration_ref: Mapping[str, str] | None = None
+    worker_profile_sha256: str | None = None
 
     def __post_init__(self) -> None:
         if self.contract_version != PATCH_CONTINUATION_CONTRACT_VERSION:
@@ -203,6 +205,10 @@ class PatchContinuationInputV1:
             or len(self.attempt_id) > 200
         ):
             raise PatchContinuationError("PATCH_CONTINUATION_ATTEMPT_ID_INVALID", "request", "Attempt identity must be non-empty text of at most 200 characters.")
+        _validate_worker_configuration_identity(self.worker_configuration_ref, self.worker_profile_sha256)
+        if self.worker_configuration_ref is not None:
+            # Detach the caller's mutable mapping while preserving its exact values.
+            object.__setattr__(self, "worker_configuration_ref", dict(self.worker_configuration_ref))
 
 
 @dataclass(frozen=True)
@@ -386,6 +392,39 @@ def _is_sha256(value: Any) -> bool:
         and len(value) == 64
         and all(character in "0123456789abcdef" for character in value)
     )
+
+
+def _validate_worker_configuration_identity(
+    ref: Mapping[str, str] | None, profile_sha256: str | None, *, verify_bytes: bool = False,
+) -> None:
+    """Bind an optional worker configuration file without interpreting its contents."""
+    if ref is None and profile_sha256 is None:
+        return
+    if ref is None or not _is_sha256(profile_sha256):
+        raise PatchContinuationError(
+            "PATCH_WORKER_CONFIGURATION_IDENTITY_INVALID", "request",
+            "Worker configuration and its lowercase model-profile SHA-256 are required together.",
+        )
+    if (not isinstance(ref, Mapping) or set(ref) != {"path", "sha256"}
+            or type(ref.get("path")) is not str or not ref["path"].strip()
+            or not _is_sha256(ref.get("sha256"))):
+        raise PatchContinuationError(
+            "PATCH_WORKER_CONFIGURATION_IDENTITY_INVALID", "request",
+            "Worker configuration requires exactly a non-empty path and lowercase SHA-256.",
+        )
+    if verify_bytes:
+        try:
+            digest = hashlib.sha256(Path(ref["path"]).read_bytes()).hexdigest()
+        except (OSError, ValueError) as exc:
+            raise PatchContinuationError(
+                "PATCH_WORKER_CONFIGURATION_IDENTITY_INVALID", "configuration_admission",
+                "The exact worker configuration file is unavailable.",
+            ) from exc
+        if digest != ref["sha256"]:
+            raise PatchContinuationError(
+                "PATCH_WORKER_CONFIGURATION_IDENTITY_INVALID", "configuration_admission",
+                "Worker configuration file bytes differ from the selected SHA-256.",
+            )
 
 
 def _same_path(left: Path, right: Path) -> bool:
@@ -1140,6 +1179,8 @@ def preflight_patch_continuation(
 ) -> _AdmittedPatchInputs:
     """Admit exact selected refs, ancestry, bindings, and current source bytes."""
 
+    _validate_worker_configuration_identity(request.worker_configuration_ref,
+        request.worker_profile_sha256, verify_bytes=True)
     try:
         artifact_root, workspace_root = _resolve_roots(request)  # type: ignore[arg-type]
     except PlanningContinuationError as exc:
@@ -1448,6 +1489,9 @@ class PatchContinuationAttemptJournal:
             "attempt_identity_sha256": _patch_attempt_identity(request, max_model_calls),
             "max_model_calls": max_model_calls,
         }
+        if request.worker_configuration_ref is not None:
+            self._document["worker_configuration_ref"] = dict(request.worker_configuration_ref)
+            self._document["worker_profile_sha256"] = request.worker_profile_sha256
         if admitted.repair_context is not None:
             self._document["repair_context"] = {
                 key: value for key, value in admitted.repair_context.items()
@@ -2321,7 +2365,12 @@ def _proposal_source_snippet_char_limit(admitted: _AdmittedPatchInputs) -> int:
 
 
 def _patch_attempt_identity(request: PatchContinuationInputV1, max_model_calls: int) -> str:
-    return _canonical_sha256({"request": asdict(request), "max_model_calls": max_model_calls})
+    identity_request = asdict(request)
+    if request.worker_configuration_ref is None and request.worker_profile_sha256 is None:
+        # Existing attempts predate this optional input; keep their exact identity.
+        identity_request.pop("worker_configuration_ref")
+        identity_request.pop("worker_profile_sha256")
+    return _canonical_sha256({"request": identity_request, "max_model_calls": max_model_calls})
 
 
 def _attempt_receipt_projection(path: Path, document: Mapping[str, Any]) -> dict[str, Any]:

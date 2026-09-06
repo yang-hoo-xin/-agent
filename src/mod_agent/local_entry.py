@@ -1046,6 +1046,13 @@ class LocalOllamaInitialPatchAdapter:
             )
         started = time.perf_counter()
         try:
+            prepare_evaluator = getattr(self.behavior_evaluator, "prepare_for_patch_attempt", None)
+            if callable(prepare_evaluator):
+                prepare_evaluator()
+                evaluator_receipt = getattr(self.behavior_evaluator, "configuration_receipt", None)
+                if callable(evaluator_receipt):
+                    self._receipt["behavior_evaluator_configuration"] = deepcopy(evaluator_receipt())
+                self._emit("local_patch_behavior_evaluator_prepared")
             identity = self.identity_reader(self.profile.base_url, self.profile.model)
             _validate_ollama_model_identity(
                 identity,

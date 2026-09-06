@@ -39,6 +39,7 @@ from .fresh_planning_continuation import (
     PatchContinuationInputV1,
     PlanningContinuationError,
     PlanningContinuationInputV1,
+    _canonical_sha256,
     blocked_patch_continuation_result,
     blocked_planning_continuation_result,
     run_fresh_patch_continuation,
@@ -63,8 +64,8 @@ from .local_entry import (
     resume_stagger_edit_authority_review,
     run_local_request,
 )
+from .patch_worker_configuration import PatchWorkerConfiguration, read_json_object
 from .planning import ModPlanningBriefBuilder, RequestPlanner
-from .proposal.patch_agent_loop import PatchAgentLoopPolicy
 from .preflight_preparation import (
     DeterministicPostChangeConditionsV1,
     PreflightPreparationError,
@@ -80,6 +81,7 @@ from .product_execution import (
     ProductExecutionResultV1,
 )
 from .product_executor import ProductExecutionPresentationError
+from .proposal.patch_agent_loop import PatchAgentLoopPolicy
 from .runtime import (
     StaggerDiagnosticDiffPreflightError,
     StaggerEditAuthorityApprovalError,
@@ -182,6 +184,23 @@ def _read_typed_json_object_file(path_value: str, role: str) -> dict[str, object
     if not isinstance(value, Mapping):
         raise ValueError(f"{role} file must contain one JSON object.")
     return dict(value)
+
+
+def _read_patch_repair_inputs(path: str) -> dict[str, object]:
+    """Deserialize existing Repair refs; their owner performs semantic admission."""
+    value = read_json_object(path)
+    expected = {
+        "repair_parent_proposal_ref", "repair_parent_review_ref",
+        "repair_failure_report_ref", "repair_parent_response_ref", "repair_parent_attempt_ref",
+    }
+    if set(value) != expected:
+        raise ValueError("Repair inputs must contain exactly the five existing Repair reference fields.")
+    for name in ("repair_parent_proposal_ref", "repair_parent_review_ref"):
+        ref = value[name]
+        if not isinstance(ref, dict) or set(ref) != {"feature_id", "artifact_type", "path", "artifact_hash"}:
+            raise ValueError(f"{name} must be an exact ArtifactRef object.")
+        value[name] = ArtifactRef(**ref)
+    return value
 
 
 def plan_request(
@@ -799,6 +818,17 @@ def build_parser(
             "Require a bounded Plan-binding source inspection loop before "
             "the final structured Patch response."
         ),
+    )
+    patch_continuation_parser.add_argument(
+        "--patch-worker-config",
+        help=("Explicit local worker JSON configuration. Overrides the legacy loop defaults; "
+              "its hash-pinned evaluator factory is trusted local Python code executed by the host, not a model tool."),
+    )
+    patch_continuation_parser.add_argument(
+        "--repair-inputs", help="JSON object containing the five existing exact Repair references.",
+    )
+    patch_continuation_parser.add_argument(
+        "--attempt-id", help="Stable attempt ID; requires --patch-worker-config and is mandatory for Repair.",
     )
     planning_continuation_parser.add_argument(
         "--feature-spec-hash", required=True
@@ -1634,6 +1664,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         continuation_started = time.perf_counter()
         request: PatchContinuationInputV1 | None = None
         try:
+            worker_config = (
+                PatchWorkerConfiguration.load(args.patch_worker_config)
+                if args.patch_worker_config else None
+            )
+            repair_inputs = _read_patch_repair_inputs(args.repair_inputs) if args.repair_inputs else {}
+            if repair_inputs and (worker_config is None or not worker_config.enable_recovery_loop):
+                raise PatchContinuationError(
+                    "PATCH_REPAIR_WORKER_CONFIGURATION_REQUIRED", "request",
+                    "Repair inputs require a worker configuration with a behavior evaluator and recovery enabled.",
+                )
+            if args.attempt_id is not None and worker_config is None:
+                raise PatchContinuationError(
+                    "PATCH_WORKER_CONFIGURATION_REQUIRED", "request",
+                    "A named CLI attempt requires an explicit worker configuration.",
+                )
+            profile = LocalOllamaInitialPatchProfileV1(
+                profile_version=LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
+                base_url=args.ollama_base_url,
+                model=args.ollama_model,
+                context_window=args.ollama_context_window,
+                output_budget=args.ollama_output_budget,
+                timeout_seconds=args.ollama_timeout_seconds,
+            )
             request = PatchContinuationInputV1(
                 contract_version=PATCH_CONTINUATION_CONTRACT_VERSION,
                 artifact_store_root=args.artifact_root,
@@ -1656,34 +1709,33 @@ def main(argv: Sequence[str] | None = None) -> int:
                     path=args.implementation_plan_path,
                     artifact_hash=args.implementation_plan_hash,
                 ),
+                **repair_inputs,
+                attempt_id=args.attempt_id,
+                worker_configuration_ref=worker_config.reference if worker_config else None,
+                worker_profile_sha256=_canonical_sha256(profile.to_dict()) if worker_config else None,
             )
-            profile = LocalOllamaInitialPatchProfileV1(
-                profile_version=LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
-                base_url=args.ollama_base_url,
-                model=args.ollama_model,
-                context_window=args.ollama_context_window,
-                output_budget=args.ollama_output_budget,
-                timeout_seconds=args.ollama_timeout_seconds,
+            policy = (
+                worker_config.policy if worker_config else
+                PatchAgentLoopPolicy() if args.patch_agent_loop else None
             )
+            configured_worker = {
+                "behavior_evaluator": worker_config.behavior_evaluator(),
+                "enable_recovery_loop": worker_config.enable_recovery_loop,
+            } if worker_config else {}
             store = ArtifactStore(args.artifact_root)
             result = run_fresh_patch_continuation(
                 request,
                 patch_change_factory=LocalOllamaInitialPatchAdapter(
                     profile=profile,
                     artifact_store=store,
-                    workspace_root=(
-                        args.workspace_root if args.patch_agent_loop else None
-                    ),
-                    patch_agent_loop_policy=(
-                        PatchAgentLoopPolicy()
-                        if args.patch_agent_loop
-                        else None
-                    ),
+                    workspace_root=args.workspace_root if policy is not None else None,
+                    patch_agent_loop_policy=policy,
+                    **configured_worker,
                 ),
                 dry_run_factory=make_exact_no_write_dry_run_factory(
                     args.workspace_root
                 ),
-                max_model_calls=(5 if args.patch_agent_loop else 1),
+                max_model_calls=policy.max_total_model_turns if policy is not None else 1,
             )
         except (PatchContinuationError, LocalEntryError, OSError, ValueError) as exc:
             result = blocked_patch_continuation_result(
