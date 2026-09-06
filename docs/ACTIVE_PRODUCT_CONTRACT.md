@@ -41,11 +41,15 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
-The current platform implementation checkpoint is `b4c519a`; `7508971` rejects
+The current platform implementation checkpoint is `cdbd4ae`. The public
+continue-fresh-patch CLI now assembles existing Repair refs, the selected local
+evaluator and shared worker policy. Its offline acceptance retains real CLI,
+Adapter, worker, Graph and serializers, replacing only HTTP transport.
+No new live model or AccurateCrosshair matrix ran; see reconciliation section 0.8.
+Earlier `7508971` rejects
 explicitly incomplete passed reports and the query now includes current output
-Artifact refs. Public CLI behavior-Repair wiring is still absent: recent tests
-and 005 use the production Python API with an injected evaluator, not CLI.main.
-See reconciliation section 0.7. Earlier `e892e3e` adds shared
+Artifact refs. Historical 005 used the injected Python API; its evidence does
+not become a public-CLI live acceptance retroactively. Earlier `e892e3e` adds shared
 post-failure investigation capacity and whole-file code comparison. The new
 single-Store query is read-only and does not decide recovery or approval.
 Offline production-path verification passed. Independent real acceptance 005

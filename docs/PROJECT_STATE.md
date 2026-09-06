@@ -7,15 +7,21 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
-Platform implementation: `b4c519a`; behavior report admission: `7508971`; recovery budget/materialized-code handling: `e892e3e`.
+Platform implementation: `cdbd4ae`; behavior report admission: `7508971`; recovery budget/materialized-code handling: `e892e3e`.
 Branch: `codex/rag-capability-mainline`.
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 
-- Latest review corrections: query current Proposal/Review/Dry-run refs separately
+- Latest capability: public CLI Repair assembly passed offline through real
+  parameter parsing, evaluator loading, Adapter, worker, Graph, Review and Dry-run.
+  Only HTTP transport was replaced; no live model or current Mod matrix ran.
+  Configuration/model-profile identity and old-attempt compatibility are tested.
+  Current-case configuration files are prepared; 005 read-budget and First Shot
+  failures remain unresolved. Exact evidence is in reconciliation section 0.8.
+- Previous review corrections: query current Proposal/Review/Dry-run refs separately
   from parents; degrade response provenance when evidence is unavailable; reject
   explicitly incomplete passed reports. No new real model run occurred.
   Recent recovery verification uses an injected production Python API path;
-  public CLI wiring for behavior Repair remains incomplete. See section 0.7.
+  public CLI wiring was incomplete at that checkpoint. See sections 0.7–0.8.
 - Previous implementation: production-worker offline recovery now consumes reserved
   reads and model turns after an executed failure, then revises and revalidates.
   Same-code detection and explicit deterministic verification reuse are tested.

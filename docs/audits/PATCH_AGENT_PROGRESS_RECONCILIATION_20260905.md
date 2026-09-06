@@ -6,12 +6,17 @@
 
 ## 0. 最新状态快照
 
-**更新时间：2026-09-06；最新生产代码：`b4c519a`，报告准入修复：`7508971`。本节为当前读入口，旧章节保留当时事实。**
+**更新时间：2026-09-06；最新生产代码：`cdbd4ae`。本节为当前读入口，旧章节保留当时事实。**
 
-**最新审查落实：补齐本次输出Artifact查询，响应引用损坏时降级来源展示，并拒绝明确声明执行未完成的passed报告。**
+**最新交付：公开continue-fresh-patch入口已装配已有Repair引用、行为验证器与共享worker策略，并通过真实CLI路径的离线验收。**
+测试仅替换底层HTTP transport，保留CLI解析、配置加载、Adapter、序列化、worker、Graph、Review和Dry-run。
+合成项目实际经历“读→生成→检查失败→再读→修订→Review/Dry-run”，本轮真实模型调用0，AccurateCrosshair未修复。
+第0.7节中的公开CLI缺口是本次修复前的事实；新接口、准备文件及验证范围见第0.8节。
+
+**此前审查落实（公开CLI接线前）：补齐本次输出Artifact查询，响应引用损坏时降级来源展示，并拒绝明确声明执行未完成的passed报告。**
 本轮新增真实模型调用0；005仍是最后一次真实运行，执行时固定6411f01，不能归给本次新提交。
 此前“生产路径验证”准确指注入行为callback后调用生产Adapter/Graph的Python API路径；
-公开`continue-fresh-patch` CLI尚未接入同等Repair输入、行为callback和恢复策略，见第0.7节。
+当时公开`continue-fresh-patch` CLI尚未接入同等Repair输入、行为callback和恢复策略，见第0.7节历史核对。
 
 **本轮最新：失败后查证预算、实际文件字节比较、保守验证复用和单 Store 查询已经提交并通过离线验证。**
 生产 Adapter/Graph 的合成项目实际执行“读取→生成→检查失败→再次读取→修订→重验通过”；
@@ -60,6 +65,7 @@ Qwen在工具预算反馈后由请求5处改选2处；修正执行ID记账后，
 | 已提交 `6411f01` | 单Store只读Patch执行查询，挂入verification-claims；显示请求/执行/重放/验证来源与缺失项 | 真实004查询已生成；未关联到的事实保持unknown，不成为业务准入层 |
 | 已提交 `7508971` | 报告接收与Graph准入共同拒绝passed+incomplete；保留缺字段unknown兼容 | 合成回归先复现错误放行再验证修复；不追改历史结果 |
 | 已提交 `b4c519a` | 查询本次Artifact及终态exact refs；响应/回放引用缺失损坏时降级；无终态缓存不推断未结束 | 真实成功旧运行和005失败均已查询；无新增模型/行为执行 |
+| 已提交 `cdbd4ae` | 公开CLI装配已有Repair refs、受信本地evaluator与共享策略；配置/profile纳入既有attempt身份；查询配置来源 | CLI入口离线恢复链通过；旧API/hash保持兼容；当前Mod没有新真实尝试 |
 | 本轮生产代码WIP | 无；以上生产变更均已提交 | 文档状态不能代替Actual成功 |
 | 文档整理 | 本文顶部快照、历史标签、统一Attempt索引、剩余矩阵及短控制文档同步 | 不增加产品能力；文档提交单独记录 |
 | 用户原有WIP | ARCHITECTURE_OVERVIEW、ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT、SPEC_COVERAGE_MATRIX，以及3份未跟踪草案 | 六份文件hash与本轮开始完全一致；不混入本轮提交 |
@@ -102,6 +108,7 @@ Fresh/A3/A8支线另见第11.4、12.4、12.5节，不混进下列P0调用总数�
 | 能力 | 最新已证实 | 仍缺什么 |
 |---|---|---|
 | 共享Patch/行为Repair入口 | 真实父Proposal→RepairPlan→同worker，模拟可到完整Review/Dry-run | 当前真实修订未通过，不能称成功Repair |
+| 公开CLI恢复装配 | cdbd4ae真实CLI参数/加载器/生产对象离线到Review与Dry-run；现有case验证器配置可加载并构造 | 未通过该公开入口运行新的真实模型验收；005读取预算与First Shot仍未解决 |
 | 真实往返与观察驱动 | 真实预算反馈→重选2处；2处实际源码返回模型→真实完整输出 | 输出代码未改善；不能把工具使用等同语义正确 |
 | C1与失败可见、原义务保留 | 两个新实发请求通过B0/C1/F1/C2与8项原语义字段核验 | 不保证模型正确理解或落实这些要求 |
 | 只读范围／三部分上下文 | 29读/5编辑；完整源码与3份登记API可按需读取 | 本次只实际选读2个edit binding；未真实消费新增API工具 |
@@ -199,6 +206,8 @@ Ruff：其余本轮文件通过；local_entry既有10项、graph既有2项仍在
 
 ### 0.7 后续审查纠偏：查询成果关联、报告完整性与公开入口
 
+> 本节记录cdbd4ae之前的审查与修复；公开CLI“尚未接通”的表述由第0.8节更新。
+
 本节核验了另页在6411f01时点的审查，实施仅针对本页已交付路径的具体缺口。
 审查时的四份文档WIP后来已由6a14aa9提交；六份原有用户WIP仍未修改。
 三阶段Trace/Eval/Dashboard迁移保留为参考，没有整套启动。
@@ -240,6 +249,68 @@ python -B -m pytest tests/unit/test_patch_execution_index.py tests/unit/test_eng
 `test_surface_projection_keeps_mcp_as_two_bounded_surfaces`，期望product_cli=21而实际22，
 修复前6a14aa9也为22，本轮未修改CLI/engineering_cognition或旧断言分母。
 本轮测试文件及查询代码Ruff通过；local_entry/graph既有lint问题见第0.6节。以上测试集合不应跨轮相加。
+
+### 0.8 公开CLI装配与真实入口离线验收
+
+用户明确选择的交付是公开入口装配现有Repair输入、行为验证器、共享worker并做离线验收。
+`cdbd4ae`在原`continue-fresh-patch`子命令增加三个参数，没有新Graph或另建执行循环：
+
+- `--patch-worker-config`：严格本地JSON，包含schema_version、policy、enable_recovery_loop、behavior_evaluator。
+  policy直接构造现有PatchAgentLoopPolicy；模型参数继续来自已有ollama参数。
+  evaluator使用factory_ref(path/sha256)、精确factory_name与JSON kwargs，返回已有callable接口。
+- `--repair-inputs`：直接读取已有五项Repair引用，原Artifact/Repair owner负责上游与源码准入。
+- `--attempt-id`：复用已有稳定attempt机制。CLI具名attempt要求worker配置；Repair必须具名。
+
+新增装配配置仅解决CLI不能直接表达Python callable及共享策略的问题。现有模型profile、
+PatchAgentLoopPolicy和PatchContinuationInputV1继续分别负责模型选择、预算与上游引用。
+没有将配置注册为业务Artifact，没有接入RAG evaluator或新增插件注册表。
+
+加载配置只读取并核验，不执行factory。实际新attempt进入生产Adapter后，先构造验证器再发模型请求；
+同attempt已有终态时不再次构造。执行的是刚核验的factory文件字节，导出/构造失败不自动重试。
+这是用户显式选择的受信本地Python代码，不是模型工具；文件hash不证明依赖闭包或沙箱安全。
+可选verification_identity保持缺失/存在语义，不能替没有身份的旧callback制造复用资格。
+
+原request增加可选worker_configuration_ref和worker_profile_sha256，必须成对。
+CLI绑定配置文件及实际模型profile；同attempt更换配置/profile/预算会走原身份冲突路径。
+旧请求未提供两项时，原canonical身份保持不变。缓存读取前仍核验配置文件。
+配置与factory引用写入原journal/receipt，已有只读查询能够核验引用；不输出kwargs内容或执行factory。
+
+**真正经过公开入口的离线证据：**
+`tests/unit/test_patch_repair_cli.py`调用真实cli.main(argv)，只stub HTTPTransport并禁止真实socket。
+模型身份读取、请求序列化、配置加载、生产Adapter/Graph/worker没有被替换。
+测试选中的Python验证器文件真实加载，实际执行合成marker检查。
+
+1. 第1次离线响应选择源码，程序真实读取；第2次消费观察并给出失败代码，验证器实际判失败；
+   第3次消费新失败并读取另一个允许ref；第4次消费新观察给出修订，检查通过后形成新Proposal、Review、Dry-run。
+2. 失败点实际剩2个模型轮次且有读取额度；两个源码结果、上一版代码、新失败和原preservation均在最终wire。
+   每个wire hash与原receipt一致；这四次是测试响应数，不是实际模型调用。
+3. 首稿直接通过时0读取；同attempt读取已存结果时0新增HTTP、0新增factory构造。
+4. 持续失败停止、无Apply；错误配置、factory hash、缺Repair字段和错误报告hash都在HTTP之前拒绝。
+
+受影响验收命令：
+
+```powershell
+python -B -m pytest tests/unit/test_patch_repair_cli.py tests/unit/test_patch_worker_configuration.py tests/unit/test_patch_worker_input_identity.py tests/unit/test_fresh_planning_continuation.py tests/unit/test_patch_repair_continuation.py tests/unit/test_patch_recovery_worker.py tests/unit/test_patch_behavior_feedback.py tests/unit/test_patch_verified_replay.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\public-repair-$PID"
+```
+
+191 passed，88.79秒；包括7项公开CLI验收、46项加载器与27项输入身份检查，不能再将这些子集与191相加。
+新增配置查询消费单独验证：
+
+```powershell
+python -B -m pytest tests/unit/test_patch_execution_index.py -q --tb=short --basetemp="$env:TEMP\pxi-config-final-$PID"
+```
+
+32 passed，9.22秒。新配置/CLI/continuation/查询及对应测试Ruff通过；local_entry既有10项问题保留，未批量改无关代码。
+六份原有用户WIP未修改；本轮不宣称全仓或发布验收通过。
+
+**当前case已有可读取的装配文件：**
+[worker.json](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_preparation_001/worker.json)、
+[repair-inputs.json](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_preparation_001/repair-inputs.json)、
+[CLI参数列表](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_preparation_001/cli-arguments.json)。
+[准备结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_preparation_001/preparation-result.json)
+证明实际c760/af803引用通过preflight、原CaseBehaviorAdapter经新加载器构造，模型/行为回调调用均0，源码未变。
+此case准备没有执行CLI模型运行，没有新C#矩阵；配置保留005预算，不能写成重复读取问题已修复。
+接下来仍需处理重复源码观察与预算分配，然后通过这个公开入口安排独立的真实验收。
 
 ## 1. 结论与范围
 

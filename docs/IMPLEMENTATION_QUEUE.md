@@ -24,15 +24,15 @@ execution instruction. The [short execution card](PATCH_ACCEPTANCE_SPRINT_CARD_2
 records the selected exact inputs and single Patch-attempt owner. User messages,
 not either document, authorize actions; new exact diffs still require new approval.
 
-Current checkpoint: `b4c519a`. Current output-Artifact query and contradictory
-passed/incomplete report handling are fixed; no new model attempt was made.
-The next complete caller capability must expose the existing Repair inputs,
-behavior evaluator and shared worker policy through the public entry, with an
-offline acceptance that exercises the actual caller rather than replacing its
-constructor. Keep the retained 005 read-budget problem in that same capability;
-three identical source excerpts were measured, not yet deduplicated. Full
-Trace/Eval/Dashboard migration remains a reference, not this task's prerequisite.
-See reconciliation section 0.7 for precise current limits.
+Current checkpoint: `cdbd4ae`. Public Repair CLI assembly is implemented and
+offline-accepted through actual argument parsing, config/factory loading and
+the shared production chain, with only HTTP transport replaced. Current-case
+configuration files are prepared, but no new live model attempt was made.
+The next P0 action remains resolving the retained 005 read-budget interaction:
+three identical source excerpts were measured, not yet deduplicated. Preserve
+post-failure investigation capacity and use the now-public caller for a later
+fixed independent acceptance. Full Trace/Eval/Dashboard migration remains a
+reference, not a prerequisite. See reconciliation section 0.8 for exact limits.
 
 Previous checkpoint `6411f01`: recovery capacity and actual-code comparison in
 `e892e3e` passed offline production-path tests; the single-Store read-only query
