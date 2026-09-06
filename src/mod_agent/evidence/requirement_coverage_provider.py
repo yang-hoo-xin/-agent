@@ -497,6 +497,7 @@ class RequirementCoverageSemanticProvider(Protocol):
         materialized_projection: Mapping[str, Any],
         retrieved_pack: EvidencePack,
         request: str,
+        semantic_feedback: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]: ...
 
 
@@ -773,6 +774,7 @@ class StructuredModelRequirementCoverageProvider:
         materialized_projection: Mapping[str, Any],
         retrieved_pack: EvidencePack,
         request: str,
+        semantic_feedback: Mapping[str, Any] | None = None,
     ) -> Mapping[str, Any]:
         self._findings_attempt_audit = []
         (
@@ -852,6 +854,10 @@ class StructuredModelRequirementCoverageProvider:
             ],
         }
         raw_findings: Mapping[str, Any] | None = None
+        if semantic_feedback is not None:
+            if not isinstance(semantic_feedback, Mapping):
+                raise ValueError("REQUIREMENT_FINDINGS_SEMANTIC_FEEDBACK_INVALID")
+            payload["semantic_feedback"] = deepcopy(dict(semantic_feedback))
         findings: Mapping[str, Any] | None = None
         try:
             raw_findings = self.complete_json(

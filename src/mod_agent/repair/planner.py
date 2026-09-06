@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from src.mod_agent.bindings import BindingResolver
@@ -202,6 +202,23 @@ class RepairPlanner:
                             if key not in {"previous_response", "failed_diff_intent"}},
             semantic_decision={"decision": decision, "required_next_owner": action, "authority_granted": False, "reason": reason},
         )
+
+    def from_patch_upstream_request(self, *, repair_context: dict[str, Any], upstream: dict[str, Any],
+            feature_id: str, target_behavior: str, retry_count: int) -> RepairPlan:
+        """Retain the observed failure separately from an explicit upstream recommendation."""
+        base = self.from_behavior_failure(repair_context=repair_context, feature_id=feature_id,
+            target_behavior=target_behavior, retry_count=retry_count)
+        if base.retry_exhausted:
+            return base
+        owner = upstream["required_owner"]
+        if owner not in {"evidence", "planning"}:
+            raise ValueError("Only Evidence or Planning assessment can be requested here.")
+        return replace(base, hypothesis=upstream["reason"], minimal_changes=(), blockers=(),
+            requires_new_evidence=owner == "evidence", allowed_next_stage=(
+                "evidence_retrieval" if owner == "evidence" else "implementation_plan"),
+            repair_context={**base.repair_context, "upstream_request": upstream},
+            semantic_decision={"decision": "upstream_assessment_ready", "required_next_owner": owner,
+                "origin": upstream["origin"], "authority_granted": False, "reason": upstream["reason"]})
 
     @staticmethod
     def assess_stagger_semantic_decision(

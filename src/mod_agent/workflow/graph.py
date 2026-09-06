@@ -545,6 +545,8 @@ def build_graph(
     product_execution_mode: ProductExecutionGraphModeV1 | None = None,
     planning_continuation_mode: PlanningContinuationInputV1 | None = None,
     patch_continuation_mode: PatchContinuationInputV1 | None = None,
+    patch_upstream_request: Mapping[str, Any] | None = None,
+    enable_patch_upstream_replanning: bool = False,
     patch_continuation_max_model_calls: int = 1,
     patch_continuation_attempt_recorder: (
         PatchContinuationAttemptRecorder | None
@@ -673,6 +675,29 @@ def build_graph(
                 "Planning continuation cannot receive unrelated workflow, "
                 "model, effect, approval, or stopping controls."
             )
+    if type(enable_patch_upstream_replanning) is not bool:
+        raise ValueError("Automatic upstream replanning must be an explicit boolean.")
+    upstream_replanning = patch_upstream_request is not None or enable_patch_upstream_replanning
+    if enable_patch_upstream_replanning:
+        if validated_patch_continuation_mode is None or patch_upstream_request is not None:
+            raise ValueError("Automatic and explicit upstream entries cannot be combined.")
+        if preflight_patch_continuation(validated_patch_continuation_mode, artifact_store=artifact_store).repair_context is None:
+            raise ValueError("Automatic upstream return currently requires bound Repair C1/F1 input.")
+        if not isinstance(planning_target_selection_factory, ModelPlanningTargetSelector):
+            raise ValueError("Automatic upstream return requires the model-owned Planning provider.")
+    if patch_upstream_request is not None:
+        from src.mod_agent.repair.upstream import validate_patch_upstream_selection
+        if validated_patch_continuation_mode is None:
+            raise ValueError("An upstream assessment requires the exact existing Patch continuation input.")
+        _, validated_upstream = validate_patch_upstream_selection(validated_patch_continuation_mode,
+            patch_upstream_request, artifact_store=artifact_store)
+        patch_upstream_request = copy.deepcopy(dict(patch_upstream_request))
+        if not isinstance(planning_target_selection_factory, ModelPlanningTargetSelector):
+            raise ValueError("Upstream assessment requires model-owned Planning target selection.")
+        from src.mod_agent.evidence.reassessment import RequirementCoverageReassessmentFactory
+        if validated_upstream["required_owner"] == "evidence" and not isinstance(
+                evidence_pack_factory, RequirementCoverageReassessmentFactory):
+            raise ValueError("Evidence return requires the complete-coverage reassessment provider.")
     if validated_patch_continuation_mode is not None:
         if (
             isinstance(patch_continuation_max_model_calls, bool)
@@ -694,8 +719,8 @@ def build_graph(
             build_result_factory,
             runtime_evidence_factory,
             proposal_git_binding_factory,
-            evidence_pack_factory,
-            planning_target_selection_factory,
+            evidence_pack_factory if not upstream_replanning else None,
+            planning_target_selection_factory if not upstream_replanning else None,
             proposal_review_context_factory,
             proposal_critic,
             isolated_apply_factory,
@@ -733,12 +758,12 @@ def build_graph(
                 "Patch continuation cannot receive unrelated workflow, "
                 "approval, Apply, Build, Runtime, or repair controls."
             )
-        if patch_change_factory is None or dry_run_factory is None:
+        if patch_upstream_request is None and (patch_change_factory is None or dry_run_factory is None):
             raise ValueError(
                 "Patch continuation requires explicit Patch and no-write "
                 "Dry-run adapters."
             )
-        if patch_continuation_attempt_recorder is None:
+        if patch_upstream_request is None and patch_continuation_attempt_recorder is None:
             raise ValueError(
                 "Patch continuation requires a durable attempt recorder."
             )
@@ -1051,6 +1076,7 @@ def build_graph(
                 formal_requirement_coverage_required=(
                     validated_product_execution_mode is not None
                     or validated_planning_continuation_mode is not None
+                    or upstream_replanning
                 ),
                 use_store_result=(
                     validated_planning_continuation_mode is not None
@@ -1068,9 +1094,11 @@ def build_graph(
         "generate_patch_proposal",
         _make_real_graph_node(
             "generate_patch_proposal",
-            lambda state: _run_generate_patch_proposal(
+            lambda state: _run_generate_patch_with_upstream(
                 state,
                 artifact_store,
+                enable_upstream_replanning=enable_patch_upstream_replanning,
+                upstream_evidence_factory=evidence_pack_factory,
                 proposal_git_binding_factory=effective_proposal_git_binding_factory,
                 patch_change_factory=patch_change_factory,
                 source_snippet_char_limit=proposal_source_snippet_char_limit,
@@ -1223,6 +1251,8 @@ def build_graph(
                 product_execution_mode=validated_product_execution_mode,
                 patch_continuation_mode=validated_patch_continuation_mode,
                 patch_continuation_attempt_recorder=patch_continuation_attempt_recorder,
+                patch_upstream_request=patch_upstream_request,
+                patch_upstream_factory=patch_change_factory if enable_patch_upstream_replanning else None,
             ),
         ),
     )
@@ -1384,7 +1414,7 @@ def build_graph(
         route_after_implementation_plan,
         (
             {"continue": END, "blocked": END}
-            if validated_planning_continuation_mode is not None
+            if validated_planning_continuation_mode is not None or upstream_replanning
             else dict(registry["create_implementation_plan"])
         ),
     )
@@ -1392,7 +1422,8 @@ def build_graph(
         "generate_patch_proposal",
         route_after_patch_proposal,
         (
-            {"continue": "review_proposal", "blocked": END}
+            {"continue": "review_proposal", "blocked": END, **({"upstream": "create_repair_plan"}
+                if enable_patch_upstream_replanning else {})}
             if validated_patch_continuation_mode is not None
             else dict(registry["generate_patch_proposal"])
         ),
@@ -1487,7 +1518,9 @@ def build_graph(
     graph.add_conditional_edges(
         "create_repair_plan",
         route_after_repair_plan,
-        ({"continue": "generate_patch_proposal", "blocked": END}
+        ({"evidence": "retrieve_evidence", "planning": "create_implementation_plan", "blocked": END,
+            **({"continue": "generate_patch_proposal"} if enable_patch_upstream_replanning else {})}
+         if upstream_replanning else {"continue": "generate_patch_proposal", "blocked": END}
          if validated_patch_continuation_mode is not None
          else dict(registry["create_repair_plan"])),
     )
@@ -1770,6 +1803,8 @@ def _run_retrieve_evidence(
         payload=pack.to_artifact_payload(),
         status="success" if pack.can_generate_patch else "blocked",
         upstream_refs=[_artifact_ref_from_state(state, "feature_spec")],
+        trace_refs=([f"{state['artifacts']['repair_plan']}#sha256={state['artifact_hashes']['repair_plan']}"]
+            if state["runtime_summary"].get("patch_upstream_return") else []),
     )
     next_state = _copy_state(state)
     next_state["current_stage"] = "evidence_retrieval"
@@ -1805,6 +1840,16 @@ def _run_create_implementation_plan(
     formal_requirement_coverage_required = formal_requirement_coverage_required or isinstance(
         planning_target_selection_factory, ModelPlanningTargetSelector
     )
+    prior_feedback = None
+    if state["runtime_summary"].get("patch_upstream_return") and isinstance(
+            planning_target_selection_factory, ModelPlanningTargetSelector):
+        repair = artifact_store.semantic_read_immutable(_artifact_ref_from_state(state, "repair_plan"))["data"]
+        upstream = repair["repair_context"]["upstream_request"]
+        prior_feedback = planning_target_selection_factory.semantic_feedback
+        planning_target_selection_factory.semantic_feedback = tuple(dict.fromkeys((
+            *prior_feedback, *upstream["preserved_plan_boundaries"], upstream["reason"],
+            json.dumps({"observed_failure": repair["failure_findings"], "failure_report_ref": upstream["failure_report_ref"],
+                "recommendation_is_not_observation": True}, ensure_ascii=False, sort_keys=True))))
     try:
         if planning_continuation_mode is not None and isinstance(
             planning_target_selection_factory, ModelPlanningTargetSelector
@@ -1850,6 +1895,9 @@ def _run_create_implementation_plan(
             blockers=(exc.as_blocker(),),
             open_questions=(exc.reason,),
         )
+    finally:
+        if prior_feedback is not None:
+            planning_target_selection_factory.semantic_feedback = prior_feedback
     if planning_continuation_mode is not None:
         preflight_planning_continuation(
             planning_continuation_mode,
@@ -1867,6 +1915,9 @@ def _run_create_implementation_plan(
     }
     if isinstance(planning_target_selection_factory, ModelPlanningTargetSelector):
         write_arguments["trace_refs"] = planning_target_selection_factory.planning_trace_refs()
+    if state["runtime_summary"].get("patch_upstream_return"):
+        write_arguments.setdefault("trace_refs", []).append(
+            f"{state['artifacts']['repair_plan']}#sha256={state['artifact_hashes']['repair_plan']}")
     write_result = None
     if use_store_result:
         write_result = artifact_store.write_with_result(**write_arguments)
@@ -2227,6 +2278,37 @@ def _run_patch_continuation_factory(
         }
     )
     return generated
+
+
+def _run_generate_patch_with_upstream(state, artifact_store, *, enable_upstream_replanning=False,
+        upstream_evidence_factory=None, **kwargs):
+    try:
+        return _run_generate_patch_proposal(state, artifact_store, **kwargs)
+    except Exception as exc:
+        if not enable_upstream_replanning or str(exc) != "PATCH_AGENT_UPSTREAM_REQUESTED":
+            raise
+        from src.mod_agent.evidence.reassessment import RequirementCoverageReassessmentFactory
+        from src.mod_agent.repair.upstream import validate_active_worker_upstream
+        next_state = _copy_state(state)
+        try:
+            _, upstream = validate_active_worker_upstream(kwargs["patch_continuation_mode"],
+                _patch_factory_attempt_receipt(kwargs["patch_change_factory"]), artifact_store=artifact_store)
+            if upstream["required_owner"] == "evidence" and not isinstance(
+                    upstream_evidence_factory, RequirementCoverageReassessmentFactory):
+                raise PatchContinuationError("PATCH_UPSTREAM_EVIDENCE_PROVIDER_REQUIRED", "upstream_admission",
+                    "No full-coverage Evidence reassessment provider was configured.")
+        except (PatchContinuationError, ValueError) as invalid:
+            next_state["blockers"].append({"stage": "upstream_admission",
+                "code": getattr(invalid, "code", "PATCH_UPSTREAM_ADMISSION_FAILED"), "message": str(invalid)})
+            return next_state
+        next_state["current_stage"] = "behavior_report"
+        next_state["runtime_summary"]["patch_upstream_pending"] = {
+            "required_owner": upstream["required_owner"], "source_worker_response_ref": upstream["source_worker_response_ref"],
+            "source_plan_hash": state["artifact_hashes"]["implementation_plan"], "proposal_admitted": False}
+        recorder = kwargs.get("patch_continuation_attempt_recorder")
+        if recorder is not None:
+            recorder({"phase": "patch_upstream_assessment_admitted", "upstream_request": upstream, "proposal_admitted": False})
+        return next_state
 
 
 def _run_generate_patch_proposal(
@@ -4273,6 +4355,8 @@ def _run_create_repair_plan(
     product_execution_mode: ProductExecutionGraphModeV1 | None = None,
     patch_continuation_mode: PatchContinuationInputV1 | None = None,
     patch_continuation_attempt_recorder: PatchContinuationAttemptRecorder | None = None,
+    patch_upstream_request: Mapping[str, Any] | None = None,
+    patch_upstream_factory: PatchChangeFactory | None = None,
 ) -> ModAgentState:
     feature_spec = _read_artifact_data(state, artifact_store, "feature_spec")
     proposal_ref = _artifact_ref_from_state(state, "patch_proposal")
@@ -4302,6 +4386,21 @@ def _run_create_repair_plan(
             target_behavior=str(feature_spec.get("target_behavior") or ""),
             retry_count=state["retry_count"],
         )
+        pending_upstream = state["runtime_summary"].get("patch_upstream_pending")
+        if pending_upstream and patch_upstream_factory is not None:
+            from src.mod_agent.repair.upstream import validate_active_worker_upstream
+            _, upstream = validate_active_worker_upstream(patch_continuation_mode,
+                _patch_factory_attempt_receipt(patch_upstream_factory), artifact_store=artifact_store)
+            plan = planner.from_patch_upstream_request(repair_context=admitted.repair_context,
+                upstream=upstream, feature_id=feature_id, target_behavior=str(feature_spec.get("target_behavior") or ""),
+                retry_count=admitted.repair_context["parent_retry_count"])
+        elif patch_upstream_request is not None:
+            from src.mod_agent.repair.upstream import validate_patch_upstream_selection
+            _, upstream = validate_patch_upstream_selection(patch_continuation_mode, patch_upstream_request,
+                artifact_store=artifact_store)
+            plan = planner.from_patch_upstream_request(repair_context=admitted.repair_context,
+                upstream=upstream, feature_id=feature_id, target_behavior=str(feature_spec.get("target_behavior") or ""),
+                retry_count=state["retry_count"])
         # The Review is a passed parent-stage fact, not the source of this failure.
         upstream_refs = [proposal_ref, patch_continuation_mode.repair_parent_review_ref]
     elif failed_stage == "build" and state["build_summary"].get("status") == "failed":
@@ -4398,6 +4497,13 @@ def _run_create_repair_plan(
     next_state["current_stage"] = "repair_plan"
     next_state["retry_count"] = plan.retry_count
     _record_artifact(next_state, "repair_plan", artifact_ref)
+    if (patch_upstream_request is not None or state["runtime_summary"].get("patch_upstream_pending")) and not plan.blockers:
+        next_state["runtime_summary"]["patch_upstream_return"] = {
+            "required_owner": plan.semantic_decision["required_next_owner"],
+            "repair_plan_hash": artifact_ref.artifact_hash,
+            "assessment_only": True, "approval_inherited": False,
+        }
+        next_state["runtime_summary"].pop("patch_upstream_pending", None)
     if patch_continuation_attempt_recorder is not None:
         patch_continuation_attempt_recorder({
             "phase": "repair_plan_committed",
@@ -5494,6 +5600,8 @@ def _record_artifact(
 
 
 def _node_status(state: ModAgentState, node_name: str) -> str:
+    if node_name == "generate_patch_proposal" and state["runtime_summary"].get("patch_upstream_pending"):
+        return "partial"
     if node_name == "retrieve_evidence":
         return "success" if state["evidence_summary"].get("can_generate_patch") else "blocked"
     if node_name == "review_proposal":
@@ -5518,6 +5626,8 @@ def _node_status(state: ModAgentState, node_name: str) -> str:
 
 
 def _node_artifact_refs(state: ModAgentState, node_name: str) -> list[str]:
+    if node_name == "generate_patch_proposal" and state["runtime_summary"].get("patch_upstream_pending"):
+        return []
     artifact_by_node = {
         "plan_request": "request_planning_report",
         "planning_brief": "mod_planning_brief",
@@ -5542,6 +5652,8 @@ def _node_artifact_refs(state: ModAgentState, node_name: str) -> list[str]:
 
 
 def _node_trace_details(state: ModAgentState, node_name: str) -> dict[str, Any]:
+    if node_name == "generate_patch_proposal" and state["runtime_summary"].get("patch_upstream_pending"):
+        return copy.deepcopy(state["runtime_summary"]["patch_upstream_pending"])
     if node_name == "verification_only_admission":
         preflight = state["evidence_summary"].get("verification_only_preflight")
         if isinstance(preflight, dict):

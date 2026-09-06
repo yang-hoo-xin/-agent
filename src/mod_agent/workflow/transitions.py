@@ -61,6 +61,9 @@ def route_after_patch_proposal(state: ModAgentState) -> str:
 
     if state["blockers"]:
         return "blocked"
+    pending = state["runtime_summary"].get("patch_upstream_pending")
+    if isinstance(pending, Mapping) and pending.get("source_plan_hash") == state["artifact_hashes"].get("implementation_plan"):
+        return "upstream"
     return "continue"
 
 
@@ -149,6 +152,12 @@ def route_after_repair_plan(state: ModAgentState) -> str:
 
     if state["blockers"]:
         return "blocked"
+    upstream = state["runtime_summary"].get("patch_upstream_return")
+    if isinstance(upstream, Mapping) and upstream.get("assessment_only") is True:
+        if upstream.get("repair_plan_hash") != state["artifact_hashes"].get("repair_plan"):
+            return "blocked"
+        owner = upstream.get("required_owner")
+        return owner if owner in {"evidence", "planning"} else "blocked"
     return "continue"
 
 
@@ -179,6 +188,7 @@ def route_registry() -> RouteRegistry:
         "generate_patch_proposal": {
             "blocked": "blocked",
             "continue": "review_proposal",
+            "upstream": "create_repair_plan",
         },
         "review_proposal": {
             "blocked": "blocked",
@@ -215,6 +225,8 @@ def route_registry() -> RouteRegistry:
         "create_repair_plan": {
             "blocked": "blocked",
             "continue": "generate_patch_proposal",
+            "evidence": "retrieve_evidence",
+            "planning": "create_implementation_plan",
         },
         "evaluate": {
             "blocked": "blocked",
