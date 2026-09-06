@@ -24,15 +24,17 @@ execution instruction. The [short execution card](PATCH_ACCEPTANCE_SPRINT_CARD_2
 records the selected exact inputs and single Patch-attempt owner. User messages,
 not either document, authorize actions; new exact diffs still require new approval.
 
-Current checkpoint: `cdbd4ae`. Public Repair CLI assembly is implemented and
-offline-accepted through actual argument parsing, config/factory loading and
-the shared production chain, with only HTTP transport replaced. Current-case
-configuration files are prepared, but no new live model attempt was made.
-The next P0 action remains resolving the retained 005 read-budget interaction:
-three identical source excerpts were measured, not yet deduplicated. Preserve
-post-failure investigation capacity and use the now-public caller for a later
-fixed independent acceptance. Full Trace/Eval/Dashboard migration remains a
-reference, not a prerequisite. See reconciliation section 0.8 for exact limits.
+Current checkpoint: `af36b5d`. The 005 initial-read blocker is resolved: public
+CLI 006 executed five requested reads and two real Qwen calls, using one Config
+full text and two exact references in the actual request. Code remained identical
+to the failed parent. The 006 verifier hit a 261-character output path and stopped
+before the matrix; a separate no-model short-directory run of that retained code
+completed the original matrix at 33/36, with the same First Shot failures.
+This round is closed without another model attempt. The next P0 recovery decision
+must use a short, verified output environment and the bound failed code/observations
+through the same public worker; do not restart codec or broad Trace/Eval work.
+Real post-failure reading/revision is still untriggered, though the public CLI
+offline 5+1 read chain passed. See reconciliation section 0.9 for exact evidence.
 
 Previous checkpoint `6411f01`: recovery capacity and actual-code comparison in
 `e892e3e` passed offline production-path tests; the single-Store read-only query

@@ -41,11 +41,20 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
-The current platform implementation checkpoint is `cdbd4ae`. The public
+The current platform implementation checkpoint is `af36b5d`. Exact repeated
+source excerpts now use verified references with actual encoded-byte accounting.
+Public CLI acceptance 006 executed all five initial reads and two real Qwen
+calls, preserving the original constraints. It returned the old failed code;
+verification stopped on a 261-character output path before the matrix.
+Separate no-model verification in a short directory completed the unchanged
+matrix at 33/36, with the original three First Shot failures. No new Proposal,
+Review, Dry-run, Apply, changed Build or Runtime resulted; see reconciliation 0.9.
+The earlier `cdbd4ae` public
 continue-fresh-patch CLI now assembles existing Repair refs, the selected local
 evaluator and shared worker policy. Its offline acceptance retains real CLI,
 Adapter, worker, Graph and serializers, replacing only HTTP transport.
-No new live model or AccurateCrosshair matrix ran; see reconciliation section 0.8.
+That earlier entry-only checkpoint ran no live model or AccurateCrosshair matrix;
+its evidence remains scoped in reconciliation section 0.8.
 Earlier `7508971` rejects
 explicitly incomplete passed reports and the query now includes current output
 Artifact refs. Historical 005 used the injected Python API; its evidence does

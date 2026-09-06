@@ -7,11 +7,20 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
-Platform implementation: `cdbd4ae`; behavior report admission: `7508971`; recovery budget/materialized-code handling: `e892e3e`.
+Platform implementation: `af36b5d`; public CLI: `cdbd4ae`; behavior report admission: `7508971`.
 Branch: `codex/rag-capability-mainline`.
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 
-- Latest capability: public CLI Repair assembly passed offline through real
+- Latest real result: public CLI 006 crossed the 005 budget blocker, executing
+  all five requested source reads and retaining one Config full text plus two
+  exact refs in the actual second request. Two real Qwen calls returned code
+  identical to the failed parent. The verifier stopped on a 261-character path
+  before compilation/matrix, correctly routing an environment failure upward.
+  A separate short-directory verification of the retained code made zero model
+  calls and ran all 40 processes/36 checks: 33 passed, the same three First Shot
+  failures remained, Recoil passed. The 006 original receipt is unchanged.
+  No real post-failure investigation/revision occurred; details are in section 0.9.
+- Previous capability: public CLI Repair assembly passed offline through real
   parameter parsing, evaluator loading, Adapter, worker, Graph, Review and Dry-run.
   Only HTTP transport was replaced; no live model or current Mod matrix ran.
   Configuration/model-profile identity and old-attempt compatibility are tested.
