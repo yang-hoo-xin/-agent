@@ -24,7 +24,15 @@ execution instruction. The [short execution card](PATCH_ACCEPTANCE_SPRINT_CARD_2
 records the selected exact inputs and single Patch-attempt owner. User messages,
 not either document, authorize actions; new exact diffs still require new approval.
 
-Current checkpoint: `269b37d`. The user-directed shared Patch/behavior Repair
+Current checkpoint: `6411f01`. Recovery capacity and actual-code comparison in
+`e892e3e` passed offline production-path tests; the single-Store read-only query
+is complete. Independent fixed-version 005 stopped after two repeated selections
+of five reads against four currently available. No source read, code generation
+or behavior matrix occurred. The next bounded decision is the read-budget/model
+interaction exposed by this retained trace; do not replay 005 or add a full
+Trace/Eval migration as a prerequisite. Use reconciliation section 0.6 for evidence.
+
+Previous completed window at `269b37d`: the user-directed shared Patch/behavior Repair
 implementation and bounded acceptance have finished. P0 retained Feature fc7,
 Evidence 10a3, operator Plan c760, five edit bindings and qwen3-coder:30b.
 The real model changed its read selection after tool-budget feedback; two source

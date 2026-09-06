@@ -6,7 +6,20 @@
 
 ## 0. 最新状态快照
 
-**更新时间：2026-09-06；最新生产代码：`269b37d`。本节为当前读入口，旧章节保留当时事实。**
+**更新时间：2026-09-06；最新生产代码：`6411f01`，恢复执行变更：`e892e3e`。本节为当前读入口，旧章节保留当时事实。**
+
+**本轮最新：失败后查证预算、实际文件字节比较、保守验证复用和单 Store 查询已经提交并通过离线验证。**
+生产 Adapter/Graph 的合成项目实际执行“读取→生成→检查失败→再次读取→修订→重验通过”；
+这证明该执行分支和剩余额度可用，未证明 AccurateCrosshair 已修好。
+旧公共查询开始消费新账本的执行/拒绝/重放/复用语义；旧 ArtifactStore 仍保留权威职责。
+这不是 RAG Trace 全面迁移、多任务 Eval 或生产级全链覆盖。详细新证据见第0.6节。
+
+**最新独立真实验收005已结束：固定6411f01，2次新调用、0回放；模型两次均请求5处，
+超过初始阶段可用4处（总5处中为失败后保留1处），终止于`PATCH_AGENT_REPEATED_TOOL_BATCH`。**
+反馈确实进入第二份实际请求；10条工具请求均未执行，未生成代码、未运行行为矩阵。
+这是预算交互后的重复动作停止，不是新的First Shot修复失败矩阵；原3项失败仍只有此前证据。
+
+**上一轮真实运行（mature_repair_001–004）的结论，保留如下：**
 
 **结论：共享 Patch/行为 Repair 的执行能力已增强并实际运行；本轮未修好 First Shot。**
 准确定位为**包含执行器修复与严格接续的开发性验证**，不是固定一个版本从头到尾的无中断验收。
@@ -38,6 +51,8 @@ Qwen在工具预算反馈后由请求5处改选2处；修正执行ID记账后，
 | 已提交 `1ba8607` | 共享worker；正式行为Repair入口；B0/C1/F1/C2；多次原生工具历史；29只读/5编辑；三部分上下文和API按需读取 | 288项受影响checkpoint通过；真实闭环结果仍受下列失败限制 |
 | 已提交 `458c098` | 合法读取批次顺序执行；超额返回反馈；一次重选机会；共享剩余调用上限 | 真实Qwen收到反馈后改选001+005；99项受影响checkpoint通过 |
 | 已提交 `269b37d` | 未执行批次不占执行ID；严格校验原响应、原请求、模型、上游、源码后接续，明确回放来源 | 124项组合回归通过；实际004复用2旧响应、只新增2次调用 |
+| 已提交 `e892e3e` | 共用预算预留/释放；失败点按最终反馈检查实际剩余读取能力；复用正式物化算法比较B0下全文件字节；相同代码反馈及显式确定性验证复用 | 离线完整恢复分支通过，首次直接通过不强迫查证；不同代码不代表修复成功 |
+| 已提交 `6411f01` | 单Store只读Patch执行查询，挂入verification-claims；显示请求/执行/重放/验证来源与缺失项 | 真实004查询已生成；未关联到的事实保持unknown，不成为业务准入层 |
 | 本轮生产代码WIP | 无；以上生产变更均已提交 | 文档状态不能代替Actual成功 |
 | 文档整理 | 本文顶部快照、历史标签、统一Attempt索引、剩余矩阵及短控制文档同步 | 不增加产品能力；文档提交单独记录 |
 | 用户原有WIP | ARCHITECTURE_OVERVIEW、ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT、SPEC_COVERAGE_MATRIX，以及3份未跟踪草案 | 六份文件hash与本轮开始完全一致；不混入本轮提交 |
@@ -69,8 +84,10 @@ Fresh/A3/A8支线另见第11.4、12.4、12.5节，不混进下列P0调用总数�
 | 本轮：mature_repair_002 | `1ba8607` | 1 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/mature_repair_002/result.json)；一次请求5处被旧单工具规则阻断，未读源码 |
 | 本轮：mature_repair_003 | `458c098` | 2 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/mature_repair_003/result.json)；预算反馈后重选001+005，被错误ID记账阻断 |
 | 本轮：mature_repair_004 | `269b37d`；复用003原响应 | 2 | 2，来自003 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/mature_repair_004/result.json)；读2处→真实生成→同矩阵→一次真实修订→同矩阵；两次33/36，停止 |
+| 新独立轮：mature_repair_005 | 固定`6411f01`，含恢复变更`e892e3e`；未中途改执行器 | 2 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/mature_repair_005/result.json)；请求5处→当前可读4处反馈→仍请求同5处→重复批次停止；0读/0代码/0矩阵 |
 
-本轮新请求为0+1+2+2=5；004收据中的4是2回放+2新响应，不应据此算成7次新请求。
+001–004窗口新请求为0+1+2+2=5；004收据中的4是2回放+2新响应，不能重复累计。
+后续独立005另有2次新调用；两个已结束窗口合计7次新调用，不包含2份历史响应回放。
 001收据中的requested计数也不能冒充HTTP发送，其外层实发计数为0。
 
 ### 0.3 最新剩余能力矩阵
@@ -82,8 +99,9 @@ Fresh/A3/A8支线另见第11.4、12.4、12.5节，不混进下列P0调用总数�
 | C1与失败可见、原义务保留 | 两个新实发请求通过B0/C1/F1/C2与8项原语义字段核验 | 不保证模型正确理解或落实这些要求 |
 | 只读范围／三部分上下文 | 29读/5编辑；完整源码与3份登记API可按需读取 | 本次只实际选读2个edit binding；未真实消费新增API工具 |
 | 行为修订与Revalidation | 同一产品循环实际完成一次反馈修订和原矩阵重验 | 五项代码均等于旧父版本，原3个First Shot失败未消除 |
-| 新草稿失败后再查证 | 代码与模拟测试支持；本轮最终请求保留此前2条源码观察 | 本次最后修订处于预算末轮，无源码工具可用，不能宣称此过程已真实通过 |
-| 停止与来源 | 失败未流入新Proposal/Apply；原响应和失败保留 | 所有失败分类的正确停止与恢复尚非通用能力；代码无变化的提前终止/验证复用未全面交付 |
+| 新草稿失败后再查证 | e892e3e生产Adapter/Graph离线实际用掉预留读取与模型额度并重验通过 | 真实004最后修订曾无源码工具；新的AccurateCrosshair固定版本验收尚未由离线结果证明 |
+| 停止与来源 | 失败未流入新Proposal/Apply；同B0实际代码比较、无变化反馈和显式确定性结果复用已测试 | 原矩阵仍决定行为结果；旧报告缺完整验证身份则不复用；不宣称通用恢复 |
+| 可查询执行索引 | 6411f01单Store薄投影已运行；已有引用与原owner终态hash可核验 | 旧attempt定义、请求入模映射与旧物化身份缺失时unknown；未接通全部旧Trace/Eval/Langfuse |
 | 接续与预算 | 精确原JSON值、类型及文本校验；2原响应回放不新发网；全工作5次新调用 | 仅限定0已执行读的工具选择前缀；不是任意节点或副作用的自动恢复 |
 | 上游请求／Replan | 请求Evidence/Planning可表达并有界停止；unknown可调查 | 自动补证据→完整Coverage→自主Planning→新Patch尚未完整接通 |
 | 自主Planning／模型资格 | 保留A3真实选择与独立needs_evidence结论 | c760仍人辅；固定多任务质量与正式role→model路由未交付 |
@@ -113,7 +131,64 @@ Fresh/A3/A8支线另见第11.4、12.4、12.5节，不混进下列P0调用总数�
 预算的读取单位为每个实际读取的binding，不是“一个批次等于一次读取”；执行方式为顺序。
 请求前的loop_state显示剩余读取次数，工具说明显示计数方式；超额反馈不消耗源码读取次数。
 当前工具只读B0，C1通过完整原响应可见；尚未提供任意版本源码切换，因此不宣称跨版本binding去重已通用化。
-本轮已经结束，不追加First Shot真实尝试，不手工修改Mod来代替模型输出。
+上述001–004窗口已经结束；后续用户指示的新独立验收见第0.6节，不复用旧窗口的运行时状态。
+
+### 0.6 新一轮能力实现、查询适配与固定版本验收
+
+当前实现复用同一个Patch worker、正式exact-text物化算法、ArtifactStore和Graph；
+查询层只向已有记录读取，不被Repair/Apply反向调用，不自行裁定失败owner或产品结果。
+
+- 初始阶段共同预留模型轮次、binding读取数和观察字节；修订阶段释放预留但沿用累计消耗。
+  初始反馈字节预留是估计，实际失败时重新按真正反馈对象计算；同时检查已读ref与策略是否仍允许读取。
+  该容量声明是worker预算可用，不等于provider最终上下文一定准入。
+- 比较对象是同B0和相同文件集合下正式materializer产生的完整文件字节。
+  仅rationale/JSON变化不算代码修订；代码不同也不记作修复进展；needs_replan不被强迫改代码。
+- 验证器只有显式提供验证输入、实现、环境身份并声明可确定性复用，才能复用同代码的已执行结果。
+  新复用记录绑定原报告，标明reused与callback_invoked=false；旧报告不改写；环境变化则重新执行。
+  未提供这组身份的旧callback仍执行验证，不伪造复用资格。
+- `verification-claims --query patch-execution`只查询显式Store。
+  [真实004查询输出](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/patch_execution_query_mature_repair_004_20260906.json)
+  核验5条Artifact、16条文件引用和原owner终态hash；显示5条请求未执行、2条实际读取、2份重放和2份新响应。
+  旧attempt定义、实际请求入模映射、物化身份或验证执行来源缺字段时保留未核验/unknown。
+  `code_revision`是原journal声明，查询不重新推断代码正确性；单任务行为结果不冒充Graph终态eval_report。
+
+本轮受影响checkpoint（最后Graph malformed-policy拒绝小修前）：
+
+```powershell
+python -B -m pytest tests/unit/test_patch_agent_loop.py tests/unit/test_patch_recovery_worker.py tests/unit/test_patch_behavior_feedback.py tests/unit/test_patch_repair_continuation.py tests/unit/test_patch_verified_replay.py tests/unit/test_materialized_code_identity.py tests/unit/test_patch_apply.py tests/unit/test_patch_execution_index.py tests/unit/test_fresh_planning_continuation.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\patch-cap-$PID"
+```
+
+217 passed，68.50秒。随后仅增加malformed-policy拒绝及4种非法输入回归，执行：
+
+```powershell
+python -B -m pytest tests/unit/test_patch_recovery_worker.py -q --tb=short --basetemp="$env:TEMP\prw-policy-$PID"
+```
+
+13 passed，14.34秒；包含完整Adapter/Graph恢复链。集合有重叠，不能相加。
+Ruff：其余本轮文件通过；local_entry既有10项、graph既有2项仍在，已用HEAD原文件复现相同规则错误，未批量改无关代码。
+六份原有用户WIP hash未变。全仓测试、跨任务模型质量、真实Langfuse和部署回退未由本轮证明。
+
+固定版本独立005验收已经执行并结束；仍使用c760、原失败af803、Qwen3-Coder与原行为矩阵。
+预检最终body 43,052 bytes，现有准入需求47,148≤49,152；首次实际wire与预检逐字节一致。
+2次实发均收到响应；实际prompt token分别11,857与12,765，输出均155 token。
+首个物理拒绝是`PATCH_AGENT_TOOL_BATCH_BUDGET_EXCEEDED`：允许读取的5个目标合法，
+但请求数5超过本阶段4（同一总额度5中保留1）。第二份实际wire包含全部5条未执行反馈，
+每条均显示remaining_read_count=4、total_remaining_read_count=5、reserved_read_count=1，
+要求重选不超过本阶段额度或使用已有上下文完成。第二次仍选择同5个name/arguments，
+原始provider call IDs不同；不是旧ID误记执行的问题。终态按既有重复批次规则停止。
+
+全程126.34秒，执行结束后冻结HEAD和文件字节核验仍一致，Mod源码未变。
+10条工具请求、0实际源码读取、0代码输出、0行为验证、0新Proposal/Review/Dry-run/Apply/Build/Runtime。
+`execution_counts.patch=1`只是Patch节点执行一次，不能解释为生成一版代码。
+本轮未触发实际的失败后读取、实际代码比较或验证复用；这些能力仍只有前述离线验证，
+不能以005证明Qwen能修好或不能修好First Shot。初始4+1预算分配是执行策略，可另行评估，
+不是EditAuthority安全边界；不在已结束的005运行中扩大预算或追加调用。
+
+[005实际请求与结果核验](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/mature_repair_005/acceptance-verification.json)
+保存上述wire、反馈、冻结版本和结果边界；
+[005正式查询输出](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/mature_repair_005/execution-query.json)
+显示2份live、0重放、10条not_executed、无代码/行为记录，终态hash通过而attempt定义无法核验。
+查询本身新增模型/验证调用0；不把缺关联解释成行为测试失败。
 
 ## 1. 结论与范围
 

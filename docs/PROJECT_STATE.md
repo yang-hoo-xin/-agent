@@ -7,11 +7,20 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
-Platform implementation: `269b37d`; shared Patch/behavior Repair: `1ba8607`; bounded batch feedback: `458c098`.
+Platform implementation: `6411f01`; recovery budget/materialized-code handling: `e892e3e`.
 Branch: `codex/rag-capability-mainline`.
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 
-- Latest snapshot: the shared behavior Repair entry and source feedback ran with
+- Latest implementation: production-worker offline recovery now consumes reserved
+  reads and model turns after an executed failure, then revises and revalidates.
+  Same-code detection and explicit deterministic verification reuse are tested.
+  The single-Store Patch query consumes retained receipts without becoming a
+  business gate; missing historical associations remain unknown.
+  Independent real acceptance 005 stopped after the model twice requested five
+  reads when the initial phase allowed four. Two real responses, no source reads,
+  code output or behavior matrix; see reconciliation section 0.6. This does not
+  establish successful First Shot repair or exercise post-failure investigation.
+- Previous real-run snapshot: the shared behavior Repair entry and source feedback ran with
   the real Qwen model. It produced two full responses, but all five code replacements
   remained equal to the failed parent; both original behavior matrices stayed 33/36.
   No new Proposal/Review/Dry-run or Apply/Build/Runtime resulted. The whole work used
