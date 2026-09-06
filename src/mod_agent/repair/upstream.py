@@ -103,17 +103,20 @@ def validate_active_worker_upstream(request, receipt, *, artifact_store):
 
 
 def run_patch_upstream_replanning(*, request: PatchContinuationInputV1, selection: Mapping[str, Any],
-        planning_target_selection_factory: ModelPlanningTargetSelector, evidence_pack_factory=None):
+        planning_target_selection_factory: ModelPlanningTargetSelector, evidence_pack_factory=None,
+        run_id: str | None = None):
     """Run the existing Graph through one upstream assessment, ending at its new Plan."""
     from src.mod_agent.artifacts import ArtifactStore
     from src.mod_agent.workflow import build_graph
 
+    if run_id is not None and (not isinstance(run_id, str) or not run_id or run_id.strip() != run_id):
+        raise ValueError("An explicit nonempty invocation identity is required.")
     store = ArtifactStore(request.artifact_store_root)
     admitted, validated = validate_patch_upstream_selection(request, selection, artifact_store=store)
     if not isinstance(planning_target_selection_factory, ModelPlanningTargetSelector):
         raise ValueError("Upstream replanning requires the model-owned target selector; explicit target lists are not a fallback.")
     identity = hashlib.sha256(json.dumps(validated, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
-    state = _patch_continuation_state(run_id=f"patch_upstream_{identity[:24]}", request_id=f"patch_upstream_{identity[:24]}",
+    state = _patch_continuation_state(run_id=run_id or f"patch_upstream_{identity[:24]}", request_id=f"patch_upstream_{identity[:24]}",
         request=request, admitted=admitted)
     graph = build_graph(store, use_default_proposal_git_binding=False, patch_continuation_mode=request,
         patch_upstream_request=selection, planning_target_selection_factory=planning_target_selection_factory,

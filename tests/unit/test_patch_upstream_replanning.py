@@ -68,6 +68,17 @@ def test_human_finding_runs_repair_then_model_planning_in_the_existing_graph(tmp
     assert ready.repair_parent_proposal_ref is None
 
 
+@pytest.mark.parametrize("run_id", ["a4-planning-001-preview", "a4-planning-001-actual"])
+def test_upstream_invocation_identity_is_separate_from_logical_request(tmp_path, run_id):
+    inputs, request, _ = _repair_case(tmp_path)
+    state = run_patch_upstream_replanning(request=request, selection=_selection(),
+        planning_target_selection_factory=_selector(inputs, _Client()), run_id=run_id)
+    assert not state["blockers"]
+    assert state["run_id"] == run_id
+    assert state["request_id"].startswith("patch_upstream_")
+    assert state["request_id"] != state["run_id"]
+
+
 class _Findings:
     def __init__(self, findings):
         self.value = findings
