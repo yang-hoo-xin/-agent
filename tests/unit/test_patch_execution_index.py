@@ -115,6 +115,18 @@ def test_source_reference_projection_distinguishes_encoded_and_full_payload_size
     assert row["delivery_verification"] == "journal_admission_only_not_wire_consumption"
 
 
+def test_bound_repair_source_and_failed_response_refs_are_queryable_without_rebinding(tmp_path):
+    root, path, journal, report = _fixture(tmp_path)
+    response = journal["factory_receipt"]["worker_turns"][0]["response_ref"]
+    journal["repair_context"].update(source_attempt_ref=report,
+                                    verification_result_ref=report, failed_response_ref=response)
+    _retain(path, journal)
+    parents = project_patch_executions(root)["attempts"][0]["parents"]
+    for name in ("source_attempt_ref", "verification_result_ref", "failed_response_ref"):
+        assert parents[name]["integrity"] == "verified_bytes"
+    assert parents["failed_response_ref"]["sha256"] == response["sha256"]
+
+
 def test_replay_and_pending_turns_do_not_become_new_sends(tmp_path):
     root, path, journal, _ = _fixture(tmp_path, terminal=False)
     turn = journal["factory_receipt"]["worker_turns"][0]

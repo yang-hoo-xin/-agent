@@ -129,6 +129,8 @@ class PatchContinuationInputV1:
     attempt_id: str | None = None
     worker_configuration_ref: Mapping[str, str] | None = None
     worker_profile_sha256: str | None = None
+    repair_source_attempt_ref: Mapping[str, str] | None = None
+    repair_verification_ref: Mapping[str, str] | None = None
 
     def __post_init__(self) -> None:
         if self.contract_version != PATCH_CONTINUATION_CONTRACT_VERSION:
@@ -209,6 +211,21 @@ class PatchContinuationInputV1:
         if self.worker_configuration_ref is not None:
             # Detach the caller's mutable mapping while preserving its exact values.
             object.__setattr__(self, "worker_configuration_ref", dict(self.worker_configuration_ref))
+        if (self.repair_source_attempt_ref is None) != (self.repair_verification_ref is None):
+            raise PatchContinuationError("PATCH_REPAIR_BINDING_INPUT_INVALID", "request",
+                "A repair source attempt and separate verification reference are required together.")
+        if self.repair_source_attempt_ref is not None and self.repair_parent_proposal_ref is None:
+            raise PatchContinuationError("PATCH_REPAIR_BINDING_INPUT_INVALID", "request",
+                "Cross-attempt repair must retain its explicitly selected formal parent lineage.")
+        for name in ("repair_source_attempt_ref", "repair_verification_ref"):
+            ref = getattr(self, name)
+            if ref is not None:
+                if (not isinstance(ref, Mapping) or set(ref) != {"path", "sha256"}
+                        or type(ref.get("path")) is not str or not Path(ref["path"]).is_absolute()
+                        or not _is_sha256(ref.get("sha256"))):
+                    raise PatchContinuationError("PATCH_REPAIR_BINDING_INPUT_INVALID", "request",
+                        "Repair binding sources require exact absolute paths and lowercase SHA-256 values.")
+                object.__setattr__(self, name, dict(ref))
 
 
 @dataclass(frozen=True)
@@ -1302,11 +1319,230 @@ def _read_hashed_repair_file(ref: Mapping[str, str] | None) -> bytes:
     return payload
 
 
+def _repair_json(ref: Mapping[str, str] | None) -> dict[str, Any]:
+    value = json.loads(_read_hashed_repair_file(ref))
+    if not isinstance(value, dict):
+        raise ValueError("A bound repair document must be a JSON object.")
+    return value
+
+
+def _formal_repair_selection(source: Mapping[str, Any], source_ref: Mapping[str, str]) -> dict[str, Any]:
+    artifacts = source.get("artifacts") or {}
+    if source.get("proposal_admitted") is True and all(kind in artifacts for kind in ("patch_proposal", "proposal_review")):
+        response = source["factory_receipt"]["model_response"]
+        return {
+            "repair_parent_proposal_ref": ArtifactRef(**artifacts["patch_proposal"]),
+            "repair_parent_review_ref": ArtifactRef(**artifacts["proposal_review"]),
+            "repair_parent_attempt_ref": dict(source_ref),
+            "repair_parent_response_ref": {"path": response["path"], "sha256": response["output_sha256"]},
+        }
+    context = source.get("repair_context") or {}
+    return {
+        "repair_parent_proposal_ref": ArtifactRef(**context["parent_proposal"]),
+        "repair_parent_review_ref": ArtifactRef(**context["parent_review"]),
+        "repair_parent_attempt_ref": dict(context["parent_attempt_ref"]),
+        "repair_parent_response_ref": dict(context["parent_response_ref"]),
+    }
+
+
+def _verified_patch_repair_binding(
+    *, request: PatchContinuationInputV1, store: ArtifactStore, parent: Mapping[str, Any],
+    prepared: Any, generator: Any, inspector: Any, workspace_root: Path,
+    implementation_plan: dict[str, Any], workspace_snapshot: str, parent_retry_count: int,
+) -> dict[str, Any]:
+    """Recheck a separate executed verification against one explicit source output."""
+    from src.libs.llm import ChatResponse
+    from src.mod_agent.execution.patch_apply import materialize_exact_text_patch
+
+    source = _repair_json(request.repair_source_attempt_ref)
+    verification = _repair_json(request.repair_verification_ref)
+    formal = _formal_repair_selection(source, request.repair_source_attempt_ref)
+    if any(getattr(request, key) != value for key, value in formal.items()):
+        raise ValueError("The selected formal ancestor differs from the source attempt's explicit lineage.")
+    selected = source.get("selected_artifacts")
+    expected = {"feature_spec": _artifact_ref_dict(request.feature_spec_ref),
+                "evidence_pack": _artifact_ref_dict(request.evidence_pack_ref),
+                "implementation_plan": _artifact_ref_dict(request.implementation_plan_ref)}
+    if selected != expected or source.get("feature_id") != request.feature_spec_ref.feature_id:
+        raise ValueError("The source attempt belongs to different FeatureSpec, Evidence or Plan revisions.")
+    if (source.get("generated_against_snapshot_sha256") != workspace_snapshot
+            or source.get("current_snapshot_sha256") != workspace_snapshot):
+        raise ValueError("The source attempt's baseline is not the current unchanged workspace.")
+    factory = source.get("factory_receipt") or {}
+    response = factory.get("model_response")
+    if (not isinstance(response, dict) or response.get("retained") is not True
+            or type(source.get("model_call_count")) is not int or source["model_call_count"] < 1
+            or response.get("model") != (factory.get("profile") or {}).get("model")):
+        raise ValueError("The source attempt has no retained, model-bound generation response.")
+    failed_response_ref = {"path": response["path"], "sha256": response["output_sha256"]}
+    response_bytes = _read_hashed_repair_file(failed_response_ref)
+    if response.get("output_utf8_bytes") != len(response_bytes):
+        raise ValueError("The source response byte count differs from its retained bytes.")
+    callback_ref = verification["original_callback_ref"]
+    callback = _repair_json(callback_ref)
+    if (verification.get("original_model_response") != response or callback.get("model_response") != response
+            or type(verification.get("model_calls")) is not int or verification["model_calls"] != 0
+            or verification.get("source_unchanged") is not True):
+        raise ValueError("Separate verification is not bound to this exact source response and unchanged baseline.")
+    previous_response = response_bytes.decode("utf-8")
+    generated = generator.materialize_prepared_native(prepared, ChatResponse(content=previous_response, model=response["model"]))
+    native_hash = _canonical_sha256(generated.changes)
+    if (callback.get("generated_changes") != list(generated.changes)
+            or callback.get("generated_changes_sha256") != native_hash
+            or callback.get("source_snapshot_sha256") != inspector.source_snapshot_sha256):
+        raise ValueError("Verification callback code, native hash, or source snapshot differs from the source output.")
+    materialized = materialize_exact_text_patch(workspace_root=workspace_root,
+        diff_intent=generated.changes, implementation_plan=implementation_plan)
+    current_code = {"baseline_sha256": materialized.baseline_sha256,
+                    "code_sha256": materialized.code_sha256, "files": sorted(materialized.files)}
+    if callback.get("materialized_code_identity") != current_code:
+        raise ValueError("Verification callback materialized bytes differ from the current source output.")
+    reported = verification.get("behavior_report")
+    if not isinstance(reported, dict):
+        raise ValueError("Separate verification omitted the actual behavior report.")
+    original_report_ref = reported["report_ref"]
+    original_report = _repair_json(original_report_ref)
+    if original_report != {key: value for key, value in reported.items() if key != "report_ref"}:
+        raise ValueError("Verification result and persisted behavior report disagree.")
+    if (original_report.get("execution_origin") != "executed" or original_report.get("callback_invoked") is not True
+            or original_report.get("status") not in {"behavior_failed", "needs_evidence"}
+            or original_report.get("generated_changes_sha256") != native_hash
+            or original_report.get("source_snapshot_sha256") != inspector.source_snapshot_sha256
+            or original_report.get("materialized_code_identity") != current_code):
+        raise ValueError("A newly bound repair requires an executed failing verification of these exact code bytes.")
+    owners = original_report.get("owner_binding_ids")
+    if (not isinstance(owners, list) or any(type(binding) is not str for binding in owners)
+            or len(set(owners)) != len(owners) or not set(owners).issubset(inspector.available_binding_ids)):
+        raise ValueError("Failure owner bindings exceed the unchanged selected Plan.")
+    matrix_ref = original_report["verification_ref"]
+    matrix = _repair_json(matrix_ref)
+    checks = matrix.get("checks")
+    if (matrix.get("source_provenance_verified") is not True
+            or type(matrix.get("executions")) is not int or matrix["executions"] < 1
+            or not isinstance(checks, list) or not checks
+            or any(not isinstance(check, dict) or type(check.get("check")) is not str
+                   or type(check.get("passed")) is not bool for check in checks)):
+        raise ValueError("The bound verification matrix has no completed checks with verified source provenance.")
+    failures = [check for check in checks if check["passed"] is False]
+    failed_by_id = {check["check"]: check for check in failures}
+    observations = original_report.get("observations")
+    summary = original_report.get("verification_summary") or {}
+    if (len({check["check"] for check in checks}) != len(checks) or not failures
+            or matrix.get("failures") != failures
+            or summary != {"checks": len(checks), "executions": matrix["executions"], "failed_checks": len(failures)}
+            or not isinstance(observations, list) or not observations
+            or {item.get("check_id") for item in observations if isinstance(item, dict)} != set(failed_by_id)
+            or len(observations) != len(failures)):
+        raise ValueError("Failure observations and verification totals do not cover the same failed checks.")
+    for observation in observations:
+        failure = failed_by_id[observation["check_id"]]
+        if (observation.get("expected") != failure.get("expected")
+                or observation.get("observed") != failure.get("actual")
+                or observation.get("result_ref") != matrix_ref or not isinstance(observation.get("input"), dict)):
+            raise ValueError("A reported failure disagrees with its exact matrix result or lacks its inputs.")
+    if "source_report_ref" in original_report:
+        raw_report = _repair_json(original_report["source_report_ref"])
+        if any(raw_report.get(key) != original_report.get(key)
+               for key in ("generated_changes_sha256", "source_snapshot_sha256", "status")):
+            raise ValueError("The original verifier report identifies different generated code.")
+    configuration = _repair_json(verification["configuration"])
+    evaluator = configuration.get("behavior_evaluator")
+    if isinstance(evaluator, dict):
+        if "factory_ref" in evaluator:
+            _read_hashed_repair_file(evaluator["factory_ref"])
+        kwargs = evaluator.get("kwargs") or {}
+        if "plan_ref" in kwargs and kwargs["plan_ref"] != expected["implementation_plan"]:
+            raise ValueError("The verifier configuration selects a different Plan.")
+        if "source_root" in kwargs and not _same_path(Path(kwargs["source_root"]), workspace_root):
+            raise ValueError("The verifier configuration selects a different source tree.")
+        if "adapter_ref" in kwargs:
+            _read_hashed_repair_file(kwargs["adapter_ref"])
+    parent_code = materialize_exact_text_patch(workspace_root=workspace_root,
+        diff_intent=parent["data"]["diff_intent"], implementation_plan=implementation_plan)
+    formal_code = {"baseline_sha256": parent_code.baseline_sha256,
+                   "code_sha256": parent_code.code_sha256, "files": sorted(parent_code.files)}
+    if current_code["baseline_sha256"] != formal_code["baseline_sha256"]:
+        raise ValueError("Current output and formal ancestor do not share the same original source baseline.")
+    source_repair_ref = (source.get("artifacts") or {}).get("repair_plan")
+    if source_repair_ref is not None:
+        if source_repair_ref.get("feature_id") != request.feature_spec_ref.feature_id:
+            raise ValueError("Source RepairPlan belongs to a different feature.")
+        repair = _read_selected_exact_revision(store, ArtifactRef(**source_repair_ref), consumer_stage=None)
+        count = repair.get("data", {}).get("retry_count")
+        if repair.get("status") != "success" or type(count) is not int or count < parent_retry_count:
+            raise ValueError("Source RepairPlan retry count is invalid.")
+        if source.get("proposal_admitted") is not True:
+            upstream = repair.get("inputs", {}).get("upstream_artifacts", [])
+            if not any(item.get("path") == request.repair_parent_proposal_ref.path
+                       and item.get("artifact_hash") == request.repair_parent_proposal_ref.artifact_hash for item in upstream):
+                raise ValueError("Source RepairPlan does not descend from the selected formal Proposal.")
+        parent_retry_count = count
+    derived = dict(original_report)
+    derived.update(execution_origin="unknown", callback_invoked=False,
+        code_revision={"comparison_basis": "same_B0_materializer_whole_file_bytes",
+            "same_materialized_code": current_code == formal_code,
+            "different_code_is_not_proof_of_repair": True},
+        derivation={"source_attempt_ref": dict(request.repair_source_attempt_ref),
+            "verification_result_ref": dict(request.repair_verification_ref),
+            "original_report_ref": dict(original_report_ref), "original_callback_ref": dict(callback_ref),
+            "failed_response_ref": failed_response_ref, "configuration_ref": dict(verification["configuration"]),
+            "verification_ref": dict(matrix_ref), "formal_parent_ref": _artifact_ref_dict(request.repair_parent_proposal_ref),
+            "current_materialized_code": current_code, "formal_parent_materialized_code": formal_code,
+            "source_repair_plan_ref": source_repair_ref, "inherited_retry_count": parent_retry_count,
+            "original_execution_origin": "executed", "new_model_calls": 0, "new_verifier_executions": 0,
+            "approval_inherited": False})
+    return {"failure_report": derived, "previous_response": previous_response, "generated": generated,
+            "failed_response_ref": failed_response_ref, "parent_retry_count": parent_retry_count}
+
+
+def bind_patch_repair_verification(
+    *, request: PatchContinuationInputV1, source_attempt_ref: Mapping[str, str],
+    verification_result_ref: Mapping[str, str],
+) -> PatchContinuationInputV1:
+    """Bind an explicit verified output to existing Repair inputs without a model or write Apply."""
+    if request.attempt_id is None:
+        raise PatchContinuationError("PATCH_REPAIR_ATTEMPT_ID_REQUIRED", "repair_binding",
+            "Binding requires the caller's explicit attempt identity; it does not start an attempt.")
+    try:
+        base = replace(request, repair_parent_proposal_ref=None, repair_parent_review_ref=None,
+            repair_failure_report_ref=None, repair_parent_response_ref=None, repair_parent_attempt_ref=None,
+            repair_source_attempt_ref=None, repair_verification_ref=None)
+        admitted = preflight_patch_continuation(base)
+        source = _repair_json(source_attempt_ref)
+        verification = _repair_json(verification_result_ref)
+        selected = replace(base, **_formal_repair_selection(source, source_attempt_ref),
+            repair_failure_report_ref=dict(verification["behavior_report"]["report_ref"]),
+            repair_source_attempt_ref=dict(source_attempt_ref), repair_verification_ref=dict(verification_result_ref))
+        context = _admit_patch_repair_context(request=selected, store=admitted.artifact_store,
+            feature_spec=admitted.feature_spec, evidence_pack=admitted.evidence_pack,
+            implementation_plan=admitted.implementation_plan, workspace_root=Path(request.workspace_root).resolve(),
+            source_tree_snapshot=admitted.source_tree_snapshot, binding_preview=True)
+        content = json.dumps(context["failure_report"], ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False)
+        payload = content.encode("utf-8")
+        digest = hashlib.sha256(payload).hexdigest()
+        path = admitted.artifact_store.root / "cr" / f"rv-{digest[:24]}.json"
+        try:
+            admitted.artifact_store._write_text_exclusive_atomic(path, content)
+        except FileExistsError:
+            if path.read_bytes() != payload:
+                raise PatchContinuationError("PATCH_REPAIR_BINDING_CONFLICT", "repair_binding",
+                    "An immutable derived repair file already exists with different bytes.")
+        result = replace(selected, repair_failure_report_ref={"path": str(path), "sha256": digest})
+        preflight_patch_continuation(result)
+        return result
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        if isinstance(exc, PatchContinuationError):
+            raise
+        raise PatchContinuationError("PATCH_REPAIR_BINDING_INVALID", "repair_binding", str(exc)) from exc
+
+
 def _admit_patch_repair_context(
     *, request: PatchContinuationInputV1, store: ArtifactStore,
     feature_spec: dict[str, Any], evidence_pack: dict[str, Any],
     implementation_plan: dict[str, Any], workspace_root: Path,
     source_tree_snapshot: tuple[tuple[str, str], ...],
+    binding_preview: bool = False,
 ) -> dict[str, Any]:
     """Bind a real post-Proposal observation without rewriting its Review result."""
     from src.libs.llm import ChatResponse
@@ -1387,7 +1623,7 @@ def _admit_patch_repair_context(
         )
         generated = generator.materialize_prepared_native(prepared, ChatResponse(content=previous_response, model=response_identity["model"]))
         native_hash = _canonical_sha256(generated.changes)
-        if native_hash != report.get("generated_changes_sha256"):
+        if request.repair_source_attempt_ref is None and native_hash != report.get("generated_changes_sha256"):
             raise ValueError("Behavior report was measured against different generated code.")
         parent_changes = parent["data"]["diff_intent"]
         parent_by_binding = {item["edit_binding_id"]: item for item in parent_changes}
@@ -1397,6 +1633,25 @@ def _admit_patch_repair_context(
             stored = parent_by_binding[change["edit_binding_id"]]
             if stored.get("patch") != change["patch"] or stored.get("generation", {}).get("model_response_sha256") != request.repair_parent_response_ref["sha256"]:
                 raise ValueError("Parent Proposal code or model response identity differs from its original response.")
+        failed_response_ref = dict(request.repair_parent_response_ref)
+        binding_sources: dict[str, Any] = {}
+        if request.repair_source_attempt_ref is not None:
+            binding = _verified_patch_repair_binding(
+                request=request, store=store, parent=parent, prepared=prepared, generator=generator,
+                inspector=inspector, workspace_root=workspace_root,
+                implementation_plan=implementation_plan, workspace_snapshot=workspace_snapshot,
+                parent_retry_count=parent_retry_count,
+            )
+            if not binding_preview and report != binding["failure_report"]:
+                raise ValueError("The derived failure report differs from its verified source inputs.")
+            report = binding["failure_report"]
+            previous_response = binding["previous_response"]
+            generated = binding["generated"]
+            native_hash = _canonical_sha256(generated.changes)
+            failed_response_ref = binding["failed_response_ref"]
+            parent_retry_count = binding["parent_retry_count"]
+            binding_sources = {"source_attempt_ref": dict(request.repair_source_attempt_ref),
+                               "verification_result_ref": dict(request.repair_verification_ref)}
         if report.get("status") not in {"behavior_failed", "needs_evidence", "infrastructure_failed", "identity_failed"}:
             raise ValueError("Repair input is not a failing behavior observation.")
         observations = report.get("observations")
@@ -1424,6 +1679,8 @@ def _admit_patch_repair_context(
         "parent_response_ref": dict(request.repair_parent_response_ref),
         "parent_attempt_ref": dict(request.repair_parent_attempt_ref),
         "previous_response": previous_response,
+        "failed_response_ref": failed_response_ref,
+        "failed_diff_intent": list(generated.changes),
         "failure_report_ref": dict(request.repair_failure_report_ref),
         "failure_report": report,
         "source_snapshot_sha256": inspector.source_snapshot_sha256,
@@ -1434,6 +1691,7 @@ def _admit_patch_repair_context(
         "base_relationship": "full_replacement_against_unchanged_parent_base",
         "approval_inherited": False,
         "parent_retry_count": parent_retry_count,
+        **binding_sources,
     }
 
 
@@ -1495,7 +1753,7 @@ class PatchContinuationAttemptJournal:
         if admitted.repair_context is not None:
             self._document["repair_context"] = {
                 key: value for key, value in admitted.repair_context.items()
-                if key not in {"previous_response", "failure_report"}
+                if key not in {"previous_response", "failure_report", "failed_diff_intent"}
             }
         self._write(exclusive=True)
 
@@ -2370,6 +2628,9 @@ def _patch_attempt_identity(request: PatchContinuationInputV1, max_model_calls: 
         # Existing attempts predate this optional input; keep their exact identity.
         identity_request.pop("worker_configuration_ref")
         identity_request.pop("worker_profile_sha256")
+    if request.repair_source_attempt_ref is None and request.repair_verification_ref is None:
+        identity_request.pop("repair_source_attempt_ref")
+        identity_request.pop("repair_verification_ref")
     return _canonical_sha256({"request": identity_request, "max_model_calls": max_model_calls})
 
 

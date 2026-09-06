@@ -322,7 +322,7 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
         }
     parents = {name: refs.check(repair[name])[0] for name in (
         "parent_attempt_ref", "parent_proposal", "parent_review", "parent_response_ref",
-        "failure_report_ref",
+        "failure_report_ref", "source_attempt_ref", "verification_result_ref", "failed_response_ref",
     ) if name in repair}
     verified_replay = _object(factory.get("verified_replay"))
     if "source_attempt_ref" in verified_replay:

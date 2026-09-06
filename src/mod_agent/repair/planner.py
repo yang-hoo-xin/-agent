@@ -198,7 +198,8 @@ class RepairPlanner:
             blockers=blockers, target_behavior=target_behavior, allowed_edit_binding_ids=allowed,
             source_proposal=dict(repair_context["parent_proposal"]),
             failure_findings=tuple(dict(item) for item in report["observations"]),
-            repair_context={key: value for key, value in repair_context.items() if key != "previous_response"},
+            repair_context={key: value for key, value in repair_context.items()
+                            if key not in {"previous_response", "failed_diff_intent"}},
             semantic_decision={"decision": decision, "required_next_owner": action, "authority_granted": False, "reason": reason},
         )
 

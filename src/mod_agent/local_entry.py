@@ -1037,8 +1037,11 @@ class LocalOllamaInitialPatchAdapter:
         self._implementation_plan = deepcopy(implementation)
         self._current_run_id = state.get("run_id")
         if self._repair_context is not None:
-            parent = self.artifact_store.read(ArtifactRef(**self._repair_context["parent_proposal"]))["data"]
-            self._known_failed_code = self._materialized_identity(parent["diff_intent"])
+            failed_changes = self._repair_context.get("failed_diff_intent")
+            if failed_changes is None:
+                parent = self.artifact_store.read(ArtifactRef(**self._repair_context["parent_proposal"]))["data"]
+                failed_changes = parent["diff_intent"]
+            self._known_failed_code = self._materialized_identity(failed_changes)
             self._known_failed_report_ref = deepcopy(self._repair_context["failure_report_ref"])
         if self.patch_agent_loop_policy is not None:
             self._receipt["model_call_budget"]["minimum_total_model_calls"] = (

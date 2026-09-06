@@ -40,6 +40,7 @@ from .fresh_planning_continuation import (
     PlanningContinuationError,
     PlanningContinuationInputV1,
     _canonical_sha256,
+    bind_patch_repair_verification,
     blocked_patch_continuation_result,
     blocked_planning_continuation_result,
     run_fresh_patch_continuation,
@@ -824,8 +825,14 @@ def build_parser(
         help=("Explicit local worker JSON configuration. Overrides the legacy loop defaults; "
               "its hash-pinned evaluator factory is trusted local Python code executed by the host, not a model tool."),
     )
-    patch_continuation_parser.add_argument(
+    patch_repair_selection = patch_continuation_parser.add_mutually_exclusive_group()
+    patch_repair_selection.add_argument(
         "--repair-inputs", help="JSON object containing the five existing exact Repair references.",
+    )
+    patch_repair_selection.add_argument(
+        "--repair-from-verification",
+        help=("JSON containing source_attempt_ref and verification_result_ref; "
+              "the product binds the current failed output and formal ancestry automatically."),
     )
     patch_continuation_parser.add_argument(
         "--attempt-id", help="Stable attempt ID; requires --patch-worker-config and is mandatory for Repair.",
@@ -1669,7 +1676,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if args.patch_worker_config else None
             )
             repair_inputs = _read_patch_repair_inputs(args.repair_inputs) if args.repair_inputs else {}
-            if repair_inputs and (worker_config is None or not worker_config.enable_recovery_loop):
+            recovery_selection = read_json_object(args.repair_from_verification) if args.repair_from_verification else None
+            if recovery_selection is not None and set(recovery_selection) != {"source_attempt_ref", "verification_result_ref"}:
+                raise PatchContinuationError(
+                    "PATCH_REPAIR_SELECTION_INVALID", "request",
+                    "Automatic binding requires exactly source_attempt_ref and verification_result_ref.",
+                )
+            if (repair_inputs or recovery_selection is not None) and (worker_config is None or not worker_config.enable_recovery_loop):
                 raise PatchContinuationError(
                     "PATCH_REPAIR_WORKER_CONFIGURATION_REQUIRED", "request",
                     "Repair inputs require a worker configuration with a behavior evaluator and recovery enabled.",
@@ -1714,6 +1727,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 worker_configuration_ref=worker_config.reference if worker_config else None,
                 worker_profile_sha256=_canonical_sha256(profile.to_dict()) if worker_config else None,
             )
+            if recovery_selection is not None:
+                request = bind_patch_repair_verification(request=request, **recovery_selection)
             policy = (
                 worker_config.policy if worker_config else
                 PatchAgentLoopPolicy() if args.patch_agent_loop else None

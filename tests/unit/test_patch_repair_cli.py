@@ -132,7 +132,7 @@ def _public_case(tmp_path, *, preparation=None, selected_policy=None):
     repair = {key: asdict(getattr(request, key)) if key in (
         "repair_parent_proposal_ref", "repair_parent_review_ref") else dict(getattr(request, key))
         for key in ("repair_parent_proposal_ref", "repair_parent_review_ref", "repair_failure_report_ref",
-                    "repair_parent_response_ref", "repair_parent_attempt_ref")}
+                    "repair_parent_response_ref", "repair_parent_attempt_ref")} if request.repair_parent_proposal_ref is not None else {}
     repair_path = _write_json(tmp_path / "repair-inputs.json", repair)
     argv = _patch_cli_args(request)
     argv[argv.index("--ollama-context-window") + 1] = "49152"
@@ -518,3 +518,83 @@ def test_public_repair_cli_deduplicates_five_reads_and_preserves_a_sixth_after_f
     assert _source_hashes(case.inputs.workspace) == before
     for turn, (wire, _) in zip(factory["worker_turns"], handler.chat_requests, strict=True):
         assert turn["provider_diagnostic"]["request_identity"]["provider_body_sha256"] == _sha(wire)
+
+
+def _automatic_binding_case(tmp_path):
+    from tests.unit.test_patch_repair_binding import _binding_case
+
+    retained = _binding_case(tmp_path / "retained", different=True)
+    case = _public_case(tmp_path, preparation=(retained["inputs"], retained["request"], retained["parent"]))
+    selection = {"source_attempt_ref": retained["source_attempt_ref"],
+                 "verification_result_ref": retained["verification_result_ref"]}
+    selection_path = _write_json(tmp_path / "verification-selection.json", selection)
+    index = case.argv.index("--repair-inputs")
+    case.argv[index:index + 2] = ["--repair-from-verification", str(selection_path)]
+    case.retained = retained
+    case.selection = selection
+    case.selection_path = selection_path
+    return case
+
+
+def test_public_cli_automatically_binds_a_different_unadmitted_revision_and_preserves_state(tmp_path, monkeypatch, capsys):
+    case = _automatic_binding_case(tmp_path)
+    before = _source_hashes(case.inputs.workspace)
+    handler = _install_transport(monkeypatch, tmp_path / "wire")
+    current_ref = case.retained["failed_response_ref"]
+    current_raw = Path(current_ref["path"]).read_bytes()
+    parent_receipt = json.loads(Path(case.parent.attempt_receipt["path"]).read_text(encoding="utf-8"))
+    parent_raw = Path(parent_receipt["factory_receipt"]["model_response"]["path"]).read_bytes()
+    assert current_raw != parent_raw
+    code, public = _run(case, capsys)
+    assert code == 0, public
+    assert public["status"] == "terminal"
+    assert public["execution_counts"]["model"] == 4
+    assert public["execution_counts"]["review"] == public["execution_counts"]["dry_run"] == 1
+    assert _source_hashes(case.inputs.workspace) == before
+    journal = json.loads(Path(public["attempt_receipt"]["path"]).read_text(encoding="utf-8"))
+    repair = journal["repair_context"]
+    assert repair["parent_proposal"] == case.parent.patch_proposal_artifact
+    assert repair["source_attempt_ref"] == case.selection["source_attempt_ref"]
+    assert repair["verification_result_ref"] == case.selection["verification_result_ref"]
+    assert repair["failed_response_ref"] == current_ref
+    derived_ref = repair["failure_report_ref"]
+    derived_raw = Path(derived_ref["path"]).read_bytes()
+    assert _sha(derived_raw) == derived_ref["sha256"]
+    derived = json.loads(derived_raw)
+    first_messages = handler.chat_requests[0][1]["messages"]
+    assert first_messages[2]["content"].encode() == current_raw
+    feedback = json.loads(first_messages[3]["content"])["validator_feedback"]
+    assert feedback["observations"]
+    assert all("observed_state" in item for item in feedback["observations"])
+    for original, delivered in zip(case.retained["observations"], feedback["observations"], strict=True):
+        assert all(original[key] == delivered[key]
+                   for key in ("check_id", "input", "expected", "observed", "observed_state"))
+    assert feedback["code_revision"] == derived["code_revision"]
+    assert feedback["code_revision"]["same_materialized_code"] is False
+    assert feedback["code_revision"]["different_code_is_not_proof_of_repair"] is True
+    assert derived["execution_origin"] != "executed"
+    prior_http = len(handler.requests)
+    prior_factory = case.marker.read_bytes()
+    code, cached = _run(case, capsys)
+    assert code == 0, cached
+    assert cached["patch_proposal_artifact"] == public["patch_proposal_artifact"]
+    assert len(handler.requests) == prior_http
+    assert case.marker.read_bytes() == prior_factory
+    assert Path(derived_ref["path"]).read_bytes() == derived_raw
+
+
+@pytest.mark.parametrize("failure", ["verification_hash", "wrong_source"])
+def test_public_cli_automatic_binding_rejects_changed_or_wrong_sources_before_network(tmp_path, monkeypatch, capsys, failure):
+    case = _automatic_binding_case(tmp_path)
+    if failure == "verification_hash":
+        case.selection["verification_result_ref"] = {**case.selection["verification_result_ref"], "sha256": "0" * 64}
+    else:
+        parent_path = Path(case.parent.attempt_receipt["path"])
+        case.selection["source_attempt_ref"] = {"path": str(parent_path), "sha256": _sha(parent_path.read_bytes())}
+    _write_json(case.selection_path, case.selection)
+    handler = _install_transport(monkeypatch, tmp_path / "wire")
+    code, public = _run(case, capsys)
+    assert code != 0, public
+    assert public["execution_counts"]["model"] == 0
+    assert handler.requests == []
+    assert not case.marker.exists()

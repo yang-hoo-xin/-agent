@@ -71,7 +71,10 @@ def test_selected_configuration_and_existing_outer_budget_both_bind_identity(sel
     _, request = selected
     first = _with_configuration(request, _configuration_ref(tmp_path / "worker-a.json"))
     second = _with_configuration(request, _configuration_ref(tmp_path / "worker-b.json"))
-    assert _patch_attempt_identity(first, 5) == _canonical({"request": asdict(first), "max_model_calls": 5})
+    legacy_worker_request = asdict(first)
+    assert legacy_worker_request.pop("repair_source_attempt_ref") is None
+    assert legacy_worker_request.pop("repair_verification_ref") is None
+    assert _patch_attempt_identity(first, 5) == _canonical({"request": legacy_worker_request, "max_model_calls": 5})
     assert len({_patch_attempt_identity(request, 5), _patch_attempt_identity(first, 5),
                 _patch_attempt_identity(second, 5), _patch_attempt_identity(first, 4)}) == 4
 
