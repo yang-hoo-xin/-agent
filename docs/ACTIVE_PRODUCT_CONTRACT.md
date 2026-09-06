@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-09-05
+Last updated: 2026-09-06
 
 ## 1. Product
 
@@ -41,8 +41,8 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
-The current platform implementation checkpoint is `d109e32`, including the bounded
-behavior feedback seam in `3079d31` and request identity repair `43dccbd`. The September 4 continuation
+The current platform implementation checkpoint is `269b37d`, including the shared
+Patch/behavior Repair worker, bounded batch feedback and verified tool-response replay. The September 4 continuation
 has exercised a local Patch source-tool observation, one header-specific
 validator correction, ProposalReview, and a no-write Dry-run.
 It has not exercised this feature's Apply, changed Build, or Runtime.
@@ -92,6 +92,17 @@ repair is not demonstrated. The user selected keeping the current model and
 submitting this failure report. The prepared local qwen3.6:27b comparison is not
 selected for execution and has made no model call; do not start it from its saved preview.
 See reconciliation section 13; no automatic fallback or new scope is implied.
+
+Latest user-directed maturity work supersedes the earlier execution-window stop above.
+The real af803 behavior-failure entry reached the shared worker. Qwen changed its
+read selection after budget feedback; two current source observations then reached
+the model. Its two new full responses preserved all original constraints but all
+five code replacements equalled the failed parent. Both original behavior matrices
+remained 33/36. The bounded run stopped without a new Proposal/Review/Dry-run;
+this is execution-mechanism progress and failed semantic repair, not Mod delivery.
+The whole work used five new model requests; two saved responses were additionally
+replayed with explicit provenance, not counted as new inference. Exact results,
+committed/WIP boundaries and remaining capabilities live in reconciliation section 0.
 
 Autonomous target selection produced e504 in one real model call, but independent
 semantic review returned needs_evidence. Preserve it as a separate A3 result;

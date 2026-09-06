@@ -1,16 +1,23 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-09-05
+Last updated: 2026-09-06
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
-Platform implementation: `d109e32`; behavior feedback seam: `3079d31`; request identities: `43dccbd`.
+Platform implementation: `269b37d`; shared Patch/behavior Repair: `1ba8607`; bounded batch feedback: `458c098`.
 Branch: `codex/rag-capability-mainline`.
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 
+- Latest snapshot: the shared behavior Repair entry and source feedback ran with
+  the real Qwen model. It produced two full responses, but all five code replacements
+  remained equal to the failed parent; both original behavior matrices stayed 33/36.
+  No new Proposal/Review/Dry-run or Apply/Build/Runtime resulted. The whole work used
+  five new model requests; two additional replayed responses are explicitly historical.
+  Reconciliation section 0 is the current state/Attempt/WIP/capability index; bullets
+  below preserve earlier checkpoints and must not be read as the latest run.
 - The September 4 continuation reached no-write Dry-run after one model-selected
   source inspection and one header-specific model correction.
 - This feature's Apply, changed Build, and Runtime have not run.

@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-09-05
+Last updated: 2026-09-06
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -11,7 +11,7 @@ Completed, frozen, review, and superseded records belong in
 
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 Current implementation is at the pre-approval boundary; the full chat buffer
-is not complete. The exact run, nine commits, and per-requirement coverage are
+is not complete. The latest snapshot, Attempt index and per-requirement coverage are
 recorded in [the reconciliation](audits/PATCH_AGENT_PROGRESS_RECONCILIATION_20260905.md).
 The latest user clarification includes all seven construction groups in the
 ten-day target (reconciliation section 10). This queue orders that work;
@@ -24,28 +24,28 @@ execution instruction. The [short execution card](PATCH_ACCEPTANCE_SPRINT_CARD_2
 records the selected exact inputs and single Patch-attempt owner. User messages,
 not either document, authorize actions; new exact diffs still require new approval.
 
-Current execution: keep P0 on Feature `fc7…`, Evidence `10a3…`, operator Plan
-`c760…`, its five bindings and original tool policy. Its revised acceptance reached
-Proposal/Review/Dry-run, but First Shot Match twice and Inner still fail behavior;
-the attempt is consumed and the diff must not be approved or applied.
-Keep autonomous Plan `e504…` in a separate semantic qualification review. Its
-context problem and paused calibration work do not block P0. A8 has closed its
-bounded local-environment verification; do not extend A6/A7 in this window.
+Current checkpoint: `269b37d`. The user-directed shared Patch/behavior Repair
+implementation and bounded acceptance have finished. P0 retained Feature fc7,
+Evidence 10a3, operator Plan c760, five edit bindings and qwen3-coder:30b.
+The real model changed its read selection after tool-budget feedback; two source
+observations reached the model. Both generated responses nonetheless preserved the
+failed parent's code exactly, and both original behavior matrices remained 33/36.
+There is no new admitted Proposal, Review, Dry-run, Apply, changed Build or Runtime.
 
-The later user-directed P0 repair added and exercised one bounded behavior
-correction inside the existing Patch adapter. Both acceptances failed the same
-matrix (33/36, then 32/36 with Recoil regression), preserving c760 and source
-identity. This is an implementation-quality blocker, not evidence that the Plan
-must expand. The user chose keeping the current model and submitting the failure
-report. The prepared local-model comparison is unexecuted and not selected;
-do not switch models or extend retries from this record. Details: section 13.
+The execution and semantic-quality results are distinct. Reconciliation section 0
+is the sole latest snapshot, with the unified Attempt index, committed/WIP boundary
+and remaining-capability matrix; sections 11-14 preserve their historical windows.
+The immediate unresolved product result remains preserving First Shot and Recoil
+while disabling spread. Do not relabel this same-code outcome as successful repair
+or silently replace c760 with A3/e504. Wider model qualification and a subsequent
+repair strategy remain in the full ten-day work rather than another blind replay.
 
 | Order | Work / exit condition | Current disposition |
 | --- | --- | --- |
 | P0 | Revise the exact Patch to preserve shared weapon/First Shot initialization while disabling accurate-spread override; bind focused cold-start Follow Recoil and First Shot evidence, then regenerate Proposal/Review/Dry-run | Source review found concrete independence regressions inside the existing restart boundary; existing diff must be revised before approval. Use existing Plan/Binding revisions if another owner must change; see reconciliation section 6 |
 | P0 | Present the semantically reviewed diff for exact approval; then approved isolated Apply, changed Build, and separately authorized Runtime acceptance | Not executed for this feature |
 | Current P0 blocker | Preserve shared First Shot initialization when spread is disabled, within the existing c760 boundaries; consume the bound failure observations through a deliberate next repair decision | Revised acceptance complete: new Proposal/Review/Dry-run and source provenance pass, 33/36 behavior checks pass; Match twice and Inner fail. No approval/Apply or automatic next attempt. First Shot feedback was already in the original c760 input; see reconciliation section 12 |
-| P1 | Complete `PATCH-AGENTIC-EXECUTION-001` beyond its narrow source-tool/header-correction proof: review turn persistence/model identity/budget, correction dispatch, bounded observations and history, then a relevant acceptance | A bound behavior feedback/correction path now runs and stops correctly on failed revalidation. The tested Qwen3-Coder repairs did not fix the Mod; no general repair or runtime claim |
+| P1 | Complete `PATCH-AGENTIC-EXECUTION-001` beyond its narrow source-tool/header-correction proof: review turn persistence/model identity/budget, correction dispatch, bounded observations and history, then a relevant acceptance | Shared worker, batch-budget feedback and verified response replay are implemented and exercised; latest two real outputs retained the old code and failed First Shot. No general repair or Runtime claim |
 | P1 | Repair engineering cognition's Fresh/API and continuation-receipt projections; regenerate a current handoff entry after the selected work | Known stale projection; do not re-run product models merely to fix its view |
 | P1 | `AUTONOMOUS-EVIDENCE-DISCOVERY-001`: model selects API queries/tools and produces usable evidence | Real success not demonstrated |
 | P1 | `AUTONOMOUS-TARGET-SELECTION-001`: model selects modification targets; existing compiler/Binding validates | Model selection and structural Plan creation executed once, producing e504; independent semantic review is needs_evidence and cross-task stability is unproven. P0 continues with c760 |
