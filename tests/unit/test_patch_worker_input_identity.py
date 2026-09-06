@@ -74,6 +74,7 @@ def test_selected_configuration_and_existing_outer_budget_both_bind_identity(sel
     legacy_worker_request = asdict(first)
     assert legacy_worker_request.pop("repair_source_attempt_ref") is None
     assert legacy_worker_request.pop("repair_verification_ref") is None
+    assert legacy_worker_request.pop("qualified_model_routing_ref") is None
     assert _patch_attempt_identity(first, 5) == _canonical({"request": legacy_worker_request, "max_model_calls": 5})
     assert len({_patch_attempt_identity(request, 5), _patch_attempt_identity(first, 5),
                 _patch_attempt_identity(second, 5), _patch_attempt_identity(first, 4)}) == 4
