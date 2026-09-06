@@ -24,7 +24,20 @@ execution instruction. The [short execution card](PATCH_ACCEPTANCE_SPRINT_CARD_2
 records the selected exact inputs and single Patch-attempt owner. User messages,
 not either document, authorize actions; new exact diffs still require new approval.
 
-Current checkpoint: `af36b5d`. The 005 initial-read blocker is resolved: public
+Current checkpoint: `6d38184`. Automatic binding of explicit source attempt plus
+separate verification is implemented in the existing public Repair entry.
+007 completed real feedback, correction and revalidation at 33/36 twice; the code
+did not change. Five supporting reads were requested but rejected against the
+remaining one-read/10989-byte budget; an offline cost measurement found the batch
+would need 13671 bytes. One read remained available, but the model chose direct
+output. This bounded attempt is closed. Next execution decisions should compare
+the current model/profile's investigation needs and cost, or qualify an explicitly
+selected alternative under frozen inputs; do not add case-specific fixes or
+automatically spend another attempt. See reconciliation 0.10.
+The user's no-custom-frontend preference selects DSH as the future integration
+direction; no DSH implementation/deployment is activated by this queue entry.
+
+Previous checkpoint `af36b5d`: the 005 initial-read blocker is resolved: public
 CLI 006 executed five requested reads and two real Qwen calls, using one Config
 full text and two exact references in the actual request. Code remained identical
 to the failed parent. The 006 verifier hit a 261-character output path and stopped

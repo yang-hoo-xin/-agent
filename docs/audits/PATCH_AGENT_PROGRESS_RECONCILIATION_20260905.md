@@ -6,10 +6,16 @@
 
 ## 0. 最新状态快照
 
-**更新时间：2026-09-06；最新生产代码：`af36b5d`。本节为当前读入口，旧章节保留当时事实。**
+**更新时间：2026-09-06；最新生产代码：`6d38184`。本节为当前读入口，旧章节保留当时事实。**
 
-**最新执行：005的五处读取阻断已通过公开CLI的离线链和006真实首批读取验证。**
-本轮显式配置总6次读取，为失败后保留1次；模型上限5、观察上限32,768、源码窗口64行和编辑范围均不变。
+**最新结果：系统自动绑定跨attempt补测并完成007真实行为反馈/修订/重验，但Qwen仍未修好First Shot。**
+007固定6d38184，通过公开CLI从006与r6两条记录自动解析正式祖先、当前C1和F1；4次真实模型调用、0回放。
+两次原矩阵均33/36；两份代码与旧失败版本相同。失败后模型请求5个supporting读取，被剩余1次读取预算拒绝；
+下一轮仍可读1次，但模型直接返回旧代码。不能把已申请但未执行的这5处记成新查证，也不能把本次失败全部归因于模型。
+自动绑定机制与实际回流已实现，当前profile下任务仍失败；详见第0.10节。
+
+**006历史检查点：005的五处读取阻断已通过公开CLI的离线链和006真实首批读取验证。**
+该轮显式配置总6次读取，为失败后保留1次；模型上限5、观察上限32,768、源码窗口64行和编辑范围均不变。
 完全相同的源码全文使用可还原引用，当前case五份观察从23,912降至16,234字节。源码与语义约束未裁剪。
 006使用固定af36b5d和公开CLI执行，2次真实模型调用、5次实际源码读取、0回放。
 模型完整输出与旧失败版本相同；验证器因261字符输出路径失败，原006没有完成矩阵。
@@ -18,15 +24,15 @@
 
 **此前公开入口交付阶段：continue-fresh-patch已装配已有Repair引用、行为验证器与共享worker策略，并通过真实CLI路径的离线验收。**
 测试仅替换底层HTTP transport，保留CLI解析、配置加载、Adapter、序列化、worker、Graph、Review和Dry-run。
-合成项目实际经历“读→生成→检查失败→再读→修订→Review/Dry-run”，本轮真实模型调用0，AccurateCrosshair未修复。
+合成项目实际经历“读→生成→检查失败→再读→修订→Review/Dry-run”，该轮真实模型调用0，AccurateCrosshair未修复。
 第0.7节中的公开CLI缺口是本次修复前的事实；新接口、准备文件及验证范围见第0.8节。
 
 **此前审查落实（公开CLI接线前）：补齐本次输出Artifact查询，响应引用损坏时降级来源展示，并拒绝明确声明执行未完成的passed报告。**
-本轮新增真实模型调用0；005仍是最后一次真实运行，执行时固定6411f01，不能归给本次新提交。
+该轮新增真实模型调用0；在该时点005是最后一次真实运行，执行时固定6411f01，不能归给当时的新提交。
 此前“生产路径验证”准确指注入行为callback后调用生产Adapter/Graph的Python API路径；
 当时公开`continue-fresh-patch` CLI尚未接入同等Repair输入、行为callback和恢复策略，见第0.7节历史核对。
 
-**本轮最新：失败后查证预算、实际文件字节比较、保守验证复用和单 Store 查询已经提交并通过离线验证。**
+**此前e892e3e／6411f01检查点：失败后查证预算、实际文件字节比较、保守验证复用和单 Store 查询已提交并通过离线验证。**
 生产 Adapter/Graph 的合成项目实际执行“读取→生成→检查失败→再次读取→修订→重验通过”；
 这证明该执行分支和剩余额度可用，未证明 AccurateCrosshair 已修好。
 旧公共查询开始消费新账本的执行/拒绝/重放/复用语义；旧 ArtifactStore 仍保留权威职责。
@@ -51,7 +57,7 @@ Qwen在工具预算反馈后由请求5处改选2处；修正执行ID记账后，
 [跨版本与源码返回核验](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/mature_repair_004/tool-delivery-proof.json)
 记录了每次加载的commit、两个源码观察进入哪份实际请求，以及最后一轮的工具和预算。
 
-| 维度 | 最新事实 |
+| 维度 | 001–004窗口当时事实 |
 |---|---|
 | 产品任务 | `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`；本次仍为显式人辅Planning下的有界产品执行 |
 | 固定输入 | Feature `fc7be8…` / Evidence `10a3fadd…` / Plan `c760a9cc…` / 父Proposal `af80386f…` |
@@ -75,6 +81,7 @@ Qwen在工具预算反馈后由请求5处改选2处；修正执行ID记账后，
 | 已提交 `b4c519a` | 查询本次Artifact及终态exact refs；响应/回放引用缺失损坏时降级；无终态缓存不推断未结束 | 真实成功旧运行和005失败均已查询；无新增模型/行为执行 |
 | 已提交 `cdbd4ae` | 公开CLI装配已有Repair refs、受信本地evaluator与共享策略；配置/profile纳入既有attempt身份；查询配置来源 | CLI入口离线恢复链通过；旧API/hash保持兼容；当前Mod没有新真实尝试 |
 | 已提交 `af36b5d` | 可选完全相同全文引用；真实编码字节计费；恢复历史还原核验；旧False编码回放兼容；查询编码/展开身份 | 239项受影响检查通过；公开CLI合成5读→失败→第6读→修订→Review/Dry-run通过；真实结果见0.9 |
+| 已提交 `6d38184` | 产品确定性绑定源attempt与独立复验；当前未admitted C1与正式祖先分开；现有worker消费当前失败代码；公开CLI与查询接线 | 164项受影响检查及34项查询通过；007真实反馈/修订/重验完成，但代码未改善 |
 | 本轮生产代码WIP | 无；以上生产变更均已提交 | 文档状态不能代替Actual成功 |
 | 文档整理 | 本文顶部快照、历史标签、统一Attempt索引、剩余矩阵及短控制文档同步 | 不增加产品能力；文档提交单独记录 |
 | 用户原有WIP | ARCHITECTURE_OVERVIEW、ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT、SPEC_COVERAGE_MATRIX，以及3份未跟踪草案 | 六份文件hash与本轮开始完全一致；不混入本轮提交 |
@@ -108,10 +115,12 @@ Fresh/A3/A8支线另见第11.4、12.4、12.5节，不混进下列P0调用总数�
 | 本轮：mature_repair_004 | `269b37d`；复用003原响应 | 2 | 2，来自003 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/mature_repair_004/result.json)；读2处→真实生成→同矩阵→一次真实修订→同矩阵；两次33/36，停止 |
 | 新独立轮：mature_repair_005 | 固定`6411f01`，含恢复变更`e892e3e`；未中途改执行器 | 2 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/mature_repair_005/result.json)；请求5处→当前可读4处反馈→仍请求同5处→重复批次停止；0读/0代码/0矩阵 |
 | 新公开入口轮：public_cli_repair_006 | 固定`af36b5d`；执行器/runner中途未改 | 2 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_006/actual/result.json)；5读实际入模→返回原失败代码→验证器261字符路径失败；独立短目录复验见0.9 |
+| 自动绑定轮：public_cli_repair_007 | 固定`6d38184`；短验证目录r7 | 4 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_007/actual/result.json)；5读→旧代码→33/36→请求5个supporting被预算拒绝→直接返回旧代码→33/36，停止 |
 
 001–004窗口新请求为0+1+2+2=5；004收据中的4是2回放+2新响应，不能重复累计。
 后续独立005另有2次新调用；两个已结束窗口合计7次新调用，不包含2份历史响应回放。
 006再新增2次真实调用，001–006合计9次；006预览的内部requested=1不是实际发送，不加入推理总数。
+007新增4次，001–007合计13次真实调用；各轮preview与2份历史回放均不加入这个数。
 001收据中的requested计数也不能冒充HTTP发送，其外层实发计数为0。
 
 ### 0.3 最新剩余能力矩阵
@@ -119,12 +128,12 @@ Fresh/A3/A8支线另见第11.4、12.4、12.5节，不混进下列P0调用总数�
 | 能力 | 最新已证实 | 仍缺什么 |
 |---|---|---|
 | 共享Patch/行为Repair入口 | 真实父Proposal→RepairPlan→同worker，模拟可到完整Review/Dry-run | 当前真实修订未通过，不能称成功Repair |
-| 公开CLI恢复装配 | 离线到Review/Dry-run；006真实公开入口已完成5读和模型生成 | 验证器路径使006中止，未真实进入后续修订；First Shot仍失败 |
+| 公开CLI恢复装配 | 007已由系统绑定两条来源、完成真实生成/验证/反馈/修订/重验 | 两份代码未改善，First Shot仍失败；不等于通用自动恢复/模型资格 |
 | 真实往返与观察驱动 | 真实预算反馈→重选2处；2处实际源码返回模型→真实完整输出 | 输出代码未改善；不能把工具使用等同语义正确 |
 | C1与失败可见、原义务保留 | 两个新实发请求通过B0/C1/F1/C2与8项原语义字段核验 | 不保证模型正确理解或落实这些要求 |
 | 只读范围／三部分上下文 | 29读/5编辑；完整源码与3份登记API可按需读取 | 本次只实际选读2个edit binding；未真实消费新增API工具 |
 | 行为修订与Revalidation | 同一产品循环实际完成一次反馈修订和原矩阵重验 | 五项代码均等于旧父版本，原3个First Shot失败未消除 |
-| 新草稿失败后再查证 | af36b5d公开CLI离线5读→失败→第6读→修订实际通过，239项回归通过 | 006因验证环境错误中止，该真实分支仍未触发，不把离线修订计入Qwen成功 |
+| 新草稿失败后再查证 | 公开CLI离线已通过；007真实失败后工具可用，模型确实选择了5个新supporting refs | 只有1次读取余额，5项全未执行；随后模型未选择可用的1次读取。真实新查证成功仍未证明 |
 | 停止与来源 | 失败未流入新Proposal/Apply；同B0实际代码比较、无变化反馈和显式确定性结果复用已测试 | 原矩阵仍决定行为结果；旧报告缺完整验证身份则不复用；不宣称通用恢复 |
 | 可查询执行索引 | 6411f01单Store薄投影已运行；已有引用与原owner终态hash可核验 | 旧attempt定义、请求入模映射与旧物化身份缺失时unknown；未接通全部旧Trace/Eval/Langfuse |
 | 接续与预算 | 精确原JSON值、类型及文本校验；2原响应回放不新发网；全工作5次新调用 | 仅限定0已执行读的工具选择前缀；不是任意节点或副作用的自动恢复 |
@@ -401,6 +410,97 @@ python -B -m pytest tests/unit/test_patch_excerpt_references.py tests/unit/test_
 这说明006真实输出仍未修好，不等于006完整修订循环已经执行。239项工程回归、离线固定响应闭环、
 真实Qwen输出与本次独立验证分别记账，不将任何前两项算作Qwen任务成功。
 本轮不追加模型尝试；后续配置应使用独立短验证目录，并在模型调用前验证该输出环境。
+
+### 0.10 自动绑定独立复验与007真实Repair
+
+用户进一步要求把引用组装收回Agent本体；本轮没有由Codex拼写最终五项Repair输入或手工增加状态同义字段。
+`6d38184`增加产品函数`bind_patch_repair_verification`，由原公开CLI的`--repair-from-verification`调用。
+调用方只显式选择source_attempt_ref与verification_result_ref，既有Store/Feature/Evidence/Plan配置继续限定范围。
+本次前者是006，后者是r6独立复验；不能从时间、目录或同feature猜测补测归属。
+
+系统机械核验源journal、当前原始响应、callback、原行为报告、矩阵、配置、源码与Plan，沿明确血缘取正式祖先。
+当前未admitted的C1通过failed_response_ref/failed_diff_intent进入同worker，parent_*继续表示正式祖先；
+接受同Plan内合法但不同于正式祖先的失败代码，不把006冒充新Proposal。对不同模型的规范化合法输出保持同一规则。
+派生报告内容寻址、不可变、与新consumer attempt/time无关；原observations逐字保留，
+execution_origin=unknown、callback_invoked=false，derivation绑定原executed报告并声明本次0模型/0验证。
+短code_revision来自原materializer比较，不由模型抄hash、不提供专用修法；r6本来已有observed_state，未重复包装成新证据。
+现有preflight再次核验原来源，原RepairPlan的retry count也被继承。新增可选输入缺省时保留旧attempt身份。
+RepairPlan/journal不复制完整C1代码，只存引用和身份；运行中的worker获得已核验的完整C1。
+
+公开CLI离线验收不仅测相同代码：合法但不同的C1也能自动绑定、真实装配、读取/反馈/修订到Review/Dry-run；
+错源、篡改或未执行验证在任何HTTP之前停止，同attempt重复调用不再发请求或构造验证器。
+
+```powershell
+python -B -m pytest tests/unit/test_patch_repair_binding.py tests/unit/test_patch_repair_cli.py tests/unit/test_patch_worker_input_identity.py tests/unit/test_fresh_planning_continuation.py tests/unit/test_patch_repair_continuation.py tests/unit/test_patch_recovery_worker.py tests/unit/test_patch_behavior_feedback.py tests/unit/test_patch_verified_replay.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\auto-repair-bind-$PID"
+```
+
+164 passed，68.83秒。相关只读查询另跑`tests/unit/test_patch_execution_index.py`，34 passed，5.56秒。
+变更CLI/binder/planner/query/tests Ruff通过，local_entry既有问题未批量处理；无全仓/跨模型资格声明。
+
+007冻结代码6d38184与176个文件，仍同c760/10a3/Feature、Qwen3-Coder name/digest、model5/read6、32768观察字节、
+49152上下文/4096输出，短输出目录r7。公开CLI零网络preview由系统生成rv-31c031...报告及新RepairPlan；
+首wire43828字节、原代理准入47924≤49152。实际007使用另一attempt并逐字节匹配preview，0回放。
+原三项input/expected/observed/observed_state与当前C1完整传递；wire中report_sha256仍为null，但journal的report ref/hash正确，
+故只主张正文与系统绑定已核验，不主张该hash已经传给模型，也不为这个显示字段临时改变冻结执行器。
+
+**真实007轨迹与结果：**
+
+| 真实模型轮次 | 行动与执行 |
+|---|---|
+| 1 | 请求原5个edit bindings，5次实际读取 |
+| 2 | 消费源码后给出完整输出，仍与006/af803原代码相同；原矩阵真实执行33/36 |
+| 3 | 收到新行为失败和same-code反馈后，请求5个新的supporting refs；全部在ReadScope，但剩余读取1，整批未执行 |
+| 4 | 实际收到预算反馈；仍可选择1次读取或请求上游，但选择直接给出完整修订；仍为同一旧代码；原矩阵再次33/36 |
+
+总4次模型POST，另4次身份GET，0回放；墙钟481.46秒。两份代码raw hash仍为2b4f580c...b720df，物化比较均same=true。
+两次矩阵各40进程36检查，均原First Shot三项失败；这是一项task的一次trial内两次验证，不是80个任务。
+失败后真实可用3模型轮、1次读取、10989观察字节；5项请求被预算拒绝花2290字节反馈，第四轮仍有2模型轮/1读/8699字节，
+不是工具被关闭。不得说5项supporting已实际返回模型，也不得把一次可用读取等同于满足模型整批调查需求。
+终止PATCH_BEHAVIOR_CORRECTION_FAILED，没有新Proposal/Review/Dry-run/Apply/Build/Runtime。
+这次证明系统自动绑定、真实反馈回流、真实修订调用和重验已执行；没有证明Qwen产生了有效修复或真实完成失败后新查证。
+
+[007实际记录](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_007/actual/summary.json)、
+[新失败进入第三请求](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_007/actual/request-003.body.json)、
+[第四请求](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_007/actual/request-004.body.json)及
+[只读查询](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_007/actual/execution-query.json)
+分别保存真实通信、原始结果和机械关联。代码版本/原Mod源码未变；旧006/r6记录未修改；本轮不追加模型或自动换模型。
+
+职责校准：身份、权限、实际计费、物化、验证事实应机械；调查顺序、根因假设、具体实现和是否请求上游由模型决定。
+本次5+1是选定配置及离线覆盖场景，不是所有模型的固定认知路径。全局5轮/单次修订等当前策略仍有进一步配置化空间，
+但本轮未整体重构policy；跨模型能力必须另行验证适配与任务质量，不能由这些单例推出。
+
+**007后续读取的只读成本测量：**
+[独立尺寸记录](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/repair_007_support_measurement_38be2538/measurement.json)
+将第三响应提出的5个精确ref按生产codec、以第二请求已交付的完整观察为历史测量：共13,671字节，
+比失败点剩余10,989多2,682。因此不是单纯把读取次数调大就能让整批进入原预算。
+该测量没有执行新的产品工具、模型或矩阵，不修改007。
+
+| 请求对象 | 精确绑定行 | 返回行 | 编码字节 |
+|---|---|---|---:|
+| Configuration() | Configuration.cs 23–27 | 1–80，引用已见全文 | 764 |
+| GetCrosshairSize(float scalar) | SpreadPatches.cs 160–165 | 96–179 | 3789 |
+| GetCrosshairSize() | SpreadPatches.cs 167 | 103–179 | 3567 |
+| AccurateCrosshair登记块 | Loader.cs 1–20 | 1–56 | 2105 |
+| SetStoredCrosshair(BulletWeapon) | FirstShotPatches.cs 35–52 | 1–76 | 3446 |
+
+每一项单独都可装入当时余额；两个Getter窗口只是重叠，现编码有意不合并。第四轮模型有读1处或请求上游的合法选择，
+却直接返回旧代码。当前结论限定为该模型、输入表示和策略组合失败，不证明其他模型必然失败或增加预算必然成功。
+
+### 0.11 用户界面方向：优先复用DSH，不自建产品前端
+
+用户提出不再自行开发前端。已只读核验DeepSeek官方Harness，尚未安装、部署或编写DSH插件；不替代当前P0。
+方向是DSH现成Web作为交互入口，薄适配调用Python受控CLI，后端保留唯一业务身份/路由/审批/执行事实所有权。
+第一版优先同机运行DSH、Python与GTFO；远端部署需要独立本地受控执行端，服务器CLI不能自动操作浏览器用户的游戏目录。
+
+官方确认[Web/headless/profile/plugin](https://github.com/deepseek-ai/deepseek-harness)存在，项目仍为developer preview；
+[CLI说明](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/cli/reference/README.md)中headless默认输出最终回答。
+本项目Patch CLI同样尚无统一stdout事件流，Fresh心跳不代表Patch全链已流式；实时进度、取消/恢复及exact approval都还需适配。
+[工具卡片](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/client/ui-tool/README.md)默认通用展示，
+[用户问题接口](https://github.com/deepseek-ai/deepseek-harness/blob/master/packages/interaction/user-questions/README.md)
+不能直接等同本项目专用diff审批。可先用通用卡片、Markdown/diff文本与问题交互，不能宣称零适配就有完整审批UI。
+[安全说明](https://github.com/deepseek-ai/deepseek-harness/blob/master/SAFETY.md)也不支持把禁用模型Shell工具称为插件权限沙箱。
+DSH上层若调用外部模型，源码/diff等工具返回同样涉及披露，不能以“只是UI”绕过现有规则。
+DSH session只作关联；不再重复建设独立前端或把DSH agent loop嵌成第二业务控制面。
 
 ## 1. 结论与范围
 

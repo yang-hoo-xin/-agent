@@ -41,7 +41,15 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
-The current platform implementation checkpoint is `af36b5d`. Exact repeated
+The current platform implementation checkpoint is `6d38184`. The public CLI can
+now bind an explicit source attempt and separate verification result through
+product-owned code, keeping the current failed output separate from its formal
+ancestor. Fixed 007 made four real Qwen calls and completed both behavior matrices
+at 33/36. Feedback and correction ran, but the code stayed unchanged. Five requested
+supporting reads exceeded the one remaining read and the remaining byte allowance;
+after budget feedback the model chose direct output instead of one allowed read.
+No new Proposal/Review/Dry-run/Apply/Build/Runtime resulted; see reconciliation 0.10.
+Earlier `af36b5d` exact repeated
 source excerpts now use verified references with actual encoded-byte accounting.
 Public CLI acceptance 006 executed all five initial reads and two real Qwen
 calls, preserving the original constraints. It returned the old failed code;

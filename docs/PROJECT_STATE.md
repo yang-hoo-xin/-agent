@@ -7,11 +7,22 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
-Platform implementation: `af36b5d`; public CLI: `cdbd4ae`; behavior report admission: `7508971`.
+Platform implementation: `6d38184`; exact excerpt encoding: `af36b5d`; public CLI: `cdbd4ae`.
 Branch: `codex/rag-capability-mainline`.
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 
-- Latest real result: public CLI 006 crossed the 005 budget blocker, executing
+- Latest real result: 007 used product-owned automatic binding of 006 and r6,
+  then executed four real model calls, feedback, correction and two complete
+  matrices. Both stayed 33/36 and both code outputs stayed unchanged. The model
+  requested five new supporting reads after failure, exceeding remaining read
+  and byte allowances; none executed. It then chose direct output while one read
+  remained available. No new admitted Proposal or downstream execution resulted.
+  This is model-plus-current-strategy failure, not evidence of universal model
+  incompatibility; see reconciliation 0.10. No automatic further attempt ran.
+- Product UI preference: reuse DSH Web through a thin controlled-backend adapter;
+  do not build another product frontend. This is a verified integration direction,
+  not an installed plugin or deployed capability; details and limits in 0.11.
+- Previous real result: public CLI 006 crossed the 005 budget blocker, executing
   all five requested source reads and retaining one Config full text plus two
   exact refs in the actual second request. Two real Qwen calls returned code
   identical to the failed parent. The verifier stopped on a 261-character path
