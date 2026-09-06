@@ -198,11 +198,15 @@ def _tools(loop: Mapping[str, Any]) -> list[dict[str, Any]]:
                 "not_executed" if call.get("dispatch_started") is False else
                 "dispatch_started" if call.get("dispatch_started") is True else "unknown"
             )
-            row["returned_observations"] = [_fields(
+            row["returned_observations"] = [{**_fields(
                 observation, "observation_id", "observation_sha256", "source_ref",
                 "source_hash", "source_snapshot_sha256", "admitted_to_model",
-                "model_payload_bytes",
-            ) for observation in observations
+                "model_payload_bytes", "encoded_payload_bytes", "encoded_payload_sha256",
+                "expanded_payload_bytes", "payload_admitted", "consumed_in_model_turn",
+            ), **({"excerpt_ref": _fields(observation["excerpt_ref"],
+                "observation_id", "observation_sha256", "excerpt_sha256")}
+                if isinstance(observation.get("excerpt_ref"), dict) else {})}
+                for observation in observations
                 if isinstance(call.get("binding_id"), str)
                 and observation.get("turn_index") == call.get("turn_index")
                 and observation.get("binding_id") == call.get("binding_id")]

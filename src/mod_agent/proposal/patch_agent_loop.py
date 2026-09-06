@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
@@ -50,6 +50,7 @@ class PatchAgentLoopPolicy:
     require_source_inspection: bool = True
     allow_upstream_request: bool = False
     allow_batched_reads: bool = False
+    deduplicate_source_excerpts: bool = False
     # One dispatched binding read consumes one unit, including in a batch.
     max_tool_rounds: int = 3
     max_total_model_turns: int = 5
@@ -58,6 +59,7 @@ class PatchAgentLoopPolicy:
         if any(type(getattr(self, name)) is not bool for name in (
             "finalize_after_first_observation", "enable_supporting_reads",
             "require_source_inspection", "allow_upstream_request", "allow_batched_reads",
+            "deduplicate_source_excerpts",
         )):
             raise PatchAgentLoopError(
                 "PATCH_AGENT_POLICY_INVALID",
@@ -113,6 +115,97 @@ class PatchSourceObservation:
             "observation_sha256": self.payload_sha256,
             **(dict(self.registered_evidence_identity) if self.registered_evidence_identity is not None else {}),
         }
+
+
+def _excerpt_reference_error(reason: str) -> PatchAgentLoopError:
+    return PatchAgentLoopError("PATCH_AGENT_EXCERPT_REFERENCE_INVALID", stage="observation_admission", reason=reason)
+
+
+def _local_excerpt_key(payload: Mapping[str, Any]) -> tuple[object, ...] | None:
+    if payload.get("observation_kind") == "registered_api_evidence":
+        return None
+    span, excerpt = payload.get("excerpt_span"), payload.get("excerpt")
+    if not isinstance(span, Mapping) or not isinstance(excerpt, str):
+        return None
+    return (payload.get("source_snapshot_sha256"), payload.get("source_hash"),
+            span.get("start_line"), span.get("end_line"), excerpt)
+
+
+def expand_patch_source_observations(
+    ordered_payloads: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    """Pure expansion of full observations and exact prior-full-excerpt references.
+
+    Each restored observation keeps its original semantic hash. Only preceding
+    complete local-source observations may supply excerpt bytes; API Evidence
+    and reference chains are not excerpt providers.
+    """
+    if not isinstance(ordered_payloads, Sequence) or isinstance(ordered_payloads, (str, bytes)):
+        raise _excerpt_reference_error("Observation history must be an ordered sequence.")
+    full_by_id: dict[str, dict[str, Any]] = {}
+    seen_ids: set[str] = set()
+    expanded: list[dict[str, Any]] = []
+    for payload in ordered_payloads:
+        if not isinstance(payload, Mapping):
+            raise _excerpt_reference_error("An observation must be a mapping.")
+        restored = deepcopy(dict(payload))
+        observation_id = restored.get("observation_id")
+        if type(observation_id) is not str or not observation_id or observation_id in seen_ids:
+            raise _excerpt_reference_error("Observation identities must be non-empty and unique in ordered history.")
+        for key in ("observation_sha256", "source_snapshot_sha256"):
+            if type(restored.get(key)) is not str or _SHA256_RE.fullmatch(restored[key]) is None:
+                raise _excerpt_reference_error("An observation is missing its exact hash identity.")
+        if (type(restored.get("source_hash")) is not str
+                or re.fullmatch(r"[0-9a-fA-F]{64}", restored["source_hash"]) is None):
+            raise _excerpt_reference_error("The original source hash is missing.")
+        has_reference = "excerpt_ref" in restored
+        reference = restored.pop("excerpt_ref", None)
+        if has_reference:
+            if ("excerpt" in restored or restored.get("observation_kind") == "registered_api_evidence"
+                    or not isinstance(reference, Mapping)
+                    or set(reference) != {"observation_id", "observation_sha256", "excerpt_sha256"}
+                    or type(reference.get("observation_id")) is not str):
+                raise _excerpt_reference_error("The excerpt reference shape is invalid.")
+            earlier = full_by_id.get(reference["observation_id"])
+            if earlier is None or _local_excerpt_key(earlier) is None:
+                raise _excerpt_reference_error("The referenced preceding complete source observation is unavailable.")
+            if (reference["observation_sha256"] != earlier["observation_sha256"]
+                    or reference["excerpt_sha256"] != hashlib.sha256(earlier["excerpt"].encode("utf-8")).hexdigest()
+                    or any(restored.get(key) != earlier.get(key)
+                           for key in ("source_snapshot_sha256", "source_hash", "excerpt_span"))):
+                raise _excerpt_reference_error("The excerpt reference disagrees with its source, span, or bytes.")
+            restored["excerpt"] = earlier["excerpt"]
+        if type(restored.get("excerpt")) is not str:
+            raise _excerpt_reference_error("The complete source excerpt is unavailable.")
+        identity_payload = {key: value for key, value in restored.items() if key != "observation_sha256"}
+        if _canonical_sha256(identity_payload) != restored["observation_sha256"]:
+            raise _excerpt_reference_error("Expanded observation bytes do not match the original observation identity.")
+        seen_ids.add(observation_id)
+        if not has_reference:
+            full_by_id[observation_id] = restored
+        expanded.append(restored)
+    return tuple(expanded)
+
+
+def _encode_source_excerpt(
+    observation: PatchSourceObservation,
+    full_excerpts: dict[tuple[object, ...], dict[str, Any]],
+) -> dict[str, Any]:
+    full = observation.model_view()
+    key = _local_excerpt_key(full)
+    earlier = full_excerpts.get(key) if key is not None else None
+    if earlier is not None:
+        encoded = {name: value for name, value in full.items() if name != "excerpt"}
+        encoded["excerpt_ref"] = {
+            "observation_id": earlier["observation_id"],
+            "observation_sha256": earlier["observation_sha256"],
+            "excerpt_sha256": hashlib.sha256(earlier["excerpt"].encode("utf-8")).hexdigest(),
+        }
+        if len(_canonical_json(encoded).encode("utf-8")) < observation.model_payload_bytes:
+            return encoded
+    if key is not None:
+        full_excerpts.setdefault(key, full)
+    return full
 
 
 @dataclass(frozen=True)
@@ -685,6 +778,21 @@ def run_patch_agent_loop(
     if base_request.tool_results:
         retained_exchanges.append(AgentToolExchange(base_request.tool_results, base_request.provider_state,
             base_request.tool_result_insert_index if base_request.tool_result_insert_index is not None else len(base_request.messages)))
+    full_excerpts: dict[tuple[object, ...], dict[str, Any]] = {}
+    if selected_policy.deduplicate_source_excerpts:
+        retained_payloads = [result.output for exchange in retained_exchanges for result in exchange.tool_results
+            if result.name == PATCH_SOURCE_INSPECTION_TOOL_NAME and isinstance(result.output, Mapping)
+            and ("observation_sha256" in result.output or "excerpt_ref" in result.output)]
+        restored_payloads = expand_patch_source_observations(retained_payloads)
+        for encoded, restored in zip(retained_payloads, restored_payloads):
+            # Do not trust a self-consistent hash over invented source content.
+            expected = source_inspector.inspect(binding_id=restored.get("binding_id"),
+                observation_id=restored["observation_id"]).model_view()
+            if restored != expected:
+                raise _excerpt_reference_error("Retained observation does not match the current registered source identity.")
+            key = _local_excerpt_key(restored)
+            if key is not None and "excerpt_ref" not in encoded:
+                full_excerpts.setdefault(key, restored)
     for exchange in retained_exchanges:
         rejected_bindings = [result.output.get("binding_id") for result in exchange.tool_results
             if isinstance(result.output, Mapping)
@@ -914,6 +1022,16 @@ def run_patch_agent_loop(
                     turn_index,
                 ),
             )
+        if selected_policy.deduplicate_source_excerpts:
+            delivered_ids = {result.output.get("observation_id") for result in request.tool_results
+                if isinstance(result.output, Mapping)}
+            delivered_ids.update(result.output.get("observation_id")
+                for exchange in request.historical_tool_exchanges for result in exchange.tool_results
+                if isinstance(result.output, Mapping))
+            for entry in observation_trace:
+                if entry["observation_id"] in delivered_ids and entry.get("payload_admitted"):
+                    entry["admitted_to_model"] = True
+                    entry.setdefault("consumed_in_model_turn", turn_index)
 
         if len(response.tool_calls) > 1:
             calls = response.tool_calls
@@ -983,9 +1101,12 @@ def run_patch_agent_loop(
                 try:
                     observation = source_inspector.inspect(binding_id=call.arguments["binding_id"],
                         observation_id=f"patch-observation-{tool_rounds_used:03d}")
-                    total_observation_bytes += observation.model_payload_bytes
+                    encoded = (_encode_source_excerpt(observation, full_excerpts)
+                        if selected_policy.deduplicate_source_excerpts else observation.model_view())
+                    total_observation_bytes += len(_canonical_json(encoded).encode("utf-8"))
                     admitted = total_observation_bytes <= allowed_observation_end
-                    observation_trace.append(_observation_trace(observation, turn_index=turn_index, admitted_to_model=admitted))
+                    observation_trace.append(_observation_trace(observation, turn_index=turn_index, admitted_to_model=admitted,
+                        **({"encoded_payload": encoded} if selected_policy.deduplicate_source_excerpts else {})))
                     if not admitted:
                         raise PatchAgentLoopError("PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED", stage="tool_execution",
                             reason="The cumulative source-observation byte budget was exhausted.")
@@ -1003,7 +1124,7 @@ def run_patch_agent_loop(
                         termination=_termination(exc.code, exc.reason, turn_index))
                 inspected_binding_ids.add(call.arguments["binding_id"])
                 observations.append(observation)
-                batch_results.append(AgentToolResult(call_id=call.call_id, name=call.name, output=observation.model_view()))
+                batch_results.append(AgentToolResult(call_id=call.call_id, name=call.name, output=encoded))
                 tool_call_trace.append(_tool_trace(call, turn_index=turn_index, status="accepted", dispatch_started=True))
             pending_response, pending_tool_results = response, tuple(batch_results)
             base_request = _without_loop_states(request)
@@ -1113,7 +1234,9 @@ def run_patch_agent_loop(
                     observation_trace=observation_trace,
                     termination=_termination(exc.code, exc.reason, turn_index),
                 )
-            total_observation_bytes += observation.model_payload_bytes
+            encoded = (_encode_source_excerpt(observation, full_excerpts)
+                if selected_policy.deduplicate_source_excerpts else observation.model_view())
+            total_observation_bytes += len(_canonical_json(encoded).encode("utf-8"))
             admitted_to_model = (
                 total_observation_bytes <= allowed_observation_end
             )
@@ -1122,6 +1245,7 @@ def run_patch_agent_loop(
                     observation,
                     turn_index=turn_index,
                     admitted_to_model=admitted_to_model,
+                    **({"encoded_payload": encoded} if selected_policy.deduplicate_source_excerpts else {}),
                 )
             )
             if not admitted_to_model:
@@ -1163,7 +1287,10 @@ def run_patch_agent_loop(
             inspected_binding_ids.add(binding_id)
             observations.append(observation)
             pending_response = response
-            pending_observation = observation
+            if selected_policy.deduplicate_source_excerpts:
+                pending_tool_results = (AgentToolResult(call_id=call.call_id, name=call.name, output=encoded),)
+            else:
+                pending_observation = observation
             base_request = _without_loop_states(request)
             continue
 
@@ -1286,6 +1413,10 @@ def _source_tool_definition(
             "Registered API bindings return the complete saved Evidence excerpt, not a new live API inspection. "
             "When batched reads are enabled, calls execute sequentially and each consumes one read budget unit. "
             "Select only a listed binding_id; paths are not accepted."
+            + (" A returned excerpt_ref means the identical complete excerpt already appears in the named "
+               "preceding observation (including an earlier item in the same result batch). Read that excerpt "
+               "using the current binding's own target_span; no source text has been shortened."
+               if inspector.policy.deduplicate_source_excerpts else "")
         ),
         parameters={
             "type": "object",
@@ -1472,6 +1603,7 @@ def _observation_trace(
     *,
     turn_index: int,
     admitted_to_model: bool,
+    encoded_payload: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     return {
         "turn_index": turn_index,
@@ -1482,7 +1614,13 @@ def _observation_trace(
         "source_snapshot_sha256": observation.source_snapshot_sha256,
         "observation_sha256": observation.payload_sha256,
         "model_payload_bytes": observation.model_payload_bytes,
-        "admitted_to_model": admitted_to_model,
+        "admitted_to_model": admitted_to_model if encoded_payload is None else False,
+        **({"encoded_payload_sha256": _canonical_sha256(encoded_payload),
+            "encoded_payload_bytes": len(_canonical_json(encoded_payload).encode("utf-8")),
+            "expanded_payload_bytes": observation.model_payload_bytes,
+            "payload_admitted": admitted_to_model,
+            **({"excerpt_ref": deepcopy(encoded_payload["excerpt_ref"])} if "excerpt_ref" in encoded_payload else {}),
+        } if encoded_payload is not None else {}),
         **(dict(observation.registered_evidence_identity) if observation.registered_evidence_identity is not None else {}),
     }
 

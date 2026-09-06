@@ -96,6 +96,25 @@ def test_failed_attempt_index_links_response_tools_verification_without_inventin
     assert "DO_NOT_PROJECT" not in json.dumps(projection)
 
 
+def test_source_reference_projection_distinguishes_encoded_and_full_payload_sizes(tmp_path):
+    root, path, journal, _ = _fixture(tmp_path)
+    observation = journal["factory_receipt"]["patch_agent_loop"]["observation_trace"][0]
+    reference = {"observation_id": "earlier-full", "observation_sha256": "d" * 64,
+                 "excerpt_sha256": "e" * 64}
+    observation.update(model_payload_bytes=5000, expanded_payload_bytes=5000,
+                       encoded_payload_bytes=700, encoded_payload_sha256="c" * 64,
+                       payload_admitted=True, consumed_in_model_turn=3, excerpt_ref=reference)
+    _retain(path, journal)
+    row = project_patch_executions(root)["attempts"][0]["tool_execution"][1]
+    displayed = row["returned_observations"][0]
+    assert displayed["encoded_payload_bytes"] == 700
+    assert displayed["expanded_payload_bytes"] == displayed["model_payload_bytes"] == 5000
+    assert displayed["encoded_payload_sha256"] == "c" * 64
+    assert displayed["excerpt_ref"] == reference
+    assert displayed["consumed_in_model_turn"] == 3
+    assert row["delivery_verification"] == "journal_admission_only_not_wire_consumption"
+
+
 def test_replay_and_pending_turns_do_not_become_new_sends(tmp_path):
     root, path, journal, _ = _fixture(tmp_path, terminal=False)
     turn = journal["factory_receipt"]["worker_turns"][0]

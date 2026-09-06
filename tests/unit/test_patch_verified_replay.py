@@ -127,6 +127,25 @@ def _client(case, sends):
         request_sender=send)
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_legacy_policy_without_excerpt_flag_only_replays_with_encoding_disabled(tmp_path, enabled):
+    case = _case(tmp_path)
+    case.document["factory_receipt"]["patch_agent_loop"]["policy"].pop("deduplicate_source_excerpts", None)
+    _rewrite_attempt(case)
+    case.adapter.patch_agent_loop_policy = replace(
+        case.adapter.patch_agent_loop_policy, deduplicate_source_excerpts=enabled)
+    if enabled:
+        with pytest.raises(LocalEntryError, match="PATCH_REPLAY_EXECUTION_BOUNDARY_MISMATCH"):
+            _prepare(case)
+    else:
+        _prepare(case)
+        sends = []
+        client = _client(case, sends)
+        case.adapter._install_verified_tool_replay(client)
+        assert client.complete_turn(_request()).tool_calls
+        assert sends == []
+
+
 @pytest.mark.parametrize("mutation", ["attempt_hash", "response_hash", "wire_hash", "source", "profile", "digest", "upstream", "tool_executed", "budget", "missing_turn"])
 def test_verified_prefix_rejects_changed_identity_before_network(tmp_path, mutation):
     case = _case(tmp_path)

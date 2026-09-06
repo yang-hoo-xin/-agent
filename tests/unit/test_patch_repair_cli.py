@@ -9,18 +9,43 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
 import pytest
 
+from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.cli import main
-from src.mod_agent.fresh_planning_continuation import _canonical_sha256
-from src.mod_agent.local_entry import _restore_patch_agent_context
-from src.mod_agent.proposal.patch_agent_loop import PatchAgentLoopPolicy
-from tests.unit.test_fresh_planning_continuation import _patch_cli_args, _source_hashes
+from src.mod_agent.evidence import (
+    RgLiveEvidenceProvider,
+    build_requirement_coverage_pack,
+    materialize_requirement_coverage_projection,
+)
+from src.mod_agent.fresh_planning_continuation import (
+    PLANNING_CONTINUATION_CONTRACT_VERSION,
+    PlanningContinuationInputV1,
+    _canonical_sha256,
+    run_fresh_patch_continuation,
+)
+from src.mod_agent.local_entry import (
+    _restore_patch_agent_context,
+    make_exact_no_write_dry_run_factory,
+)
+from src.mod_agent.proposal.patch_agent_loop import PatchAgentLoopPolicy, PlanBoundSourceInspector
+from tests.unit.test_fresh_planning_continuation import (
+    _evidence_by_requirement,
+    _feature_payload,
+    _fresh_execution_receipt,
+    _Inputs,
+    _local_patch_adapter,
+    _patch_cli_args,
+    _patch_request,
+    _positive_findings,
+    _projection,
+    _source_hashes,
+)
 from tests.unit.test_patch_repair_continuation import _repair_case
 
 _FACTORY_SOURCE = '''import hashlib
@@ -83,8 +108,8 @@ def _write_json(path, value):
     return path
 
 
-def _public_case(tmp_path):
-    inputs, request, parent = _repair_case(tmp_path / "case")
+def _public_case(tmp_path, *, preparation=None, selected_policy=None):
+    inputs, request, parent = preparation or _repair_case(tmp_path / "case")
     factory = tmp_path / "selected_evaluator.py"
     factory.write_text(_FACTORY_SOURCE, encoding="utf-8")
     marker = tmp_path / "factory-constructions.txt"
@@ -95,7 +120,7 @@ def _public_case(tmp_path):
         enable_supporting_reads=True, allow_upstream_request=True, allow_batched_reads=True,
     )
     config = {
-        "schema_version": "patch_worker_configuration_v1", "policy": asdict(policy),
+        "schema_version": "patch_worker_configuration_v1", "policy": selected_policy or asdict(policy),
         "enable_recovery_loop": True,
         "behavior_evaluator": {
             "factory_ref": {"path": str(factory), "sha256": _sha(factory.read_bytes())},
@@ -116,6 +141,107 @@ def _public_case(tmp_path):
     return SimpleNamespace(inputs=inputs, request=request, parent=parent, argv=argv, config=config,
                            config_path=config_path, repair=repair, repair_path=repair_path,
                            factory=factory, marker=marker, reports=reports)
+
+
+def _five_binding_repair_case(tmp_path):
+    """Build genuine synthetic Evidence/Plan revisions before retaining a failed parent."""
+    workspace = tmp_path / "workspace"
+    source = workspace / "generated_mods" / "SyntheticMod"
+    source.mkdir(parents=True)
+    symbols = ["ChangeMarkerA", "ChangeMarkerB", "ChangeMarkerC", "ChangeMarkerD", "ChangeMarkerE"]
+    # The long shared comment makes five duplicate full-file windows exceed 32 KiB.
+    # It is fixture source, and is never a patch answer or a real Mod implementation.
+    shared_context = "// SHARED_SYNTHETIC_CONTEXT " + "state-observation " * 425 + "\n"
+    behavior = source / "Behavior.cs"
+    behavior.write_text("public sealed class Behavior\n{\n" + shared_context + "".join(
+        f"    public void {symbol}()\n    {{\n        KeepExistingFeedback();\n    }}\n"
+        for symbol in symbols) + "}\n", encoding="utf-8")
+    (source / "Configuration.cs").write_text(
+        'public sealed class Configuration\n{\n    public const string ConfigKey = "Marker.Enabled";\n}\n',
+        encoding="utf-8")
+    (source / "Preservation.cs").write_text(
+        "public sealed class Preservation\n{\n    public void PreserveFeedback() { }\n}\n", encoding="utf-8")
+    feature = _feature_payload()
+    feature["target_behavior"] = "Update the five marker methods: " + ", ".join(symbols) + "."
+    projection = _projection()
+    projection["requirements"][0].update(text=feature["target_behavior"], query_leads=["ChangeMarker"])
+    materialized = materialize_requirement_coverage_projection(
+        feature_data=feature, request=feature["user_request"], projection=projection,
+    )
+    retrieved = RgLiveEvidenceProvider(workspace).collect_query_set(
+        queries=tuple(dict(value) for value in materialized["queries"]),
+        search_root="generated_mods/SyntheticMod", max_items=8,
+    )
+    findings = _positive_findings(materialized, retrieved)
+    change_requirement = materialized["requirements"][0]["requirement_id"]
+    edit_ids = list(dict.fromkeys(_evidence_by_requirement(materialized, retrieved)[change_requirement]))
+    assert len(edit_ids) == 5
+    findings["findings"][0].update(evidence_ids=edit_ids, edit_target_evidence_ids=edit_ids)
+    pack = build_requirement_coverage_pack(
+        query=feature["user_request"], materialized_projection=materialized,
+        retrieved_pack=retrieved, findings=findings,
+    )
+    pack = replace(pack, budget_summary={**pack.budget_summary,
+                                        "fresh_coverage_model_execution": _fresh_execution_receipt()})
+    store = ArtifactStore(tmp_path / "artifact-store")
+    feature_ref = store.write(feature_id=feature["feature_id"], artifact_type="feature_spec", payload=feature)
+    evidence_ref = store.write(feature_id=feature["feature_id"], artifact_type="evidence_pack",
+                               payload=pack.to_artifact_payload(), upstream_refs=[feature_ref])
+    planning = PlanningContinuationInputV1(
+        contract_version=PLANNING_CONTINUATION_CONTRACT_VERSION,
+        artifact_store_root=str(store.root), workspace_root=str(workspace),
+        feature_spec_ref=feature_ref, evidence_pack_ref=evidence_ref,
+        planning_target_evidence_ids=tuple(edit_ids),
+    )
+    inputs = _Inputs(request=planning, store=store, workspace=workspace, behavior=behavior,
+                     feature_ref=feature_ref, evidence_ref=evidence_ref, feature_payload=feature)
+    request = _patch_request(inputs)
+    plan = store.read(request.implementation_plan_ref)["data"]
+    inspector = PlanBoundSourceInspector(workspace_root=workspace, implementation_plan=plan,
+                                          evidence_pack=store.read(evidence_ref)["data"],
+                                          policy=PatchAgentLoopPolicy(enable_supporting_reads=True))
+    assert len(inspector.available_binding_ids) == 5
+    assert len(inspector.available_read_binding_ids) >= 6
+    windows = [inspector.inspect(binding_id=binding, observation_id=f"fixture-check-{number}").excerpt
+               for number, binding in enumerate(inspector.available_binding_ids)]
+    assert all(window == windows[0] for window in windows)
+    assert sum(len(window.encode()) for window in windows) > 32768
+    parent_adapter, _ = _local_patch_adapter(inputs)
+    parent = run_fresh_patch_continuation(
+        request, patch_change_factory=parent_adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(workspace),
+    )
+    assert parent.status == "terminal", parent.to_dict()
+    proposal = store.read(ArtifactRef(**parent.patch_proposal_artifact))["data"]
+    receipt_path = Path(parent.attempt_receipt["path"])
+    parent_receipt = json.loads(receipt_path.read_text())
+    response = parent_receipt["factory_receipt"]["model_response"]
+    native = [{
+        "change_id": change["change_id"], "change_type": change["change_type"],
+        "edit_binding_id": change["edit_binding_id"], "supporting_binding_ids": change["supporting_binding_ids"],
+        "operation": "exact_text_replace", "rationale": change["rationale"], "risk_tags": ["medium"],
+        "expected_validation": change["expected_validation"], "rollback_hint": change["rollback_hint"],
+        "patch": change["patch"],
+    } for change in proposal["diff_intent"]]
+    observed = all("RecordRepairMarker();" in change["patch"]["after_text"] for change in native)
+    assert observed is False
+    report_path = _write_json(tmp_path / "five-binding-parent-failure.json", {
+        "status": "behavior_failed", "failure_owner": "patch_implementation",
+        "owner_binding_ids": [change["edit_binding_id"] for change in native],
+        "observations": [{"check_id": "synthetic_repair_marker", "input": {"enabled": True},
+                          "expected": {"recorded": True}, "observed": {"recorded": observed}}],
+        "generated_changes_sha256": _canonical_sha256(native),
+        "source_snapshot_sha256": inspector.source_snapshot_sha256,
+    })
+    recovery = replace(request,
+        repair_parent_proposal_ref=ArtifactRef(**parent.patch_proposal_artifact),
+        repair_parent_review_ref=ArtifactRef(**parent.proposal_review_artifact),
+        repair_failure_report_ref={"path": str(report_path), "sha256": _sha(report_path.read_bytes())},
+        repair_parent_response_ref={"path": response["path"], "sha256": response["output_sha256"]},
+        repair_parent_attempt_ref={"path": str(receipt_path), "sha256": _sha(receipt_path.read_bytes())},
+        attempt_id="synthetic-five-binding-recovery",
+    )
+    return inputs, recovery, parent
 
 
 def _message_jsons(payload):
@@ -170,23 +296,30 @@ class _OfflineOllamaTransport:
                            for message in payload["messages"])
             source_tool = next(tool["function"] for tool in payload["tools"]
                                if tool["function"]["name"] == "inspect_plan_binding_source")
-            binding = next(value for value in source_tool["parameters"]["properties"]["binding_id"]["enum"]
-                           if value not in self.read_bindings)
-            self.read_bindings.append(binding)
+            available = source_tool["parameters"]["properties"]["binding_id"]["enum"]
+            if self.scenario == "batch_dedup" and number == 1:
+                state = next(value for _, value in reversed(decoded)
+                             if value.get("message_type") == "patch_agent_loop_state")
+                selected = [value for value in available if value in state["allowed_binding_ids"]]
+                assert len(selected) == 5
+            else:
+                selected = [next(value for value in available if value not in self.read_bindings)]
+            self.read_bindings.extend(selected)
             message = {"role": "assistant", "content": "", "tool_calls": [{
                 "function": {"name": source_tool["name"], "arguments": {"binding_id": binding}},
-            }]}
+            } for binding in selected]}
         else:
             if self.scenario != "direct_pass":
                 assert number in (2, 4)
                 assert {value["binding_id"] for value in tool_results} == set(self.read_bindings)
                 if number == 4:
-                    assert feedback and len(tool_results) == 2
+                    assert feedback and len(tool_results) == (6 if self.scenario == "batch_dedup" else 2)
             else:
                 assert number == 1
             prompt = next(value for _, value in decoded if "required_change_units" in value)
             prompt = _restore_patch_agent_context(prompt)
-            repaired = self.scenario == "direct_pass" or (self.scenario == "recover" and number == 4)
+            repaired = self.scenario == "direct_pass" or (
+                self.scenario in ("recover", "batch_dedup") and number == 4)
             marker = "RecordRepairMarker" if repaired else (
                 "RecordTemporaryMarker" if number == 2 else "RecordAnotherMissingMarker")
             changes = [{
@@ -314,3 +447,74 @@ def test_public_repair_cli_invalid_config_or_refs_stop_before_transport(tmp_path
     assert handler.requests == []
     assert not case.marker.exists()
     assert public["execution_counts"]["model"] == 0
+
+
+def test_public_repair_cli_deduplicates_five_reads_and_preserves_a_sixth_after_failure(tmp_path, monkeypatch, capsys):
+    from src.mod_agent.proposal.patch_agent_loop import expand_patch_source_observations
+
+    preparation = _five_binding_repair_case(tmp_path / "case")
+    policy = asdict(PatchAgentLoopPolicy(
+        max_tool_rounds=6, max_total_model_turns=5, max_observation_bytes=32768,
+        context_radius_lines=64, finalize_after_first_observation=False,
+        require_source_inspection=False, enable_supporting_reads=True,
+        allow_upstream_request=True, allow_batched_reads=True,
+        deduplicate_source_excerpts=True,
+    ))
+    case = _public_case(tmp_path, preparation=preparation, selected_policy=policy)
+    before = _source_hashes(case.inputs.workspace)
+    handler = _install_transport(monkeypatch, tmp_path / "wire", scenario="batch_dedup")
+    code, public = _run(case, capsys)
+    assert code == 0, public
+    assert public["status"] == "terminal"
+    assert len(handler.chat_requests) == 4
+    assert len(handler.read_bindings) == len(set(handler.read_bindings)) == 6
+    shared_source = case.inputs.behavior.read_bytes().decode("utf-8")
+
+    def all_strings(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for item in value.values():
+                yield from all_strings(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from all_strings(item)
+
+    for request_index, expected_reads in ((1, 5), (3, 6)):
+        decoded = _message_jsons(handler.chat_requests[request_index][1])
+        tools = [value for role, value in decoded if role == "tool"]
+        assert len(tools) == expected_reads
+        assert sum(text == shared_source for _, value in decoded for text in all_strings(value)) == 1
+        assert sum("excerpt" in value for value in tools[:5]) == 1
+        assert sum("excerpt_ref" in value for value in tools[:5]) == 4
+        expanded = expand_patch_source_observations(tools)
+        assert all(value["excerpt"] == shared_source for value in expanded[:5])
+        assert len({value["observation_sha256"] for value in expanded[:5]}) == 5
+        assert len({json.dumps(value["target_span"], sort_keys=True) for value in expanded[:5]}) == 5
+        for value in tools[1:5]:
+            assert value["excerpt_ref"]["observation_id"] == tools[0]["observation_id"]
+            assert value["excerpt_ref"]["excerpt_sha256"] == _sha(shared_source.encode())
+    journal = json.loads(Path(public["attempt_receipt"]["path"]).read_text())
+    factory = journal["factory_receipt"]
+    loop = factory["patch_agent_loop"]
+    correction = loop["behavior_correction"]["execution"]
+    assert loop["tool_rounds_used"] == 5
+    assert correction["tool_rounds_used"] == 1
+    assert len(loop["observation_trace"]) == 5 and len(correction["observation_trace"]) == 1
+    assert all(row["admitted_to_model"] is True for row in loop["observation_trace"])
+    assert loop["total_observation_bytes"] == sum(row["encoded_payload_bytes"] for row in loop["observation_trace"])
+    assert sum(row["expanded_payload_bytes"] for row in loop["observation_trace"]) > 32768
+    assert loop["total_observation_bytes"] < 32768
+    capacity = loop["recovery_capacity_at_failure"]
+    assert capacity["remaining_binding_reads"] == 1
+    assert capacity["remaining_model_turns"] >= 2
+    assert capacity["remaining_observation_bytes_after_feedback"] > 0
+    assert capacity["can_read_consume_and_revise"] is True
+    assert [row["status"] for row in loop["behavior_evaluations"]] == ["behavior_failed", "passed"]
+    assert all(row["execution_origin"] == "executed" for row in loop["behavior_evaluations"])
+    assert public["execution_counts"]["model"] == 4 <= policy["max_total_model_turns"]
+    assert public["execution_counts"]["review"] == public["execution_counts"]["dry_run"] == 1
+    assert public["execution_counts"]["apply"] == 0 and public["product_source_writes_performed"] is False
+    assert _source_hashes(case.inputs.workspace) == before
+    for turn, (wire, _) in zip(factory["worker_turns"], handler.chat_requests, strict=True):
+        assert turn["provider_diagnostic"]["request_identity"]["provider_body_sha256"] == _sha(wire)

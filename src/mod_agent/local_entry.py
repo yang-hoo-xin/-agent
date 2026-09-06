@@ -1546,8 +1546,15 @@ class LocalOllamaInitialPatchAdapter:
         document = self._read_verified_response_json(self._replay_attempt_ref)
         factory = document.get("factory_receipt") or {}
         prior_loop = factory.get("patch_agent_loop") or {}
+        selected_policy = asdict(self.patch_agent_loop_policy)
+        prior_policy = prior_loop.get("policy")
+        if (isinstance(prior_policy, Mapping)
+                and "deduplicate_source_excerpts" not in prior_policy
+                and selected_policy["deduplicate_source_excerpts"] is False):
+            # Absent in legacy receipts means the old full-text encoding only.
+            selected_policy.pop("deduplicate_source_excerpts")
         if (factory.get("profile") != self.profile.to_dict()
-                or prior_loop.get("policy") != asdict(self.patch_agent_loop_policy)
+                or prior_policy != selected_policy
                 or prior_loop.get("tool_rounds_used") != 0 or document.get("proposal_admitted") is not False):
             raise LocalEntryError("PATCH_REPLAY_EXECUTION_BOUNDARY_MISMATCH")
         _assert_ollama_model_identity_stable(expected=factory.get("model_identity") or {}, observed=identity)
