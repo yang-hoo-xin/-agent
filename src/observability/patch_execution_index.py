@@ -193,18 +193,23 @@ def _tools(loop: Mapping[str, Any]) -> list[dict[str, Any]]:
             row = {"phase": phase, **_fields(
                 call, "turn_index", "tool_call_id", "tool", "binding_id",
                 "arguments_sha256", "status", "dispatch_started", "error_code",
+                "read_cost", "observation_origin",
             )}
             row["execution_observation"] = (
                 "not_executed" if call.get("dispatch_started") is False else
+                "prior_visible_source_reuse" if call.get("observation_origin") == "prior_visible_source_reuse" else
                 "dispatch_started" if call.get("dispatch_started") is True else "unknown"
             )
             row["returned_observations"] = [{**_fields(
                 observation, "observation_id", "observation_sha256", "source_ref",
-                "source_hash", "source_snapshot_sha256", "admitted_to_model",
+                "source_hash", "source_snapshot_sha256", "source_identity_sha256", "admitted_to_model",
                 "model_payload_bytes", "encoded_payload_bytes", "encoded_payload_sha256",
                 "expanded_payload_bytes", "payload_admitted", "consumed_in_model_turn",
-            ), **({"excerpt_ref": _fields(observation["excerpt_ref"],
-                "observation_id", "observation_sha256", "excerpt_sha256")}
+                "read_cost", "observation_origin",
+            ), **({"excerpt_ref": {**_fields(observation["excerpt_ref"],
+                "observation_id", "observation_sha256", "excerpt_sha256"),
+                **({"source_excerpt_span": _fields(observation["excerpt_ref"]["source_excerpt_span"],
+                    "start_line", "end_line")} if isinstance(observation["excerpt_ref"].get("source_excerpt_span"), dict) else {})}}
                 if isinstance(observation.get("excerpt_ref"), dict) else {})}
                 for observation in observations
                 if isinstance(call.get("binding_id"), str)
@@ -247,7 +252,7 @@ def _evaluations(loop: Mapping[str, Any], refs: _References) -> list[dict[str, A
         row["code_revision"] = {
             "declaration_status": "recorded" if revision else "unknown",
             "comparison_verification": "journal_declaration_not_recomputed",
-            **_fields(revision, "comparison_basis", "comparable_to_known_failed",
+            **_fields(revision, "model_turn_index", "comparison_basis", "comparable_to_known_failed",
                       "same_materialized_code", "different_code_is_not_proof_of_repair"),
             "known_failed_report_ref": (
                 refs.check(revision["known_failed_report_ref"])[0]
@@ -368,6 +373,12 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
                 "allowed_tools": _strings(item.get("allowed_tools")),
             } for phase, execution in _phases(loop)
                 for item in _rows(execution.get("tool_availability_trace"))],
+            "turn_progress": [{"phase": phase, **_fields(
+                item, "turn_index", "submitted_patch", "requested_source_reads",
+                "dispatched_binding_reads", "new_source_windows", "reused_source_observations",
+                "read_cost", "observation_bytes_added", "no_new_source_information",
+            )} for phase, execution in _phases(loop)
+                for item in _rows(execution.get("turn_progress_trace"))],
         },
         "integrity": "references_need_attention" if problems else "checked_references_match",
         "reference_freshness": (
@@ -397,6 +408,10 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
             **_fields(factory, "live_response_count", "replayed_model_turns"),
             "observed_turn_origins": dict(Counter(row["response_origin"] for row in turns)),
             "turn_origin_count_basis": "journal_declarations_not_independent_send_audit",
+            "source_read_accounting": [{"phase": phase, **_fields(
+                execution, "read_accounting_version", "tool_rounds_used",
+                "dispatched_binding_reads", "reused_source_observations",
+            )} for phase, execution in _phases(loop)],
         },
         "eval_observation": {
             "reported_results": dict(Counter(row.get("status", "unknown") for row in evaluations)),

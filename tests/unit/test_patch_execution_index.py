@@ -100,7 +100,7 @@ def test_source_reference_projection_distinguishes_encoded_and_full_payload_size
     root, path, journal, _ = _fixture(tmp_path)
     observation = journal["factory_receipt"]["patch_agent_loop"]["observation_trace"][0]
     reference = {"observation_id": "earlier-full", "observation_sha256": "d" * 64,
-                 "excerpt_sha256": "e" * 64}
+                 "excerpt_sha256": "e" * 64, "source_excerpt_span": {"start_line": 1, "end_line": 80}}
     observation.update(model_payload_bytes=5000, expanded_payload_bytes=5000,
                        encoded_payload_bytes=700, encoded_payload_sha256="c" * 64,
                        payload_admitted=True, consumed_in_model_turn=3, excerpt_ref=reference)
@@ -125,6 +125,40 @@ def test_bound_repair_source_and_failed_response_refs_are_queryable_without_rebi
     for name in ("source_attempt_ref", "verification_result_ref", "failed_response_ref"):
         assert parents[name]["integrity"] == "verified_bytes"
     assert parents["failed_response_ref"]["sha256"] == response["sha256"]
+
+
+def test_source_reuse_is_not_reported_as_new_read_and_keeps_phase_accounting(tmp_path):
+    root, path, journal, _ = _fixture(tmp_path)
+    loop = journal["factory_receipt"]["patch_agent_loop"]
+    loop.update(read_accounting_version="new_source_window_v2", tool_rounds_used=1,
+                dispatched_binding_reads=2, reused_source_observations=1)
+    call = loop["tool_call_trace"][1]
+    call.update(read_cost=0, observation_origin="prior_visible_source_reuse")
+    observation = loop["observation_trace"][0]
+    observation.update(read_cost=0, observation_origin="prior_visible_source_reuse")
+    loop["turn_progress_trace"] = [{"turn_index": 2, "submitted_patch": False,
+                                    "new_source_windows": 0, "reused_source_observations": 1,
+                                    "no_new_source_information": True}]
+    _retain(path, journal)
+    result = project_patch_executions(root)["attempts"][0]
+    reused = result["tool_execution"][1]
+    assert reused["execution_observation"] == "prior_visible_source_reuse"
+    assert reused["read_cost"] == 0
+    assert reused["returned_observations"][0]["observation_origin"] == "prior_visible_source_reuse"
+    phase = result["budget_and_counts_recorded"]["source_read_accounting"][0]
+    assert phase == {"phase": "initial", "read_accounting_version": "new_source_window_v2",
+                     "tool_rounds_used": 1, "dispatched_binding_reads": 2,
+                     "reused_source_observations": 1}
+    progress = result["worker_state"]["turn_progress"][0]
+    assert progress["no_new_source_information"] is True
+    assert "repair_success" not in progress
+
+
+def test_legacy_journal_does_not_acquire_new_source_accounting_claims(tmp_path):
+    root, _, _, _ = _fixture(tmp_path)
+    result = project_patch_executions(root)["attempts"][0]
+    assert result["budget_and_counts_recorded"]["source_read_accounting"] == [{"phase": "initial"}]
+    assert result["worker_state"]["turn_progress"] == []
 
 
 def test_replay_and_pending_turns_do_not_become_new_sends(tmp_path):

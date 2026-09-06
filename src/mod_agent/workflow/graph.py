@@ -1942,6 +1942,28 @@ def _patch_continuation_current_snapshot_sha256(
     ).hexdigest()
 
 
+def _valid_patch_read_accounting(value: Mapping[str, Any], *, reuse_enabled: bool) -> bool:
+    """Validate producer accounting without treating reused bytes as a new read."""
+    reads, observations = value.get("tool_rounds_used"), value.get("observation_trace")
+    if type(reads) is not int or reads < 0 or not isinstance(observations, list):
+        return False
+    if not reuse_enabled:
+        return (value.get("read_accounting_version") in (None, "binding_dispatch_v1")
+                and len(observations) == reads)
+    if value.get("read_accounting_version") != "new_source_window_v2":
+        return False
+    if any(not isinstance(item, Mapping) or type(item.get("read_cost")) is not int
+           or item["read_cost"] not in (0, 1)
+           or item.get("observation_origin") != (
+               "current_source_read" if item["read_cost"] else "prior_visible_source_reuse")
+           for item in observations):
+        return False
+    dispatched, reused = value.get("dispatched_binding_reads"), value.get("reused_source_observations")
+    return (type(dispatched) is int and dispatched == len(observations)
+            and type(reused) is int and reused == sum(item["read_cost"] == 0 for item in observations)
+            and reads == sum(item["read_cost"] for item in observations))
+
+
 def _valid_patch_agent_loop_receipt(
     value: Any,
     *,
@@ -1959,7 +1981,9 @@ def _valid_patch_agent_loop_receipt(
         return False
     read_limit = policy.get("max_tool_rounds", 3)
     require_read = policy.get("require_source_inspection", True)
-    if type(read_limit) is not int or read_limit < 1 or type(require_read) is not bool:
+    reuse_enabled = policy.get("reuse_covered_source_observations", False)
+    if (type(read_limit) is not int or read_limit < 1 or type(require_read) is not bool
+            or type(reuse_enabled) is not bool):
         return False
     recovery_reads = 0
     correction_calls = 0
@@ -1984,8 +2008,7 @@ def _valid_patch_agent_loop_receipt(
             if not isinstance(execution, Mapping):
                 return False
             reads = execution.get("tool_rounds_used")
-            refs = execution.get("observation_trace")
-            if type(reads) is not int or reads < 0 or not isinstance(refs, list) or len(refs) != reads:
+            if not _valid_patch_read_accounting(execution, reuse_enabled=reuse_enabled):
                 return False
             recovery_reads += reads
     behavior = value.get("behavior_evaluations")
@@ -2008,7 +2031,7 @@ def _valid_patch_agent_loop_receipt(
         and (1 if require_read else 0) <= tool_rounds
         and tool_rounds + recovery_reads <= read_limit
         and isinstance(observations, list)
-        and len(observations) == tool_rounds
+        and _valid_patch_read_accounting(value, reuse_enabled=reuse_enabled)
         and all(
             isinstance(item, Mapping)
             and item.get("admitted_to_model") is True

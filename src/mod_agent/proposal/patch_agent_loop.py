@@ -51,6 +51,7 @@ class PatchAgentLoopPolicy:
     allow_upstream_request: bool = False
     allow_batched_reads: bool = False
     deduplicate_source_excerpts: bool = False
+    reuse_covered_source_observations: bool = False
     # One dispatched binding read consumes one unit, including in a batch.
     max_tool_rounds: int = 3
     max_total_model_turns: int = 5
@@ -59,7 +60,7 @@ class PatchAgentLoopPolicy:
         if any(type(getattr(self, name)) is not bool for name in (
             "finalize_after_first_observation", "enable_supporting_reads",
             "require_source_inspection", "allow_upstream_request", "allow_batched_reads",
-            "deduplicate_source_excerpts",
+            "deduplicate_source_excerpts", "reuse_covered_source_observations",
         )):
             raise PatchAgentLoopError(
                 "PATCH_AGENT_POLICY_INVALID",
@@ -98,6 +99,7 @@ class PatchSourceObservation:
     payload_sha256: str
     model_payload_bytes: int
     registered_evidence_identity: Mapping[str, str] | None = None
+    source_identity_sha256: str | None = None
 
     def model_view(self) -> dict[str, object]:
         """Return the bounded ref-first payload visible to the model."""
@@ -113,6 +115,7 @@ class PatchSourceObservation:
             "excerpt": self.excerpt,
             "truncated": self.truncated,
             "observation_sha256": self.payload_sha256,
+            **({"source_identity_sha256": self.source_identity_sha256} if self.source_identity_sha256 else {}),
             **(dict(self.registered_evidence_identity) if self.registered_evidence_identity is not None else {}),
         }
 
@@ -127,8 +130,28 @@ def _local_excerpt_key(payload: Mapping[str, Any]) -> tuple[object, ...] | None:
     span, excerpt = payload.get("excerpt_span"), payload.get("excerpt")
     if not isinstance(span, Mapping) or not isinstance(excerpt, str):
         return None
-    return (payload.get("source_snapshot_sha256"), payload.get("source_hash"),
+    return (payload.get("source_snapshot_sha256"), payload.get("source_hash"), payload.get("source_identity_sha256"),
             span.get("start_line"), span.get("end_line"), excerpt)
+
+
+def _covered_excerpt(earlier: Mapping[str, Any], current: Mapping[str, Any]) -> str | None:
+    """Return the exact complete requested window; never merge overlapping windows."""
+    if not current.get("source_identity_sha256") or any(current.get(key) != earlier.get(key)
+            for key in ("source_snapshot_sha256", "source_hash", "source_identity_sha256")):
+        return None
+    before, after = earlier.get("excerpt_span"), current.get("excerpt_span")
+    if not isinstance(before, Mapping) or not isinstance(after, Mapping) or not isinstance(earlier.get("excerpt"), str):
+        return None
+    values = [span.get(key) for span in (before, after) for key in ("start_line", "end_line")]
+    if any(type(value) is not int for value in values):
+        return None
+    start, end, requested_start, requested_end = values
+    if not 1 <= start <= requested_start <= requested_end <= end:
+        return None
+    lines = earlier["excerpt"].splitlines(keepends=True)
+    if len(lines) != end - start + 1:
+        return None
+    return "".join(lines[requested_start - start:requested_end - start + 1])
 
 
 def expand_patch_source_observations(
@@ -158,12 +181,16 @@ def expand_patch_source_observations(
         if (type(restored.get("source_hash")) is not str
                 or re.fullmatch(r"[0-9a-fA-F]{64}", restored["source_hash"]) is None):
             raise _excerpt_reference_error("The original source hash is missing.")
+        if "source_identity_sha256" in restored and (type(restored["source_identity_sha256"]) is not str
+                or _SHA256_RE.fullmatch(restored["source_identity_sha256"]) is None):
+            raise _excerpt_reference_error("The source identity is invalid.")
         has_reference = "excerpt_ref" in restored
         reference = restored.pop("excerpt_ref", None)
         if has_reference:
             if ("excerpt" in restored or restored.get("observation_kind") == "registered_api_evidence"
                     or not isinstance(reference, Mapping)
-                    or set(reference) != {"observation_id", "observation_sha256", "excerpt_sha256"}
+                    or set(reference) not in ({"observation_id", "observation_sha256", "excerpt_sha256"},
+                        {"observation_id", "observation_sha256", "excerpt_sha256", "source_excerpt_span"})
                     or type(reference.get("observation_id")) is not str):
                 raise _excerpt_reference_error("The excerpt reference shape is invalid.")
             earlier = full_by_id.get(reference["observation_id"])
@@ -172,9 +199,17 @@ def expand_patch_source_observations(
             if (reference["observation_sha256"] != earlier["observation_sha256"]
                     or reference["excerpt_sha256"] != hashlib.sha256(earlier["excerpt"].encode("utf-8")).hexdigest()
                     or any(restored.get(key) != earlier.get(key)
-                           for key in ("source_snapshot_sha256", "source_hash", "excerpt_span"))):
+                           for key in ("source_snapshot_sha256", "source_hash", "source_identity_sha256"))):
                 raise _excerpt_reference_error("The excerpt reference disagrees with its source, span, or bytes.")
-            restored["excerpt"] = earlier["excerpt"]
+            if "source_excerpt_span" in reference:
+                excerpt = _covered_excerpt(earlier, restored)
+                if reference["source_excerpt_span"] != earlier["excerpt_span"] or excerpt is None:
+                    raise _excerpt_reference_error("The complete requested window is not covered by the referenced source.")
+                restored["excerpt"] = excerpt
+            else:
+                if restored.get("excerpt_span") != earlier.get("excerpt_span"):
+                    raise _excerpt_reference_error("The exact excerpt reference has a different span.")
+                restored["excerpt"] = earlier["excerpt"]
         if type(restored.get("excerpt")) is not str:
             raise _excerpt_reference_error("The complete source excerpt is unavailable.")
         identity_payload = {key: value for key, value in restored.items() if key != "observation_sha256"}
@@ -190,10 +225,13 @@ def expand_patch_source_observations(
 def _encode_source_excerpt(
     observation: PatchSourceObservation,
     full_excerpts: dict[tuple[object, ...], dict[str, Any]],
+    *, reuse_covered: bool = False,
 ) -> dict[str, Any]:
     full = observation.model_view()
     key = _local_excerpt_key(full)
     earlier = full_excerpts.get(key) if key is not None else None
+    if earlier is None and reuse_covered and key is not None:
+        earlier = next((item for item in full_excerpts.values() if _covered_excerpt(item, full) == full["excerpt"]), None)
     if earlier is not None:
         encoded = {name: value for name, value in full.items() if name != "excerpt"}
         encoded["excerpt_ref"] = {
@@ -201,7 +239,9 @@ def _encode_source_excerpt(
             "observation_sha256": earlier["observation_sha256"],
             "excerpt_sha256": hashlib.sha256(earlier["excerpt"].encode("utf-8")).hexdigest(),
         }
-        if len(_canonical_json(encoded).encode("utf-8")) < observation.model_payload_bytes:
+        if earlier["excerpt_span"] != full["excerpt_span"]:
+            encoded["excerpt_ref"]["source_excerpt_span"] = dict(earlier["excerpt_span"])
+        if reuse_covered or len(_canonical_json(encoded).encode("utf-8")) < observation.model_payload_bytes:
             return encoded
     if key is not None:
         full_excerpts.setdefault(key, full)
@@ -226,6 +266,10 @@ class PatchAgentLoopResult:
     # In-process context for a subsequent correction; deliberately excluded from receipts.
     final_request: AgentTurnRequest | None = field(default=None, repr=False, compare=False)
     tool_availability_trace: tuple[dict[str, object], ...] = ()
+    read_accounting_version: str = "binding_dispatch_v1"
+    dispatched_binding_reads: int = 0
+    reused_source_observations: int = 0
+    turn_progress_trace: tuple[dict[str, object], ...] = ()
 
     @property
     def completed(self) -> bool:
@@ -249,6 +293,10 @@ class PatchAgentLoopResult:
             "model": self.model,
             "model_turns_used": self.model_turns_used,
             "tool_rounds_used": self.tool_rounds_used,
+            "read_accounting_version": self.read_accounting_version,
+            "dispatched_binding_reads": self.dispatched_binding_reads,
+            "reused_source_observations": self.reused_source_observations,
+            "turn_progress_trace": [deepcopy(item) for item in self.turn_progress_trace],
             "total_observation_bytes": self.total_observation_bytes,
             "usage_by_turn": [deepcopy(item) for item in self.usage_by_turn],
             "tool_call_trace": [deepcopy(item) for item in self.tool_call_trace],
@@ -543,6 +591,10 @@ class PlanBoundSourceInspector:
             "excerpt": excerpt,
             "truncated": excerpt_start > 1 or excerpt_end < len(lines),
         }
+        source_identity = (_canonical_sha256({"relative_path": binding.relative_path, "source_hash": binding.source_hash})
+            if self.policy.reuse_covered_source_observations else None)
+        if source_identity is not None:
+            base_payload["source_identity_sha256"] = source_identity
         payload_sha256 = _canonical_sha256(base_payload)
         model_view = {**base_payload, "observation_sha256": payload_sha256}
         model_payload_bytes = len(_canonical_json(model_view).encode("utf-8"))
@@ -558,6 +610,7 @@ class PlanBoundSourceInspector:
             truncated=bool(base_payload["truncated"]),
             payload_sha256=payload_sha256,
             model_payload_bytes=model_payload_bytes,
+            source_identity_sha256=source_identity,
         )
 
     def _inspect_registered_api(self, *, binding_id: str, observation_id: str) -> PatchSourceObservation:
@@ -701,6 +754,54 @@ class PlanBoundSourceInspector:
                 )
 
 
+def _visible_source_payloads(request: AgentTurnRequest) -> list[Mapping[str, Any]]:
+    results = [result for exchange in request.historical_tool_exchanges for result in exchange.tool_results]
+    results.extend(request.tool_results)
+    return [result.output for result in results if result.name == PATCH_SOURCE_INSPECTION_TOOL_NAME
+        and isinstance(result.output, Mapping) and ("observation_sha256" in result.output or "excerpt_ref" in result.output)]
+
+
+def _validated_visible_excerpts(source_inspector: PlanBoundSourceInspector,
+        payloads: Sequence[Mapping[str, Any]]) -> dict[tuple[object, ...], dict[str, Any]]:
+    anchors: dict[tuple[object, ...], dict[str, Any]] = {}
+    for encoded, restored in zip(payloads, expand_patch_source_observations(payloads)):
+        expected = source_inspector.inspect(binding_id=restored.get("binding_id"),
+            observation_id=restored["observation_id"]).model_view()
+        if restored != expected:
+            raise _excerpt_reference_error("Retained observation does not match the current registered source identity.")
+        key = _local_excerpt_key(restored)
+        if key is not None and "excerpt_ref" not in encoded:
+            anchors.setdefault(key, restored)
+    return anchors
+
+
+def _plan_source_reads(source_inspector: PlanBoundSourceInspector, binding_ids: Sequence[str],
+        full_excerpts: Mapping[tuple[object, ...], dict[str, Any]], observation_sequence: int):
+    anchors = deepcopy(dict(full_excerpts))
+    rows = []
+    for index, binding_id in enumerate(binding_ids, observation_sequence + 1):
+        observation = source_inspector.inspect(binding_id=binding_id, observation_id=f"patch-observation-{index:03d}")
+        encoded = _encode_source_excerpt(observation, anchors, reuse_covered=True)
+        cost = 0 if "excerpt_ref" in encoded else 1
+        rows.append((observation, encoded, cost))
+    return rows
+
+
+def estimate_patch_source_reads(*, source_inspector: PlanBoundSourceInspector,
+        prior_request: AgentTurnRequest, binding_ids: Sequence[str]) -> tuple[dict[str, Any], ...]:
+    """Plan logical new-window and wire-payload costs; does not record tool execution."""
+    payloads = _visible_source_payloads(prior_request)
+    anchors = _validated_visible_excerpts(source_inspector, payloads)
+    sequence = max([len(payloads), *(int(match.group(1)) for item in payloads
+        if (match := re.fullmatch(r"patch-observation-(\d+)", str(item.get("observation_id")))))])
+    rows = _plan_source_reads(source_inspector, binding_ids, anchors, sequence)
+    return tuple({"binding_id": observation.binding_id, "read_cost": cost,
+        "encoded_payload_bytes": len(_canonical_json(encoded).encode("utf-8")),
+        "observation_origin": "prior_visible_source_reuse" if cost == 0 else "current_source_read",
+        **({"excerpt_ref": deepcopy(encoded["excerpt_ref"])} if "excerpt_ref" in encoded else {})}
+        for observation, encoded, cost in rows)
+
+
 def run_patch_agent_loop(
     *,
     client: AgentTurnClient,
@@ -719,6 +820,8 @@ def run_patch_agent_loop(
     """Run bounded source inspection turns and return final Patch content or a receipt."""
 
     selected_policy = policy or source_inspector.policy
+    reuse_covered = selected_policy.reuse_covered_source_observations
+    encode_excerpts = selected_policy.deduplicate_source_excerpts or reuse_covered
     for value in (consumed_model_turns, consumed_tool_rounds, consumed_observation_bytes,
                   reserve_model_turns, reserve_tool_reads, reserve_observation_bytes):
         if type(value) is not int or value < 0:
@@ -759,8 +862,11 @@ def run_patch_agent_loop(
     observation_trace: list[dict[str, object]] = []
     observations: list[PatchSourceObservation | Mapping[str, object]] = []
     tool_availability_trace: list[dict[str, object]] = []
+    response_actions: dict[int, dict[str, object]] = {}
     inspected_binding_ids: set[str] = set()
     seen_tool_call_ids: set[str] = set()
+    seen_call_bindings: dict[str, str] = {}
+    last_reused_only_batch: str | None = None
     rejected_read_batches: set[str] = set()
     total_observation_bytes = consumed_observation_bytes
     tool_rounds_used = consumed_tool_rounds
@@ -779,20 +885,11 @@ def run_patch_agent_loop(
         retained_exchanges.append(AgentToolExchange(base_request.tool_results, base_request.provider_state,
             base_request.tool_result_insert_index if base_request.tool_result_insert_index is not None else len(base_request.messages)))
     full_excerpts: dict[tuple[object, ...], dict[str, Any]] = {}
-    if selected_policy.deduplicate_source_excerpts:
-        retained_payloads = [result.output for exchange in retained_exchanges for result in exchange.tool_results
-            if result.name == PATCH_SOURCE_INSPECTION_TOOL_NAME and isinstance(result.output, Mapping)
-            and ("observation_sha256" in result.output or "excerpt_ref" in result.output)]
-        restored_payloads = expand_patch_source_observations(retained_payloads)
-        for encoded, restored in zip(retained_payloads, restored_payloads):
-            # Do not trust a self-consistent hash over invented source content.
-            expected = source_inspector.inspect(binding_id=restored.get("binding_id"),
-                observation_id=restored["observation_id"]).model_view()
-            if restored != expected:
-                raise _excerpt_reference_error("Retained observation does not match the current registered source identity.")
-            key = _local_excerpt_key(restored)
-            if key is not None and "excerpt_ref" not in encoded:
-                full_excerpts.setdefault(key, restored)
+    retained_payloads = _visible_source_payloads(base_request)
+    if encode_excerpts:
+        full_excerpts = _validated_visible_excerpts(source_inspector, retained_payloads)
+    observation_sequence = max([len(retained_payloads), *(int(match.group(1)) for item in retained_payloads
+        if (match := re.fullmatch(r"patch-observation-(\d+)", str(item.get("observation_id")))))])
     for exchange in retained_exchanges:
         rejected_bindings = [result.output.get("binding_id") for result in exchange.tool_results
             if isinstance(result.output, Mapping)
@@ -806,6 +903,10 @@ def run_patch_agent_loop(
                 binding_id = tool_result.output.get("binding_id")
                 if isinstance(binding_id, str):
                     inspected_binding_ids.add(binding_id)
+                    if tool_result.call_id in seen_call_bindings and seen_call_bindings[tool_result.call_id] != binding_id:
+                        raise PatchAgentLoopError("PATCH_AGENT_TOOL_CALL_ID_REUSED", stage="loop_admission",
+                            reason="A retained provider call id refers to different bindings.")
+                    seen_call_bindings[tool_result.call_id] = binding_id
     for observation in observations:
         binding_id = observation.get("binding_id")
         if isinstance(binding_id, str):
@@ -813,7 +914,13 @@ def run_patch_agent_loop(
     if resume_request is not None:
         prior_model_floor = max((state.get("budget_state", {}).get("model_turns_used", 0) + 1
             for state in old_states), default=0)
-        if consumed_model_turns < prior_model_floor or consumed_tool_rounds < len(inspected_binding_ids):
+        prior_read_floor = (sum("excerpt_ref" not in item for item in retained_payloads)
+            if reuse_covered else len(inspected_binding_ids))
+        if reuse_covered and any(state.get("read_execution", {}).get("accounting_version") != "new_source_window_v2"
+                for state in old_states):
+            raise PatchAgentLoopError("PATCH_AGENT_LOOP_BUDGET_INVALID", stage="loop_admission",
+                reason="A resumed request must retain its original read-accounting version.")
+        if consumed_model_turns < prior_model_floor or consumed_tool_rounds < prior_read_floor:
             raise PatchAgentLoopError("PATCH_AGENT_LOOP_BUDGET_INVALID", stage="loop_admission",
                 reason="Resume counters cannot discard calls or inspections recorded in the prior request.")
     base_request = _without_loop_states(base_request)
@@ -822,7 +929,24 @@ def run_patch_agent_loop(
         kwargs["model_turns_used"] -= consumed_model_turns
         kwargs["tool_rounds_used"] -= consumed_tool_rounds
         kwargs["total_observation_bytes"] -= consumed_observation_bytes
-        return replace(_loop_result(**kwargs), tool_availability_trace=tuple(deepcopy(tool_availability_trace)))
+        progress = []
+        for usage in usage_by_turn:
+            turn = usage["turn_index"]
+            calls = [item for item in tool_call_trace if item["turn_index"] == turn and item.get("dispatch_started")]
+            observations_in_turn = [item for item in observation_trace if item["turn_index"] == turn]
+            new_count = sum(item.get("read_cost", 1) for item in calls)
+            progress.append({"turn_index": turn, **response_actions.get(turn, {}),
+                "dispatched_binding_reads": len(calls), "new_source_windows": new_count if reuse_covered else None,
+                "reused_source_observations": sum(item.get("read_cost") == 0 for item in calls),
+                "read_cost": new_count, "no_new_source_information": new_count == 0 if reuse_covered else None,
+                "observation_bytes_added": sum(item.get("encoded_payload_bytes", item["model_payload_bytes"])
+                    for item in observations_in_turn) + sum(item.get("feedback_payload_bytes", 0)
+                    for item in tool_call_trace if item["turn_index"] == turn)})
+        return replace(_loop_result(**kwargs), tool_availability_trace=tuple(deepcopy(tool_availability_trace)),
+            read_accounting_version="new_source_window_v2" if reuse_covered else "binding_dispatch_v1",
+            dispatched_binding_reads=sum(bool(item.get("dispatch_started")) for item in tool_call_trace),
+            reused_source_observations=sum(item.get("read_cost") == 0 for item in tool_call_trace),
+            turn_progress_trace=tuple(progress))
     pending_response: AgentTurnResponse | None = None
     pending_observation: PatchSourceObservation | None = None
     pending_tool_results: tuple[AgentToolResult, ...] = ()
@@ -857,12 +981,16 @@ def run_patch_agent_loop(
         remaining_binding_ids = tuple(
             binding_id
             for binding_id in source_inspector.available_read_binding_ids
-            if binding_id not in inspected_binding_ids
+            if reuse_covered or binding_id not in inspected_binding_ids
         )
+        if reuse_covered and tool_rounds_used >= allowed_read_end:
+            # Exhausted new-window allowance still permits references to visible source.
+            remaining_binding_ids = tuple(binding_id for binding_id in remaining_binding_ids
+                if _plan_source_reads(source_inspector, [binding_id], full_excerpts, observation_sequence)[0][2] == 0)
         must_finish = (
             force_final
             or turn_index >= allowed_model_end
-            or tool_rounds_used >= allowed_read_end
+            or (tool_rounds_used >= allowed_read_end and not reuse_covered)
             or total_observation_bytes >= allowed_observation_end
             or (
                 selected_policy.finalize_after_first_observation
@@ -995,6 +1123,8 @@ def run_patch_agent_loop(
         if response.tool_calls:
             availability["selection"] = "selected" if request.tools else "forbidden_attempt"
         usage_by_turn.append(_usage_record(turn_index, response))
+        response_actions[turn_index] = {"submitted_patch": bool(response.content and not response.tool_calls),
+            "requested_source_reads": sum(call.name == PATCH_SOURCE_INSPECTION_TOOL_NAME for call in response.tool_calls)}
         pending_response = None
         pending_observation = None
         pending_tool_results = ()
@@ -1022,7 +1152,7 @@ def run_patch_agent_loop(
                     turn_index,
                 ),
             )
-        if selected_policy.deduplicate_source_excerpts:
+        if encode_excerpts:
             delivered_ids = {result.output.get("observation_id") for result in request.tool_results
                 if isinstance(result.output, Mapping)}
             delivered_ids.update(result.output.get("observation_id")
@@ -1033,10 +1163,12 @@ def run_patch_agent_loop(
                     entry["admitted_to_model"] = True
                     entry.setdefault("consumed_in_model_turn", turn_index)
 
-        if len(response.tool_calls) > 1:
+        if len(response.tool_calls) > 1 or (reuse_covered and len(response.tool_calls) == 1
+                and response.tool_calls[0].name == PATCH_SOURCE_INSPECTION_TOOL_NAME):
             calls = response.tool_calls
             code, reason = _validate_read_batch(calls, source_inspector,
-                inspected_binding_ids=inspected_binding_ids, seen_tool_call_ids=seen_tool_call_ids)
+                inspected_binding_ids=inspected_binding_ids, seen_tool_call_ids=seen_tool_call_ids,
+                reusable_call_bindings=seen_call_bindings if reuse_covered else None)
             if code is None and not any(tool.name == PATCH_SOURCE_INSPECTION_TOOL_NAME for tool in request.tools):
                 code, reason = "PATCH_AGENT_TOOL_FORBIDDEN", "Source inspection is disabled for this turn."
             if code is not None:
@@ -1049,7 +1181,37 @@ def run_patch_agent_loop(
                     tool_call_trace=tool_call_trace, observation_trace=observation_trace,
                     termination=_termination(code, reason, turn_index))
             remaining_reads = allowed_read_end - tool_rounds_used
-            if len(calls) > remaining_reads:
+            planned_reads = None
+            if reuse_covered:
+                try:
+                    planned_reads = _plan_source_reads(source_inspector,
+                        [call.arguments["binding_id"] for call in calls], full_excerpts, observation_sequence)
+                except PatchAgentLoopError as exc:
+                    for call in calls:
+                        tool_call_trace.append(_tool_trace(call, turn_index=turn_index,
+                            status="rejected_not_executed", code=exc.code, dispatch_started=False))
+                    return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                        model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                        total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                        tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                        termination=_termination(exc.code, exc.reason, turn_index))
+            requested_cost = sum(row[2] for row in planned_reads) if planned_reads is not None else len(calls)
+            if reuse_covered:
+                repeat_identity = _canonical_sha256(sorted(call.arguments["binding_id"] for call in calls))
+                invalid_repeat = any(call.arguments["binding_id"] in inspected_binding_ids and row[2] != 0
+                    for call, row in zip(calls, planned_reads))
+                if invalid_repeat or (requested_cost == 0 and repeat_identity == last_reused_only_batch):
+                    reason = ("Previously inspected content is not eligible for complete visible-source reuse."
+                        if invalid_repeat else "The same reference-only request repeated without any intervening new source observation.")
+                    for call in calls:
+                        tool_call_trace.append(_tool_trace(call, turn_index=turn_index,
+                            status="rejected_not_executed", code="PATCH_AGENT_REPEATED_TOOL_CALL", dispatch_started=False))
+                    return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                        model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                        total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                        tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                        termination=_termination("PATCH_AGENT_REPEATED_TOOL_CALL", reason, turn_index))
+            if requested_cost > remaining_reads:
                 code = "PATCH_AGENT_TOOL_BATCH_BUDGET_EXCEEDED"
                 batch_identity = _canonical_sha256(sorted(call.arguments["binding_id"] for call in calls))
                 if rejected_read_batches:
@@ -1068,10 +1230,13 @@ def run_patch_agent_loop(
                 results = tuple(AgentToolResult(call_id=call.call_id, name=call.name, output={
                     "status": "not_executed", "error_code": code, "reason": "budget_exceeded",
                     "binding_id": call.arguments["binding_id"], "requested_read_count": len(calls),
+                    **({"requested_new_source_windows": requested_cost, "reused_source_observations": len(calls) - requested_cost,
+                        "read_accounting_version": "new_source_window_v2"} if reuse_covered else {}),
                     "remaining_read_count": remaining_reads,
                     "total_remaining_read_count": selected_policy.max_tool_rounds - tool_rounds_used,
                     "reserved_read_count": reserve_tool_reads,
-                    "required_action": "Select no more than the remaining read count, or finish from existing context.",
+                    "required_action": ("Select a batch whose new source windows fit the remaining read count; visible-source references cost zero."
+                        if reuse_covered else "Select no more than the remaining read count, or finish from existing context."),
                     "source_snapshot_sha256": source_inspector.source_snapshot_sha256,
                 }) for call in calls)
                 for call, result in zip(calls, results):
@@ -1096,17 +1261,27 @@ def run_patch_agent_loop(
                 continue
             batch_results: list[AgentToolResult] = []
             for index, call in enumerate(calls):
-                tool_rounds_used += 1
+                read_cost = planned_reads[index][2] if planned_reads is not None else 1
+                tool_rounds_used += read_cost
+                observation_sequence += 1
                 seen_tool_call_ids.add(call.call_id)
+                seen_call_bindings[call.call_id] = call.arguments["binding_id"]
                 try:
-                    observation = source_inspector.inspect(binding_id=call.arguments["binding_id"],
-                        observation_id=f"patch-observation-{tool_rounds_used:03d}")
-                    encoded = (_encode_source_excerpt(observation, full_excerpts)
-                        if selected_policy.deduplicate_source_excerpts else observation.model_view())
+                    if planned_reads is not None:
+                        source_inspector.validate_snapshot()
+                        observation, encoded, _ = planned_reads[index]
+                        if "excerpt_ref" not in encoded and (key := _local_excerpt_key(encoded)) is not None:
+                            full_excerpts.setdefault(key, encoded)
+                    else:
+                        observation = source_inspector.inspect(binding_id=call.arguments["binding_id"],
+                            observation_id=f"patch-observation-{tool_rounds_used:03d}")
+                        encoded = (_encode_source_excerpt(observation, full_excerpts)
+                            if encode_excerpts else observation.model_view())
                     total_observation_bytes += len(_canonical_json(encoded).encode("utf-8"))
                     admitted = total_observation_bytes <= allowed_observation_end
                     observation_trace.append(_observation_trace(observation, turn_index=turn_index, admitted_to_model=admitted,
-                        **({"encoded_payload": encoded} if selected_policy.deduplicate_source_excerpts else {})))
+                        **({"encoded_payload": encoded} if encode_excerpts else {}),
+                        **({"read_cost": read_cost} if reuse_covered else {})))
                     if not admitted:
                         raise PatchAgentLoopError("PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED", stage="tool_execution",
                             reason="The cumulative source-observation byte budget was exhausted.")
@@ -1114,6 +1289,9 @@ def run_patch_agent_loop(
                     availability["selection"] = "execution_failed"
                     tool_call_trace.append(_tool_trace(call, turn_index=turn_index, status="rejected",
                         code=exc.code, dispatch_started=True))
+                    if reuse_covered:
+                        tool_call_trace[-1].update(read_cost=read_cost,
+                            observation_origin="prior_visible_source_reuse" if read_cost == 0 else "current_source_read")
                     for remaining_call in calls[index + 1:]:
                         tool_call_trace.append(_tool_trace(remaining_call, turn_index=turn_index,
                             status="rejected_not_executed", code=exc.code, dispatch_started=False))
@@ -1126,6 +1304,13 @@ def run_patch_agent_loop(
                 observations.append(observation)
                 batch_results.append(AgentToolResult(call_id=call.call_id, name=call.name, output=encoded))
                 tool_call_trace.append(_tool_trace(call, turn_index=turn_index, status="accepted", dispatch_started=True))
+                if reuse_covered:
+                    tool_call_trace[-1].update(read_cost=read_cost,
+                        observation_origin="prior_visible_source_reuse" if read_cost == 0 else "current_source_read",
+                        observation_id=observation.observation_id,
+                        **({"excerpt_ref": deepcopy(encoded["excerpt_ref"])} if "excerpt_ref" in encoded else {}))
+            if reuse_covered:
+                last_reused_only_batch = repeat_identity if requested_cost == 0 else None
             pending_response, pending_tool_results = response, tuple(batch_results)
             base_request = _without_loop_states(request)
             continue
@@ -1374,7 +1559,8 @@ def run_patch_agent_loop(
 
 
 def _validate_read_batch(calls: tuple[AgentToolCall, ...], inspector: PlanBoundSourceInspector,
-    *, inspected_binding_ids: set[str], seen_tool_call_ids: set[str]) -> tuple[str | None, str]:
+    *, inspected_binding_ids: set[str], seen_tool_call_ids: set[str],
+    reusable_call_bindings: Mapping[str, str] | None = None) -> tuple[str | None, str]:
     if any(call.name == PATCH_UPSTREAM_REQUEST_TOOL_NAME for call in calls):
         return "PATCH_AGENT_MIXED_TOOL_BATCH_FORBIDDEN", "Upstream requests must be separate from source reads."
     if any(call.name != PATCH_SOURCE_INSPECTION_TOOL_NAME for call in calls):
@@ -1384,13 +1570,14 @@ def _validate_read_batch(calls: tuple[AgentToolCall, ...], inspector: PlanBoundS
     for call in calls:
         if type(call.call_id) is not str or not call.call_id:
             return "PATCH_AGENT_TOOL_CALL_ID_INVALID", "A provider tool call id is missing."
-        if call.call_id in call_ids or call.call_id in seen_tool_call_ids:
+        if call.call_id in call_ids or (call.call_id in seen_tool_call_ids
+                and (reusable_call_bindings is None or reusable_call_bindings.get(call.call_id) != call.arguments.get("binding_id"))):
             return "PATCH_AGENT_TOOL_CALL_ID_REUSED", "The provider reused a tool call id."
         if (set(call.arguments) != {"binding_id"} or type(call.arguments.get("binding_id")) is not str
             or not call.arguments["binding_id"]):
             return "PATCH_AGENT_TOOL_ARGUMENTS_INVALID", "Each source read requires exactly one binding_id."
         binding_id = call.arguments["binding_id"]
-        if binding_id in selected or binding_id in inspected_binding_ids:
+        if binding_id in selected or (binding_id in inspected_binding_ids and reusable_call_bindings is None):
             return "PATCH_AGENT_REPEATED_TOOL_CALL", "The same Plan binding cannot be inspected twice."
         if binding_id not in inspector.available_read_binding_ids:
             return "PATCH_AGENT_BINDING_UNKNOWN", "A batch binding is outside the admitted read scope."
@@ -1411,12 +1598,19 @@ def _source_tool_definition(
             "Read a bounded current-source excerpt for one exact ImplementationPlan "
             "read binding. Reading supporting source does not grant edit permission. "
             "Registered API bindings return the complete saved Evidence excerpt, not a new live API inspection. "
-            "When batched reads are enabled, calls execute sequentially and each consumes one read budget unit. "
+            + ("Calls execute sequentially. Only a newly supplied complete source window consumes one read budget unit; "
+                "a reference to an already visible complete window costs zero reads, but still consumes observation bytes. "
+                if inspector.policy.reuse_covered_source_observations else
+                "When batched reads are enabled, calls execute sequentially and each consumes one read budget unit. ")
+            +
             "Select only a listed binding_id; paths are not accepted."
+            + (" A source_excerpt_span on excerpt_ref means the full requested excerpt_span is contained in that preceding "
+                "source body. Use its line numbers; the entire requested window remains available and is never clipped. "
+                if inspector.policy.reuse_covered_source_observations else "")
             + (" A returned excerpt_ref means the identical complete excerpt already appears in the named "
                "preceding observation (including an earlier item in the same result batch). Read that excerpt "
                "using the current binding's own target_span; no source text has been shortened."
-               if inspector.policy.deduplicate_source_excerpts else "")
+               if inspector.policy.deduplicate_source_excerpts or inspector.policy.reuse_covered_source_observations else "")
         ),
         parameters={
             "type": "object",
@@ -1456,8 +1650,10 @@ def _loop_state_message(
             "source_snapshot_sha256": source_inspector.source_snapshot_sha256,
             "read_source_snapshot_sha256": source_inspector.read_source_snapshot_sha256,
             "read_execution": {"allow_batched_reads": policy.allow_batched_reads,
-                "execution": "sequential", "count_unit": "one_dispatched_binding_read",
-                "batch_must_fit_remaining_reads": True},
+                "execution": "sequential", "count_unit": "one_new_complete_source_window" if policy.reuse_covered_source_observations else "one_dispatched_binding_read",
+                "batch_must_fit_remaining_reads": True,
+                **({"accounting_version": "new_source_window_v2", "visible_source_reference_read_cost": 0}
+                    if policy.reuse_covered_source_observations else {})},
             "prior_observations": [
                 observation.model_view() if isinstance(observation, PatchSourceObservation) else deepcopy(dict(observation))
                 for observation in prior_observations
@@ -1604,6 +1800,7 @@ def _observation_trace(
     turn_index: int,
     admitted_to_model: bool,
     encoded_payload: Mapping[str, Any] | None = None,
+    read_cost: int | None = None,
 ) -> dict[str, object]:
     return {
         "turn_index": turn_index,
@@ -1613,6 +1810,8 @@ def _observation_trace(
         "source_hash": observation.source_hash,
         "source_snapshot_sha256": observation.source_snapshot_sha256,
         "observation_sha256": observation.payload_sha256,
+        **({"read_cost": read_cost, "observation_origin": "prior_visible_source_reuse" if read_cost == 0 else "current_source_read"}
+            if read_cost is not None else {}),
         "model_payload_bytes": observation.model_payload_bytes,
         "admitted_to_model": admitted_to_model if encoded_payload is None else False,
         **({"encoded_payload_sha256": _canonical_sha256(encoded_payload),

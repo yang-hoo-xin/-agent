@@ -143,7 +143,7 @@ def _public_case(tmp_path, *, preparation=None, selected_policy=None):
                            factory=factory, marker=marker, reports=reports)
 
 
-def _five_binding_repair_case(tmp_path):
+def _five_binding_repair_case(tmp_path, *, source_files=None):
     """Build genuine synthetic Evidence/Plan revisions before retaining a failed parent."""
     workspace = tmp_path / "workspace"
     source = workspace / "generated_mods" / "SyntheticMod"
@@ -153,14 +153,19 @@ def _five_binding_repair_case(tmp_path):
     # It is fixture source, and is never a patch answer or a real Mod implementation.
     shared_context = "// SHARED_SYNTHETIC_CONTEXT " + "state-observation " * 425 + "\n"
     behavior = source / "Behavior.cs"
-    behavior.write_text("public sealed class Behavior\n{\n" + shared_context + "".join(
-        f"    public void {symbol}()\n    {{\n        KeepExistingFeedback();\n    }}\n"
-        for symbol in symbols) + "}\n", encoding="utf-8")
-    (source / "Configuration.cs").write_text(
-        'public sealed class Configuration\n{\n    public const string ConfigKey = "Marker.Enabled";\n}\n',
-        encoding="utf-8")
-    (source / "Preservation.cs").write_text(
-        "public sealed class Preservation\n{\n    public void PreserveFeedback() { }\n}\n", encoding="utf-8")
+    if source_files is None:
+        source_files = {
+            "Behavior.cs": "public sealed class Behavior\n{\n" + shared_context + "".join(
+                f"    public void {symbol}()\n    {{\n        KeepExistingFeedback();\n    }}\n"
+                for symbol in symbols) + "}\n",
+            "Configuration.cs": 'public sealed class Configuration\n{\n    public const string ConfigKey = "Marker.Enabled";\n}\n',
+            "Preservation.cs": "public sealed class Preservation\n{\n    public void PreserveFeedback() { }\n}\n",
+        }
+        duplicate_full_windows = True
+    else:
+        duplicate_full_windows = False
+    for name, text in source_files.items():
+        (source / name).write_text(text, encoding="utf-8")
     feature = _feature_payload()
     feature["target_behavior"] = "Update the five marker methods: " + ", ".join(symbols) + "."
     projection = _projection()
@@ -204,8 +209,9 @@ def _five_binding_repair_case(tmp_path):
     assert len(inspector.available_read_binding_ids) >= 6
     windows = [inspector.inspect(binding_id=binding, observation_id=f"fixture-check-{number}").excerpt
                for number, binding in enumerate(inspector.available_binding_ids)]
-    assert all(window == windows[0] for window in windows)
-    assert sum(len(window.encode()) for window in windows) > 32768
+    if duplicate_full_windows:
+        assert all(window == windows[0] for window in windows)
+        assert sum(len(window.encode()) for window in windows) > 32768
     parent_adapter, _ = _local_patch_adapter(inputs)
     parent = run_fresh_patch_continuation(
         request, patch_change_factory=parent_adapter,

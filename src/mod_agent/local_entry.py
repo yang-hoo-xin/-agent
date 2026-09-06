@@ -83,6 +83,7 @@ from src.mod_agent.proposal import (
 from src.mod_agent.proposal.patch_agent_loop import (
     PatchAgentLoopPolicy,
     PlanBoundSourceInspector,
+    estimate_patch_source_reads,
     run_patch_agent_loop,
 )
 from src.mod_agent.product_execution import (
@@ -581,6 +582,9 @@ def _patch_agent_loop_generation_ref(
         "status": value.get("status"),
         "model_turns_used": value.get("model_turns_used"),
         "tool_rounds_used": value.get("tool_rounds_used"),
+        **({key: value[key] for key in (
+            "read_accounting_version", "dispatched_binding_reads", "reused_source_observations",
+        ) if key in value}),
         "observation_refs": [
             {
                 "observation_id": item.get("observation_id"),
@@ -1551,11 +1555,11 @@ class LocalOllamaInitialPatchAdapter:
         prior_loop = factory.get("patch_agent_loop") or {}
         selected_policy = asdict(self.patch_agent_loop_policy)
         prior_policy = prior_loop.get("policy")
-        if (isinstance(prior_policy, Mapping)
-                and "deduplicate_source_excerpts" not in prior_policy
-                and selected_policy["deduplicate_source_excerpts"] is False):
-            # Absent in legacy receipts means the old full-text encoding only.
-            selected_policy.pop("deduplicate_source_excerpts")
+        if isinstance(prior_policy, Mapping):
+            for optional_flag in ("deduplicate_source_excerpts", "reuse_covered_source_observations"):
+                if optional_flag not in prior_policy and selected_policy.get(optional_flag) is False:
+                    # A missing legacy flag keeps the original execution semantics.
+                    selected_policy.pop(optional_flag)
         if (factory.get("profile") != self.profile.to_dict()
                 or prior_policy != selected_policy
                 or prior_loop.get("tool_rounds_used") != 0 or document.get("proposal_admitted") is not False):
@@ -1690,7 +1694,10 @@ class LocalOllamaInitialPatchAdapter:
             raise LocalEntryError("PATCH_VERIFICATION_IDENTITY_INVALID")
         return identity
 
-    def _failure_capacity(self, inspector: PlanBoundSourceInspector, feedback: Mapping[str, Any]) -> dict[str, Any]:
+    def _failure_capacity(
+        self, inspector: PlanBoundSourceInspector, feedback: Mapping[str, Any],
+        prior_request: AgentTurnRequest | None = None,
+    ) -> dict[str, Any]:
         used_reads, used_bytes = self._recovery_observation_usage()
         policy = self.patch_agent_loop_policy
         remaining_models = policy.max_total_model_turns - self._receipt["model_call_count"]
@@ -1699,8 +1706,33 @@ class LocalOllamaInitialPatchAdapter:
         remaining_bytes = policy.max_observation_bytes - used_bytes - self._recovery_observation_bytes - feedback_bytes
         loop = self._receipt["patch_agent_loop"]
         phases = [loop, *(value["execution"] for name in ("validator_correction", "behavior_correction")
-                         if isinstance(value := loop.get(name), dict) and isinstance(value.get("execution"), dict))]
+                          if isinstance(value := loop.get(name), dict) and isinstance(value.get("execution"), dict))]
         used_ids = {item["binding_id"] for phase in phases for item in phase.get("observation_trace", [])}
+        if policy.reuse_covered_source_observations:
+            # Evaluate each alternative against the actual request, not against
+            # hypothetical observations from another unselected alternative.
+            estimates = [estimate_patch_source_reads(
+                source_inspector=inspector, prior_request=prior_request, binding_ids=(binding,),
+            )[0] for binding in inspector.available_read_binding_ids] if prior_request is not None else []
+            affordable = [row for row in estimates if row["read_cost"] <= remaining_reads
+                          and row["encoded_payload_bytes"] <= remaining_bytes]
+            reads_allowed = not (policy.finalize_after_first_observation and used_reads >= 1)
+            capacity = reads_allowed and remaining_models >= 2
+            return {
+                "remaining_model_turns": remaining_models, "remaining_binding_reads": remaining_reads,
+                "feedback_utf8_bytes": feedback_bytes,
+                "remaining_observation_bytes_after_feedback": remaining_bytes,
+                "read_phase_allowed_by_policy": reads_allowed,
+                "read_accounting_version": "new_source_window_v2",
+                "capacity_scope": "worker_budget_not_provider_context_admission",
+                "can_read_consume_and_revise": capacity and bool(affordable),
+                "can_read_new_source_consume_and_revise": capacity and any(row["read_cost"] == 1 for row in affordable),
+                "affordable_unread_binding_ids": [row["binding_id"] for row in affordable if row["binding_id"] not in used_ids],
+                "affordable_binding_ids": [row["binding_id"] for row in affordable],
+                "source_read_cost_estimates": estimates,
+                "cost_estimation_is_tool_execution": False,
+                "direct_revision_available": remaining_models >= 1 and remaining_bytes >= 0,
+            }
         readable = [binding for binding in inspector.available_read_binding_ids if binding not in used_ids
                     and inspector.inspect(binding_id=binding, observation_id=f"patch-observation-{policy.max_tool_rounds:03d}").model_payload_bytes <= remaining_bytes]
         reads_allowed = not (policy.finalize_after_first_observation and used_reads >= 1)
@@ -1725,8 +1757,18 @@ class LocalOllamaInitialPatchAdapter:
         self._recovery_observation_bytes += feedback_bytes
         before_calls = self._receipt["model_call_count"]
         prior = deepcopy(generation_request)
+        revision_messages = self._revision_messages(
+            previous_response, feedback, message_type=message_type,
+            visible_messages=prior.messages if self.patch_agent_loop_policy.reuse_covered_source_observations else (),
+        )
+        correction_state["context_encoding"] = {
+            "version": "patch_recovery_visible_response_v1",
+            "exact_visible_response_reused": len(revision_messages) == 1,
+            "previous_response_sha256": hashlib.sha256(previous_response.encode("utf-8")).hexdigest(),
+            "new_failure_feedback_preserved": True,
+        }
         resumed = replace(prior, messages=(
-            *prior.messages, *self._revision_messages(previous_response, feedback, message_type=message_type),
+            *prior.messages, *revision_messages,
         ))
         execution = run_patch_agent_loop(
             client=agent_client, initial_messages=resumed.messages,
@@ -1797,14 +1839,26 @@ class LocalOllamaInitialPatchAdapter:
         }
 
     @staticmethod
-    def _revision_messages(previous_response: str, feedback: Mapping[str, Any], *, message_type: str) -> tuple[AgentMessage, ...]:
+    def _revision_messages(
+        previous_response: str, feedback: Mapping[str, Any], *, message_type: str,
+        visible_messages: tuple[AgentMessage, ...] = (),
+    ) -> tuple[AgentMessage, ...]:
         """Expose actual C1 and executable F1 while retaining B0 as the output baseline."""
+        reuse_visible = any(message.role == "assistant" and message.content == previous_response
+                            for message in visible_messages)
+        prefix = () if reuse_visible else (AgentMessage(role="assistant", content=previous_response),)
         return (
-            AgentMessage(role="assistant", content=previous_response),
+            *prefix,
             AgentMessage(role="user", content={
                 "message_type": message_type,
                 "revision_semantics": "complete_replacement_relative_to_B0",
                 "validator_feedback": deepcopy(dict(feedback)),
+                **({"previous_response_ref": {
+                    "kind": "earlier_visible_assistant_patch",
+                    "content_sha256": hashlib.sha256(previous_response.encode("utf-8")).hexdigest(),
+                    "utf8_bytes": len(previous_response.encode("utf-8")),
+                    "exact_text_equal_to_current_checked_response": True,
+                }} if reuse_visible else {}),
                 "required_action": (
                     ("The materialized code is exactly the same as the known failed version on the same B0. "
                      "The current verifier still reports failure for this code. Changing only explanation text "
@@ -1813,7 +1867,10 @@ class LocalOllamaInitialPatchAdapter:
                      if (feedback.get("code_revision") or {}).get("same_materialized_code") else "")
                     +
                     "B0 is the unchanged original source in the initial context and source tools. "
-                    "C1 is the complete preceding assistant Patch, whose actual code was checked. "
+                    + ("C1 is the earlier complete assistant Patch identified by previous_response_ref. "
+                       "Its exact text equals the response just checked; the full code remains visible once. "
+                       if reuse_visible else "C1 is the complete preceding assistant Patch, whose actual code was checked. ")
+                    +
                     "F1 below contains the measured input, expected and observed results for C1. "
                     "Diagnostic owner labels and explanations are hypotheses unless supported by observations. "
                     "Investigate using permitted read tools when useful, then return C2 as one complete "
@@ -1839,6 +1896,7 @@ class LocalOllamaInitialPatchAdapter:
             prior = self._known_failed_code
             comparable = prior is not None and prior["baseline_sha256"] == code_identity["baseline_sha256"] and prior["files"] == code_identity["files"]
             code_revision = {
+                "model_turn_index": self._receipt["model_call_count"],
                 "comparison_basis": "same_B0_materializer_whole_file_bytes",
                 "comparable_to_known_failed": comparable,
                 "same_materialized_code": comparable and prior["code_sha256"] == code_identity["code_sha256"],
@@ -2027,7 +2085,7 @@ class LocalOllamaInitialPatchAdapter:
         }
         loop = self._receipt["patch_agent_loop"]
         if self.enable_recovery_loop:
-            loop["recovery_capacity_at_failure"] = self._failure_capacity(inspector, feedback)
+            loop["recovery_capacity_at_failure"] = self._failure_capacity(inspector, feedback, generation_request)
             self._emit("local_patch_failure_recovery_capacity_checked")
         feedback_bytes = len(_patch_agent_context_json(feedback).encode("utf-8"))
         _, source_bytes = self._recovery_observation_usage()
