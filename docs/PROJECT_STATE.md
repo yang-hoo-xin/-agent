@@ -7,11 +7,20 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
-Platform implementation: `54dff43`; automatic Repair binding: `6d38184`; public CLI: `cdbd4ae`.
+Platform implementation: Patch reuse `54dff43`; Graph return `aa4e00f`/`b792c41`;
+qualified routing `7b82698`; Planning source labels `2e746c7`; current API projection `75f4d49`.
 Branch: `codex/rag-capability-mainline`.
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 
-- Latest real result: 009 completed the corrected public-entry acceptance with
+- Latest window: A4 Graph return and optional A7 qualified profile selection are
+  implemented and tested. Real Planning002/003/004 produced new Plans, but semantic
+  quality remains unaccepted; 004 fixed file/ID mapping, not editing necessity.
+  Local 27B trial010 timed out after its first useful tool response, before code.
+  P0 c760 remains selected, no corrected Patch passed the original matrix, and no
+  Apply/Build/Runtime occurred. No real qualified model profile was published.
+  Langfuse export returned not_configured; service/project setup is absent from
+  configured inputs. Full records and boundaries are in reconciliation 0.14–0.15.
+- Previous real result: 009 completed the corrected public-entry acceptance with
   five real Qwen calls, eleven tool dispatches (three new windows, eight reuses),
   post-failure feedback, correction and two matrices at 33/36. Both code outputs
   stayed identical to the failed version. No auditor/budget rejection or new

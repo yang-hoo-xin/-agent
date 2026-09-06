@@ -6,12 +6,15 @@
 
 ## 0. 最新状态快照
 
-**更新时间：2026-09-06；最新生产代码：`54dff43`。本节为当前读入口，旧章节保留当时事实。**
+**更新时间：2026-09-06；Patch覆盖复用：`54dff43`；Graph回流：`aa4e00f`／`b792c41`；资格路由：`7b82698`。本节为当前读入口，旧章节保留当时事实。**
 
 **最新009：修正验收器后，5次真实模型调用和修订/重验完整执行，但两份代码仍相同、两次33/36。**
 源代码覆盖复用和可见C1引用都在实际请求中成立，未出现008的误拒绝；总11次工具执行为3新窗口＋8复用。
 失败后模型只重读已见001/005，未选择新源码；原三项First Shot失败未消除。
-当前明确转入一次独立本地27B对照准备，并在隔离工作树推进A4上游回流与A7资格路由，不能把这些准备写成能力通过。
+独立27B对照010已执行：首轮工具选择有效，第二请求600秒超时，没有代码/矩阵；不能判为语义修复失败。
+A4上游回流与A7资格路由均已整合；真实Planning002生成六目标但语义needs_evidence，003反馈后仅选Config三目标、仍错误声称覆盖Loader/Spread。
+004内联路径后文件/ID说明正确，恢复同002六目标，但两处新增编辑必要性仍未证明；新Plan均未用于Patch。
+当前没有通过原行为矩阵的新Mod修订；新Plan、源码工具往返和平台检查不替代这个结果。
 具体009事实见第0.13节；不把本次结果推广为任意模型或跨任务结论。
 
 **008历史结果：源码覆盖复用已真实生效，但验收脚本在第四请求发送前误拒绝，真实修订当时未完成。**
@@ -96,6 +99,10 @@ Qwen在工具预算反馈后由请求5处改选2处；修正执行ID记账后，
 | 已提交 `af36b5d` | 可选完全相同全文引用；真实编码字节计费；恢复历史还原核验；旧False编码回放兼容；查询编码/展开身份 | 239项受影响检查通过；公开CLI合成5读→失败→第6读→修订→Review/Dry-run通过；真实结果见0.9 |
 | 已提交 `6d38184` | 产品确定性绑定源attempt与独立复验；当前未admitted C1与正式祖先分开；现有worker消费当前失败代码；公开CLI与查询接线 | 164项受影响检查及34项查询通过；007真实反馈/修订/重验完成，但代码未改善 |
 | 已提交 `54dff43` | 完整可见源码窗口覆盖复用；新窗口/复用/工具请求独立计数与恢复；Graph/查询适配；相同可见C1全文复用 | 348项checkpoint通过，最后表示改动69项相关回归通过（含2新增，不相加）；真实008遇验收脚本表示误判，未完成修订 |
+| 已提交 `75f4d49` | 工程认知按CLI→Fresh→Evidence回调实际源码接线显示可选API增强；不再误报仅RgLive | 48项查询/投影回归通过；仍不证明自主API语义或真实运行 |
+| 已提交 `aa4e00f`／`b792c41` | 同Graph消费明确human/worker上游请求，回Repair→Evidence/全集Coverage或ModelPlanning→新Plan；独立invocation ID | 隔离282通过＋1换行fixture定点复验通过，主仓交叉44通过，run_id补充后19通过；CLI provider装配与新F1自动重绑未完成 |
+| 已提交 `7b82698`／`596dae5` | 既有公开Patch CLI可选qualified角色路由；真实执行/完整固定矩阵/原物化代码/当前worker指纹决定资格；CLI与API缓存重验 | 离线Repair正例与拒绝路径通过；主仓联合176通过，1旧schema测试补排除空新字段后定点通过。没有发布真实qualified profile |
+| 已提交 `2e746c7` | Planning可编辑选项内联其已有完整source_path并校验共享表一致，保持原ID/源码/范围/选择自由 | 32项相关检查通过；仅表示改进，不能凭测试称模型语义质量改善 |
 | 本轮生产代码WIP | 无；以上生产变更均已提交 | 文档状态不能代替Actual成功 |
 | 文档整理 | 本文顶部快照、历史标签、统一Attempt索引、剩余矩阵及短控制文档同步 | 不增加产品能力；文档提交单独记录 |
 | 用户原有WIP | ARCHITECTURE_OVERVIEW、ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT、SPEC_COVERAGE_MATRIX，以及3份未跟踪草案 | 六份文件hash与本轮开始完全一致；不混入本轮提交 |
@@ -132,6 +139,7 @@ Fresh/A3/A8支线另见第11.4、12.4、12.5节，不混进下列P0调用总数�
 | 自动绑定轮：public_cli_repair_007 | 固定`6d38184`；短验证目录r7 | 4 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_007/actual/result.json)；5读→旧代码→33/36→请求5个supporting被预算拒绝→直接返回旧代码→33/36，停止 |
 | 覆盖复用轮：public_cli_repair_008 | 固定`54dff43`；短验证目录r8 | 3 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_008/actual/result.json)；9工具＝3新窗口＋6复用→旧代码→33/36→第四请求被旧auditor误拒绝，未发送；非模型修订失败 |
 | 验收器修正版：public_cli_repair_009 | 生产`54dff43`，冻结HEAD`62a996b`，修正auditor；r9 | 5 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_009/actual/result.json)；11工具＝3新＋8复用，完整修订/两次矩阵均33/36，代码相同 |
+| 独立27B对照：public_cli_repair_010 | 生产`54dff43`，冻结HEAD`2c5f5d6`；r10 | 2发送/1返回 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_010/actual/result.json)；不同模型首轮自主选4support，3新＋1复用；第二请求600秒超时，无代码/矩阵 |
 
 001–004窗口新请求为0+1+2+2=5；004收据中的4是2回放+2新响应，不能重复累计。
 后续独立005另有2次新调用；两个已结束窗口合计7次新调用，不包含2份历史响应回放。
@@ -139,6 +147,7 @@ Fresh/A3/A8支线另见第11.4、12.4、12.5节，不混进下列P0调用总数�
 007新增4次，001–007合计13次真实调用；各轮preview与2份历史回放均不加入这个数。
 008新增3次，001–008合计16次真实调用。008客户端计数4包含一次发送前被auditor拒绝，物理发送仍为3。
 009新增5次，001–009合计21次真实调用，0新增回放；009无发送前误拒绝。
+010新增2次真实发送、仅1次完整返回；001–010合计23次模型POST，不代表23个成功完成的响应。
 001收据中的requested计数也不能冒充HTTP发送，其外层实发计数为0。
 
 ### 0.3 最新剩余能力矩阵
@@ -156,8 +165,8 @@ Fresh/A3/A8支线另见第11.4、12.4、12.5节，不混进下列P0调用总数�
 | 停止与来源 | 失败未流入新Proposal/Apply；同B0实际代码比较、无变化反馈和显式确定性结果复用已测试 | 原矩阵仍决定行为结果；旧报告缺完整验证身份则不复用；不宣称通用恢复 |
 | 可查询执行索引 | 单Store薄投影显示v2新增/复用计数、每轮观察进展、代码比较轮次与来源；008查询已生成 | 旧attempt缺失保持unknown；查询不等于真实发送证明，未接通全部旧Trace/Eval/Langfuse |
 | 接续与预算 | 精确原JSON值、类型及文本校验；2原响应回放不新发网；全工作5次新调用 | 仅限定0已执行读的工具选择前缀；不是任意节点或副作用的自动恢复 |
-| 上游请求／Replan | 请求Evidence/Planning可表达并有界停止；unknown可调查 | 自动补证据→完整Coverage→自主Planning→新Patch尚未完整接通 |
-| 自主Planning／模型资格 | 保留A3真实选择与独立needs_evidence结论 | c760仍人辅；固定多任务质量与正式role→model路由未交付 |
+| 上游请求／Replan | A4在原Graph中消费明确human/worker请求，旧＋新Evidence全集重算→ModelPlanning→新Plan已离线通过；无需Codex抄worker selection | 当前自动入口支持绑定的原C1/F1；新行为F1未重绑则拒绝。CLI provider装配、自动新Patch/Build/Runtime仍未交付 |
+| 自主Planning／模型资格 | A4真实模型生成新Plan与preflight；公开Patch入口已有可选证据资格路由及离线Repair正例 | 新Plan语义未通过；c760仍人辅P0基线；真实3任务资格集/合格模型条目未发布，initial角色正向资格未验收 |
 | Apply／Build／Runtime | 保留原控制合同，Mod源码未变 | 本次全部未执行；隔离C# Harness不是实际游戏运行 |
 | 七组完整十日目标 | 本轮推进执行与一类恢复；其它已有底座继续复用 | 自主Evidence/API语义消费、固定Eval、真实Langfuse、hosted CI、Release等未由本轮完成 |
 
@@ -613,6 +622,82 @@ Qwen3-Coder digest、5模型/6新窗口/32768观察字节和原矩阵保持。�
 证据：[009实际记录](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_009/actual/summary.json)、
 [第五实际请求](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_009/actual/request-005.body.json)、
 [查询](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_009/actual/execution-query.json)。
+
+### 0.14 两小时窗口：独立模型对照、Graph回流、资格路由和查询修正
+
+010只更换独立目标模型为本地`qwen3.6:27b`，digest `a50eda8ed977ab48a12431878896b27ffd5cef552c17af3317d9623b939a7f1e`。
+与009首轮请求相比只有顶层model字段不同，原006+r6/Feature/Evidence/c760/预算/矩阵保持。
+首轮真实选择ResetStoredCrosshair、SetStoredCrosshair、RefreshCrosshairSize与GetCrosshairSize支持位置，
+3个新窗口＋1次覆盖复用进入第二请求，显示不同模型行动可由同一工具合同处理。
+第二请求57650字节已发送，但600秒后超时；2次POST/1次完整响应、没有代码或矩阵。
+CLI总783.36秒，终态`PATCH_AGENT_PROVIDER_TURN_FAILED`；不能称27B修复失败或成功，也没有扩大超时重试。
+[010实际结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_010/actual/summary.json)。
+
+**A4实现**：aa4e00f在既有Graph中消费明确human finding，或共享worker对已绑定原C1/F1发出的合法上游请求；
+conditional回同RepairPlan→Evidence/Coverage或ModelPlanning→新Plan并END。普通Patch错误不自动升级Evidence。
+旧有效＋新Evidence全集重新Findings；不复制旧模型收据冒充Fresh，不给operator targets兜底。
+模型请求绑定当前失败版本，避免同Plan sibling错绑；旧Plan用户澄清继承，selector反馈在finally恢复避免串任务。
+新行为验证产生F1后尚未重绑时明确拒绝，不声称所有回流阶段都已自动接通。
+现有CLI尚未装配该入口的Evidence/Planning providers；实际自动链的公开面为原Graph API，没有新增CLI、Graph或Artifact类型。
+b792c41补可选既有run_id，区分preview/actual执行，request_id仍标同一逻辑请求。
+
+验证：隔离checkpoint283项为282通过＋1个冻结fixture的CRLF差异失败，Git原blob字节下定点复验通过；
+主仓整合后44项交叉验证通过36.93秒，run_id补充后19项通过27.04秒。
+
+**A7实现**：7b82698给原`continue-fresh-patch`增加可选`--qualified-model-routing`；
+角色由本次initial/repair上下文决定，显式参数冲突拒绝。没有资格配置时，原显式模型路径不增加资格门。
+资格必须来自至少3个不同Feature任务，绑定固定expected_check_ids、模型digest/profile/worker指纹、验证环境和输入身份。
+最后worker实际响应→完整raw→原native generator与materializer→最终matrix/Proposal/Review/Dry-run相互核对；
+仅有qualified标签、成功schema、Review通过或自报检查数都不够。CLI及直接API缓存返回前重验下层资格事实。
+所有新显式试验记录worker指纹，历史缺失保持pending；无自动fallback或新写入/披露权限。
+完整正例为离线Repair角色，不声称initial正向资格或真实模型资格已通过，也没有发布真实qualified profile。
+主仓A4/A7联合177项为176通过，唯一旧asdict schema测试漏排除新的空routing字段；596dae5只修测试期望，定点通过1.65秒。
+详见[资格路由使用说明](../MODEL_QUALIFIED_ROUTING.md)，不是第二任务队列。
+
+**工具与外部依赖**：75f4d49修正工程认知的Fresh/API误报，按CLI→Fresh→Evidence实际回调源码显示可选增强，
+仍明确source wiring不等于自主查证或API语义验证；48项查询/投影测试通过14.40秒。
+A6实际调用现有单向exporter返回not_configured，没有序列化/enqueue/flush；没有已配置endpoint/项目凭据/具体sink适配，
+本地服务本身是否存在未全面核验。SDK未在当前Python安装，未安装/部署/读取额外秘密或发送网络。
+[A6记录](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/a6_langfuse_readiness_20260906.json)。
+
+### 0.15 真实A4 Planning：结构事实与语义裁决分开
+
+首次001真实Graph零网络预览body45866＋4096输出=49962>49152，未发送。
+Planning角色只输出目标选择JSON，002将其输出预算改为2048，Patch预算不变、不删原材料；47914准入通过。
+002固定7b82698，经原Graph create_repair_plan→create_implementation_plan实际发送1次Qwen3-Coder请求，
+产生Plan `9f0f4ed3e96e3f324f90e8ba90a736eb3d20e4956a9693a711a9c2ce558d0c0c`，新Patch input preflight通过。
+旧c760/source不变、Evidence未重算、Patch/Apply/Build/Runtime均0。
+模型选择6目标，但rationale错误声称selected包含Loader；实际只有Configuration与SpreadPatches编辑范围。
+独立语义review判needs_evidence：四个共享owner有支撑，constructor/Get(float)必要性说明不足；
+不因目标数量多而否决，不因OnFileChanged退supporting就把它视为重启验收缺陷。First Shot绝对准确尺寸澄清确实保留。
+[002结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/a4_planning_actual_002/actual/summary.json)、
+[002语义review](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/a4_planning_actual_002/semantic-review.json)。
+
+003在同原输入上添加已核验的短语义finding，未给正确目标列表或代码，实际1次Planning调用后生成
+Plan `3075cde29024372e3ef7c9a1c95241688ad5543a283655fc510804da39e13bb3`，结构及preflight通过。
+但只选择Config的BindAll/header/constructor，却继续声称覆盖Config/Loader/Spread三文件；未用于Patch。
+实际输入9个合法可选ID仍含Override和Update，source_identity_table映射及源码正文正确，不能归为程序禁止选择Spread。
+[003结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/a4_planning_actual_003/actual/summary.json)。
+
+针对可能的共享表查阅负担，2e746c7仅给可编辑项内联原有完整source_path，仍保留共享表/原ID/源码/全部约束，
+并拒绝内联值与表冲突；32项相关检查通过26.79秒。该表示改进不自行证明模型语义更好，最后一次004对照单独记录。
+
+004保持003全部finding和预算，仅表示改变；真Graph preview46908＋2048=48956<49152。
+实际1次模型调用，形成Plan `029834a7bf92fd4ab5cc976bb93c4114cebed8a4feb6614844c61f25e3e5f7e8`并通过Patch preflight。
+模型现在逐个正确说明6个ID对应的Configuration/Spread方法，Loader错配消失；所选集合与002完全相同。
+这只证明本次文件/ID对应改善，constructor/Get(float)仍只有功能角色描述，缺必须编辑的需求/失败因果依据，
+所以语义review仍needs_evidence，不继续Patch、不替换c760，也不追加模型尝试。
+[004结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/a4_planning_actual_004/actual/summary.json)、
+[004语义复核](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/a4_planning_actual_004/semantic-review.json)。
+
+19:22开始的两小时窗口内，真实模型POST为009的5次＋010的2次＋Planning002/003/004各1次＝10次，
+完整响应9次（010第二次超时）。所有preview、离线fixtures和模型身份GET均不混入此数。
+窗口未形成通过原矩阵的新Patch，没有Mod Apply、changed Build、Runtime或发布。
+
+为后续合法新Plan准备的实例化case factory仅在scratch：通过manifest核验exact Plan、原B0和完整bindings，
+历史owner按物理身份映射为相关位置，新输出失败默认unknown，不冒充原根因；旧adapter/wrapper与原Harness源码均未改。
+002未获语义通过，因此仅用于零模型构造和3个负向身份检查，未执行Patch或矩阵。
+[实例化准备](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/replan_support/preparation_result.json)。
 
 ## 1. 结论与范围
 

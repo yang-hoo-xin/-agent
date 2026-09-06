@@ -41,7 +41,17 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
-The current platform implementation checkpoint is `54dff43`. Independent 009
+Current implementation: Patch reuse `54dff43`, Graph upstream return `aa4e00f`/
+`b792c41`, optional qualified-model routing `7b82698`, Planning path display `2e746c7`.
+A4 human/model Graph return is tested through a new Plan, with explicit current
+C1/F1 binding; CLI Evidence/Planning provider assembly and post-revalidation F1
+rebinding remain incomplete. A7 has offline Repair-role acceptance, but no real
+qualified model profile or fixed real three-task suite has been published.
+Planning002/003/004 each used one real model call and produced structurally valid
+Plans. 004 corrected file/ID descriptions, but target-edit necessity remains
+needs_evidence. None replaces P0 c760 or proceeds to Patch. Local 27B trial010
+timed out before producing code; it is not a semantic repair result. See 0.14–0.15.
+Independent 009
 used the corrected acceptance auditor and completed five real Qwen calls,
 post-failure tool responses, correction and both original matrices. Both code
 outputs stayed unchanged at 33/36; no budget or auditor rejection occurred.

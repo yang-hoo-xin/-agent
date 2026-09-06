@@ -24,7 +24,17 @@ execution instruction. The [short execution card](PATCH_ACCEPTANCE_SPRINT_CARD_2
 records the selected exact inputs and single Patch-attempt owner. User messages,
 not either document, authorize actions; new exact diffs still require new approval.
 
-Current execution selection: retain completed 009 (five real calls, correction,
+Current follow-up boundary: the two-hour window delivered A4 Graph upstream return,
+optional A7 evidence-qualified routing and current Fresh/API query projection.
+P0 remains unresolved: 009 completed but stayed 33/36; 010 produced no code before
+timeout. Planning002/003/004 are independent results; 004 fixed source/ID descriptions
+but still lacks justification for two edits. Keep c760 selected; no unreviewed Plan
+enters Patch. Do not keep retrying this model with larger budgets or task-specific
+rules. Next full capability work is real model/profile qualification on a fixed,
+diverse task suite and the remaining public upstream-provider/current-F1 assembly;
+service configuration is needed before real Langfuse delivery. See 0.14–0.15.
+
+Previous execution selection: retain completed 009 (five real calls, correction,
 two 33/36 matrices, unchanged code, no auditor/budget blocker) and prepare one
 independent local 27B qualification comparison under the same P0 inputs. Do not
 keep adding case-specific rules to force the 30B model to succeed. In parallel,
