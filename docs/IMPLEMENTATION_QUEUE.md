@@ -24,7 +24,17 @@ execution instruction. The [short execution card](PATCH_ACCEPTANCE_SPRINT_CARD_2
 records the selected exact inputs and single Patch-attempt owner. User messages,
 not either document, authorize actions; new exact diffs still require new approval.
 
-Current checkpoint: `6d38184`. Automatic binding of explicit source attempt plus
+Current checkpoint: `54dff43`. Covered-source reuse, versioned read accounting,
+Graph admission and query projection are implemented and tested through the public
+CLI. Real 008 used three new source windows plus six reuses, but unchanged code
+still failed three First Shot checks. Its fourth request was stopped before model
+sending by the acceptance auditor's obsolete adjacent-C1 assumption, although the
+full C1 and exact new F1 remained visible. Preserve 008; close the auditor defect
+offline before preparing another fixed public-entry acceptance. Do not reimplement
+the source codec, add budgets, switch models or auto-resume the closed run.
+This is not an additional model-qualification failure. See reconciliation 0.12.
+
+Previous checkpoint: `6d38184`. Automatic binding of explicit source attempt plus
 separate verification is implemented in the existing public Repair entry.
 007 completed real feedback, correction and revalidation at 33/36 twice; the code
 did not change. Five supporting reads were requested but rejected against the

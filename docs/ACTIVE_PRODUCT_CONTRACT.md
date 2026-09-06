@@ -41,7 +41,16 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
-The current platform implementation checkpoint is `6d38184`. The public CLI can
+The current platform implementation checkpoint is `54dff43`. Covered visible
+source windows are reused with separate new-window, reuse and dispatch accounting
+in the same worker; Graph admission, recovery and the read-only index agree.
+008 made three real model calls and nine tool dispatches (three new windows,
+six reuses). Its unchanged code stayed 33/36. A fourth client invocation reached
+transport but was not sent: the acceptance auditor assumed C1 immediately
+preceded F1 and rejected a valid earlier-visible C1 reference. This is an auditor
+representation failure, not a completed model correction. The fixed run is closed;
+no new Proposal/Review/Dry-run/Apply/Build/Runtime resulted. Details: reconciliation 0.12.
+Previous checkpoint `6d38184`: the public CLI can
 now bind an explicit source attempt and separate verification result through
 product-owned code, keeping the current failed output separate from its formal
 ancestor. Fixed 007 made four real Qwen calls and completed both behavior matrices

@@ -7,11 +7,19 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
-Platform implementation: `6d38184`; exact excerpt encoding: `af36b5d`; public CLI: `cdbd4ae`.
+Platform implementation: `54dff43`; automatic Repair binding: `6d38184`; public CLI: `cdbd4ae`.
 Branch: `codex/rag-capability-mainline`.
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 
-- Latest real result: 007 used product-owned automatic binding of 006 and r6,
+- Latest real result: 008 exercised visible source coverage reuse in the shared
+  worker: three real model calls, nine tool dispatches, three new windows and six
+  reuses. One unchanged code output ran the original matrix at 33/36. The fourth
+  client invocation was rejected before sending by the acceptance auditor's
+  obsolete assumption that C1 immediately precedes F1. Complete C1, new F1 and
+  original obligations remain in the saved request; actual correction did not
+  occur. Source and the frozen executor stayed unchanged. No further live attempt
+  or new Proposal/Review/Dry-run/Apply/Build/Runtime. See reconciliation 0.12.
+- Previous real result: 007 used product-owned automatic binding of 006 and r6,
   then executed four real model calls, feedback, correction and two complete
   matrices. Both stayed 33/36 and both code outputs stayed unchanged. The model
   requested five new supporting reads after failure, exceeding remaining read
