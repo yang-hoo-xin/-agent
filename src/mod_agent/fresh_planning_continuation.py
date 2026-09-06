@@ -131,6 +131,7 @@ class PatchContinuationInputV1:
     worker_profile_sha256: str | None = None
     repair_source_attempt_ref: Mapping[str, str] | None = None
     repair_verification_ref: Mapping[str, str] | None = None
+    qualified_model_routing_ref: Mapping[str, str] | None = None
 
     def __post_init__(self) -> None:
         if self.contract_version != PATCH_CONTINUATION_CONTRACT_VERSION:
@@ -208,6 +209,13 @@ class PatchContinuationInputV1:
         ):
             raise PatchContinuationError("PATCH_CONTINUATION_ATTEMPT_ID_INVALID", "request", "Attempt identity must be non-empty text of at most 200 characters.")
         _validate_worker_configuration_identity(self.worker_configuration_ref, self.worker_profile_sha256)
+        if self.qualified_model_routing_ref is not None:
+            ref = self.qualified_model_routing_ref
+            if (not isinstance(ref, Mapping) or set(ref) != {"path", "sha256"}
+                    or not isinstance(ref.get("path"), str) or not Path(ref["path"]).is_absolute()
+                    or not _is_sha256(ref.get("sha256"))):
+                raise PatchContinuationError("PATCH_MODEL_ROUTING_REF_INVALID", "request", "Exact model routing reference required.")
+            object.__setattr__(self, "qualified_model_routing_ref", dict(ref))
         if self.worker_configuration_ref is not None:
             # Detach the caller's mutable mapping while preserving its exact values.
             object.__setattr__(self, "worker_configuration_ref", dict(self.worker_configuration_ref))
@@ -1198,6 +1206,8 @@ def preflight_patch_continuation(
 
     _validate_worker_configuration_identity(request.worker_configuration_ref,
         request.worker_profile_sha256, verify_bytes=True)
+    if request.qualified_model_routing_ref is not None:
+        _read_hashed_repair_file(request.qualified_model_routing_ref)
     try:
         artifact_root, workspace_root = _resolve_roots(request)  # type: ignore[arg-type]
     except PlanningContinuationError as exc:
@@ -1266,6 +1276,23 @@ def preflight_patch_continuation(
             "artifact_admission",
             "Selected FeatureSpec and EvidencePack semantic identities differ.",
         )
+    if request.qualified_model_routing_ref is not None:
+        from .model_qualification import ModelQualificationError, resolve_qualified_patch_profile
+        from .patch_worker_configuration import PatchWorkerConfiguration
+
+        if request.worker_configuration_ref is None:
+            raise PatchContinuationError("MODEL_QUALIFICATION_PENDING", "model_qualification", "Qualified routing requires a worker configuration.")
+        config = PatchWorkerConfiguration.load(request.worker_configuration_ref["path"])
+        try:
+            selected = resolve_qualified_patch_profile(
+                routing_path=request.qualified_model_routing_ref["path"],
+                role="repair" if request.repair_parent_proposal_ref is not None else "initial_patch",
+                target_mod=feature_spec.get("target_mod"), worker_policy=config.policy,
+            )
+        except ModelQualificationError as exc:
+            raise PatchContinuationError(exc.code, "model_qualification", str(exc)) from exc
+        if selected.routing_ref != request.qualified_model_routing_ref or _canonical_sha256(selected.profile.to_dict()) != request.worker_profile_sha256:
+            raise PatchContinuationError("MODEL_QUALIFIED_PROFILE_ARGUMENT_CONFLICT", "model_qualification", "Qualified routing identity differs from the requested profile.")
     _validate_selected_plan(
         implementation_plan,
         evidence_pack,
@@ -1506,13 +1533,14 @@ def bind_patch_repair_verification(
     try:
         base = replace(request, repair_parent_proposal_ref=None, repair_parent_review_ref=None,
             repair_failure_report_ref=None, repair_parent_response_ref=None, repair_parent_attempt_ref=None,
-            repair_source_attempt_ref=None, repair_verification_ref=None)
+            repair_source_attempt_ref=None, repair_verification_ref=None, qualified_model_routing_ref=None)
         admitted = preflight_patch_continuation(base)
         source = _repair_json(source_attempt_ref)
         verification = _repair_json(verification_result_ref)
         selected = replace(base, **_formal_repair_selection(source, source_attempt_ref),
             repair_failure_report_ref=dict(verification["behavior_report"]["report_ref"]),
-            repair_source_attempt_ref=dict(source_attempt_ref), repair_verification_ref=dict(verification_result_ref))
+            repair_source_attempt_ref=dict(source_attempt_ref), repair_verification_ref=dict(verification_result_ref),
+            qualified_model_routing_ref=request.qualified_model_routing_ref)
         context = _admit_patch_repair_context(request=selected, store=admitted.artifact_store,
             feature_spec=admitted.feature_spec, evidence_pack=admitted.evidence_pack,
             implementation_plan=admitted.implementation_plan, workspace_root=Path(request.workspace_root).resolve(),
@@ -1750,6 +1778,8 @@ class PatchContinuationAttemptJournal:
         if request.worker_configuration_ref is not None:
             self._document["worker_configuration_ref"] = dict(request.worker_configuration_ref)
             self._document["worker_profile_sha256"] = request.worker_profile_sha256
+        if request.qualified_model_routing_ref is not None:
+            self._document["qualified_model_routing_ref"] = dict(request.qualified_model_routing_ref)
         if admitted.repair_context is not None:
             self._document["repair_context"] = {
                 key: value for key, value in admitted.repair_context.items()
@@ -2624,6 +2654,8 @@ def _proposal_source_snippet_char_limit(admitted: _AdmittedPatchInputs) -> int:
 
 def _patch_attempt_identity(request: PatchContinuationInputV1, max_model_calls: int) -> str:
     identity_request = asdict(request)
+    if request.qualified_model_routing_ref is None:
+        identity_request.pop("qualified_model_routing_ref")
     if request.worker_configuration_ref is None and request.worker_profile_sha256 is None:
         # Existing attempts predate this optional input; keep their exact identity.
         identity_request.pop("worker_configuration_ref")

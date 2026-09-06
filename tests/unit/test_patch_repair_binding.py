@@ -197,7 +197,7 @@ def test_preflight_rechecks_bound_source_files_instead_of_trusting_preparation(t
 def test_unbound_attempt_identity_keeps_pre_binding_schema(tmp_path):
     case = _binding_case(tmp_path)
     payload = asdict(case["request"])
-    for key in ("worker_configuration_ref", "worker_profile_sha256", "repair_source_attempt_ref", "repair_verification_ref"):
+    for key in ("worker_configuration_ref", "worker_profile_sha256", "repair_source_attempt_ref", "repair_verification_ref", "qualified_model_routing_ref"):
         payload.pop(key)
     expected = hashlib.sha256(_bytes({"request": payload, "max_model_calls": 5})).hexdigest()
     assert _patch_attempt_identity(case["request"], 5) == expected

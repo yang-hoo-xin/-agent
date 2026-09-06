@@ -65,6 +65,7 @@ from .local_entry import (
     resume_stagger_edit_authority_review,
     run_local_request,
 )
+from .model_qualification import ModelQualificationError, resolve_qualified_patch_profile
 from .patch_worker_configuration import PatchWorkerConfiguration, read_json_object
 from .planning import ModPlanningBriefBuilder, RequestPlanner
 from .preflight_preparation import (
@@ -794,23 +795,24 @@ def build_parser(
     )
     patch_continuation_parser.add_argument(
         "--ollama-base-url",
-        default="http://127.0.0.1:11434",
+        default=None,
     )
-    patch_continuation_parser.add_argument("--ollama-model", required=True)
+    patch_continuation_parser.add_argument("--ollama-model")
+    patch_continuation_parser.add_argument(
+        "--qualified-model-routing", help="Optional exact local role-profile selection from bound task qualification evidence.",
+    )
     patch_continuation_parser.add_argument(
         "--ollama-context-window",
         type=int,
-        required=True,
     )
     patch_continuation_parser.add_argument(
         "--ollama-output-budget",
         type=int,
-        default=4096,
+        default=None,
     )
     patch_continuation_parser.add_argument(
         "--ollama-timeout-seconds",
         type=float,
-        required=True,
     )
     patch_continuation_parser.add_argument(
         "--patch-agent-loop",
@@ -1692,14 +1694,35 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "PATCH_WORKER_CONFIGURATION_REQUIRED", "request",
                     "A named CLI attempt requires an explicit worker configuration.",
                 )
-            profile = LocalOllamaInitialPatchProfileV1(
-                profile_version=LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
-                base_url=args.ollama_base_url,
-                model=args.ollama_model,
-                context_window=args.ollama_context_window,
-                output_budget=args.ollama_output_budget,
-                timeout_seconds=args.ollama_timeout_seconds,
-            )
+            qualified_selection = None
+            if args.qualified_model_routing:
+                if worker_config is None:
+                    raise ModelQualificationError("MODEL_QUALIFICATION_PENDING", "Qualified routing requires explicit worker configuration.", status="pending")
+                selected_feature = ArtifactStore(args.artifact_root).read(ArtifactRef(
+                    feature_id=args.feature_id, artifact_type="feature_spec",
+                    path=args.feature_spec_path, artifact_hash=args.feature_spec_hash,
+                ))
+                qualified_selection = resolve_qualified_patch_profile(
+                    routing_path=args.qualified_model_routing,
+                    role="repair" if repair_inputs or recovery_selection is not None else "initial_patch",
+                    target_mod=selected_feature["data"].get("target_mod"), worker_policy=worker_config.policy,
+                )
+                profile = qualified_selection.profile
+                explicit_values = {
+                    "base_url": args.ollama_base_url, "model": args.ollama_model,
+                    "context_window": args.ollama_context_window, "output_budget": args.ollama_output_budget,
+                    "timeout_seconds": args.ollama_timeout_seconds,
+                }
+                if any(value is not None and value != getattr(profile, name) for name, value in explicit_values.items()):
+                    raise ModelQualificationError("MODEL_QUALIFIED_PROFILE_ARGUMENT_CONFLICT", "Explicit model arguments disagree with the qualified role profile.")
+            else:
+                profile = LocalOllamaInitialPatchProfileV1(
+                    profile_version=LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
+                    base_url=args.ollama_base_url if args.ollama_base_url is not None else "http://127.0.0.1:11434",
+                    model=args.ollama_model, context_window=args.ollama_context_window,
+                    output_budget=args.ollama_output_budget if args.ollama_output_budget is not None else 4096,
+                    timeout_seconds=args.ollama_timeout_seconds,
+                )
             request = PatchContinuationInputV1(
                 contract_version=PATCH_CONTINUATION_CONTRACT_VERSION,
                 artifact_store_root=args.artifact_root,
@@ -1726,6 +1749,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 attempt_id=args.attempt_id,
                 worker_configuration_ref=worker_config.reference if worker_config else None,
                 worker_profile_sha256=_canonical_sha256(profile.to_dict()) if worker_config else None,
+                qualified_model_routing_ref=qualified_selection.routing_ref if qualified_selection else None,
             )
             if recovery_selection is not None:
                 request = bind_patch_repair_verification(request=request, **recovery_selection)
@@ -1737,6 +1761,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "behavior_evaluator": worker_config.behavior_evaluator(),
                 "enable_recovery_loop": worker_config.enable_recovery_loop,
             } if worker_config else {}
+            if qualified_selection is not None:
+                configured_worker["qualified_profile_selection"] = qualified_selection
             store = ArtifactStore(args.artifact_root)
             result = run_fresh_patch_continuation(
                 request,

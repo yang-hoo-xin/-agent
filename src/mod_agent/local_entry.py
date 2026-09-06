@@ -922,6 +922,7 @@ class LocalOllamaInitialPatchAdapter:
         enable_recovery_loop: bool = False,
         replay_attempt_ref: Mapping[str, str] | None = None,
         replay_request_refs: tuple[Mapping[str, str], ...] = (),
+        qualified_profile_selection: Any = None,
     ) -> None:
         if patch_agent_loop_policy is not None and workspace_root is None:
             raise LocalEntryError("LOCAL_PATCH_AGENT_WORKSPACE_REQUIRED")
@@ -930,6 +931,7 @@ class LocalOllamaInitialPatchAdapter:
         ):
             raise LocalEntryError("PATCH_BEHAVIOR_EVALUATOR_REQUIRES_AGENT_LOOP")
         self.profile = profile
+        self.qualified_profile_selection = qualified_profile_selection
         self.artifact_store = artifact_store
         self.workspace_root = workspace_root
         self.patch_agent_loop_policy = patch_agent_loop_policy
@@ -1053,6 +1055,11 @@ class LocalOllamaInitialPatchAdapter:
             )
         started = time.perf_counter()
         try:
+            from .model_qualification import patch_execution_qualification_identity
+
+            self._receipt["qualification_execution_identity"] = patch_execution_qualification_identity(
+                self.patch_agent_loop_policy)
+            self._emit("local_patch_execution_identity_recorded")
             prepare_evaluator = getattr(self.behavior_evaluator, "prepare_for_patch_attempt", None)
             if callable(prepare_evaluator):
                 prepare_evaluator()
@@ -1066,6 +1073,10 @@ class LocalOllamaInitialPatchAdapter:
                 expected_base_url=self.profile.base_url,
                 expected_model=self.profile.model,
             )
+            if self.qualified_profile_selection is not None:
+                self.qualified_profile_selection.validate_live_identity(identity)
+                self._receipt["model_qualification"] = deepcopy(self.qualified_profile_selection.receipt)
+                self._emit("local_patch_qualified_profile_admitted")
             model_context_limit = _validate_ollama_context_window(
                 identity,
                 requested_context_window=self.profile.context_window,
