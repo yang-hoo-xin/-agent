@@ -150,11 +150,7 @@ def _turns(factory: Mapping[str, Any], refs: _References) -> list[dict[str, Any]
         origin = turn.get("response_origin")
         row["response_origin"] = origin if origin in (
             "live_provider_response", "verified_prior_response") else "unknown"
-        row["send_observation"] = (
-            "live_response_retained" if origin == "live_provider_response" else
-            "replayed_response_no_new_send" if origin == "verified_prior_response" else
-            "requested_send_unconfirmed"
-        )
+        row["response_origin_basis"] = "journal_declaration"
         row["tools_available"] = _strings(turn.get("tools_available"))
         row["usage"] = _fields(_object(turn.get("usage")), "input_tokens", "output_tokens",
                                "total_tokens", "cached_input_tokens", "reasoning_tokens")
@@ -170,6 +166,17 @@ def _turns(factory: Mapping[str, Any], refs: _References) -> list[dict[str, Any]
         row["response_ref"] = response
         if "original_response_ref" in turn:
             row["original_response_ref"] = refs.check(turn["original_response_ref"])[0]
+        verified_response = response["integrity"] == "verified_bytes"
+        verified_original = _object(row.get("original_response_ref")).get("integrity") == "verified_bytes"
+        row["send_observation"] = "requested_send_unconfirmed"
+        if origin in ("live_provider_response", "verified_prior_response"):
+            row["send_observation"] = "unknown_response_evidence_unavailable"
+            if turn.get("status") == "responded" and verified_response:
+                if origin == "live_provider_response":
+                    row["send_observation"] = "journal_claim_live_response_with_verified_ref"
+                elif verified_original:
+                    row["send_observation"] = "journal_claim_replay_with_verified_response_refs"
+        row["send_observation_basis"] = "journal_claim_with_reference_checks_not_independent_send_proof"
         row["requested_tools"] = [{
             **_fields(call, "call_id", "name"),
             **_fields(_object(call.get("arguments")), "binding_id"),
@@ -280,6 +287,21 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
     selected = _object(journal.get("selected_artifacts"))
     terminal = _object(journal.get("terminal_result"))
     upstream = {name: refs.check(ref)[0] for name, ref in sorted(selected.items())}
+    current_artifacts = {
+        name: {"source_field": f"artifacts.{name}", "ref": refs.check(ref)[0]}
+        for name, ref in sorted(_object(journal.get("artifacts")).items())
+    }
+    terminal_artifacts = {}
+    for field in ("patch_proposal_artifact", "proposal_review_artifact", "dry_run_artifact"):
+        value = terminal.get(field)
+        terminal_artifacts[field] = {
+            "source_field": f"terminal_result.{field}",
+            "observation": (
+                "not_recorded" if field not in terminal else
+                "recorded_null" if value is None else "reference_recorded"
+            ),
+            "ref": None if value is None else refs.check(value)[0],
+        }
     parents = {name: refs.check(repair[name])[0] for name in (
         "parent_attempt_ref", "parent_proposal", "parent_review", "parent_response_ref",
         "failure_report_ref",
@@ -315,7 +337,9 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
                   "current_snapshot_sha256", "proposal_admitted"),
         "journal_ref": {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest()},
         "journal_identity_checks": _journal_checks(journal),
-        "journal_observation": "terminal_record_retained" if terminal else "intermediate_no_terminal_record",
+        "journal_observation": (
+            "terminal_record_retained" if terminal else "terminal_result_cache_not_recorded"
+        ),
         "recorded_phases": [_fields(event, "event_index", "phase")
                             for event in _rows(journal.get("events"))],
         "worker_state": {
@@ -334,6 +358,8 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
         "reference_integrity_counts": dict(sorted(integrity.items())),
         "source_currentness": "not_rechecked_by_index",
         "selected_upstreams": upstream,
+        "current_artifacts": current_artifacts,
+        "terminal_artifacts": terminal_artifacts,
         "parents": parents,
         "revision_semantics": _fields(_object(factory.get("repair_context")), "revision_semantics"),
         "worker_turns": turns,
@@ -348,6 +374,7 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
             **_fields(journal, "max_model_calls", "model_call_count"),
             **_fields(factory, "live_response_count", "replayed_model_turns"),
             "observed_turn_origins": dict(Counter(row["response_origin"] for row in turns)),
+            "turn_origin_count_basis": "journal_declarations_not_independent_send_audit",
         },
         "eval_observation": {
             "reported_results": dict(Counter(row.get("status", "unknown") for row in evaluations)),

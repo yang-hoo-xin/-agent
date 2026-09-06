@@ -9,9 +9,18 @@ import pytest
 
 from scripts.engineering_cognition import EngineeringCognitionError, build_projection, main
 from src.mod_agent.artifacts.store import ArtifactStore
-from src.mod_agent.fresh_planning_continuation import _canonical_sha256
+from src.mod_agent.fresh_planning_continuation import (
+    _canonical_sha256,
+    run_fresh_patch_continuation,
+)
+from src.mod_agent.local_entry import make_exact_no_write_dry_run_factory
 from src.observability.patch_execution_index import project_patch_executions
-from tests.unit.test_fresh_planning_continuation import _feature_payload
+from tests.unit.test_fresh_planning_continuation import (
+    _feature_payload,
+    _inputs,
+    _local_patch_adapter,
+    _patch_request,
+)
 
 
 def _retain(path, value):
@@ -95,11 +104,87 @@ def test_replay_and_pending_turns_do_not_become_new_sends(tmp_path):
     journal["factory_receipt"]["worker_turns"].append({"turn_index": 2, "status": "requested"})
     _retain(path, journal)
     row = project_patch_executions(root)["attempts"][0]
-    assert row["journal_observation"] == "intermediate_no_terminal_record"
-    assert row["worker_turns"][0]["send_observation"] == "replayed_response_no_new_send"
+    assert row["journal_observation"] == "terminal_result_cache_not_recorded"
+    assert row["worker_turns"][0]["send_observation"] == "journal_claim_replay_with_verified_response_refs"
     assert row["worker_turns"][1]["send_observation"] == "requested_send_unconfirmed"
     assert row["worker_turns"][1]["response_ref"]["integrity"] == "unverifiable_reference"
     assert row["integrity"] == "references_need_attention"
+
+
+@pytest.mark.parametrize("origin,reference,damage", [
+    ("live_provider_response", "response_ref", "missing"),
+    ("live_provider_response", "response_ref", "corrupt"),
+    ("verified_prior_response", "response_ref", "missing"),
+    ("verified_prior_response", "response_ref", "corrupt"),
+    ("verified_prior_response", "original_response_ref", "missing"),
+    ("verified_prior_response", "original_response_ref", "corrupt"),
+])
+def test_origin_claim_does_not_override_missing_or_damaged_response(tmp_path, origin, reference, damage):
+    root, path, journal, _ = _fixture(tmp_path)
+    turn = journal["factory_receipt"]["worker_turns"][0]
+    turn["response_origin"] = origin
+    response_path = Path(turn["response_ref"]["path"])
+    if origin == "verified_prior_response":
+        turn["original_response_ref"] = _retain(
+            root / "cr" / "original.response.worker.json", json.loads(response_path.read_text()),
+        )
+    _retain(path, journal)
+    target = Path(turn[reference]["path"])
+    if damage == "missing":
+        target.unlink()
+    else:
+        target.write_text('{"corrupt":true}')
+    row = project_patch_executions(root)["attempts"][0]["worker_turns"][0]
+    assert row["response_origin"] == origin
+    assert row["response_origin_basis"] == "journal_declaration"
+    assert row["send_observation"] == "unknown_response_evidence_unavailable"
+    assert row[reference]["integrity"] == ("missing" if damage == "missing" else "hash_mismatch")
+    assert row["send_observation_basis"] == "journal_claim_with_reference_checks_not_independent_send_proof"
+
+
+def test_successful_current_artifact_refs_are_queried_without_parent_substitution(tmp_path):
+    inputs = _inputs(tmp_path)
+    request = _patch_request(inputs)
+    adapter, _ = _local_patch_adapter(inputs)  # Existing deterministic unit provider, no network.
+    result = run_fresh_patch_continuation(
+        request, patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace),
+    )
+    assert result.status == "terminal"
+    journal_path = Path(result.attempt_receipt["path"])
+    journal = json.loads(journal_path.read_text())
+    expected = {
+        "patch_proposal": "patch_proposal_artifact",
+        "proposal_review": "proposal_review_artifact",
+        "dry_run_result": "dry_run_artifact",
+    }
+    row = project_patch_executions(inputs.store.root, attempt_locator=str(journal_path))["attempts"][0]
+    for kind, terminal_field in expected.items():
+        assert row["current_artifacts"][kind]["source_field"] == f"artifacts.{kind}"
+        assert row["current_artifacts"][kind]["ref"]["integrity"] == "verified_artifact"
+        observed = row["terminal_artifacts"][terminal_field]
+        assert observed["source_field"] == f"terminal_result.{terminal_field}"
+        assert observed["ref"]["artifact_hash"] == journal["artifacts"][kind]["artifact_hash"]
+    journal["repair_context"] = {"parent_proposal": journal["artifacts"]["patch_proposal"]}
+    journal["artifacts"] = {}
+    for field in expected.values():
+        journal["terminal_result"][field] = None
+    _retain(journal_path, journal)
+    failed = project_patch_executions(inputs.store.root, attempt_locator=str(journal_path))["attempts"][0]
+    assert failed["current_artifacts"] == {}
+    assert failed["parents"]["parent_proposal"]["integrity"] == "verified_artifact"
+    assert all(value["observation"] == "recorded_null" and value["ref"] is None
+               for value in failed["terminal_artifacts"].values())
+
+
+def test_historical_completed_journal_without_terminal_cache_is_not_called_intermediate(tmp_path):
+    root, path, journal, _ = _fixture(tmp_path, terminal=False)
+    journal["status"] = "stopped_before_exact_diff_approval"
+    _retain(path, journal)
+    row = project_patch_executions(root)["attempts"][0]
+    assert row["status"] == "stopped_before_exact_diff_approval"
+    assert row["journal_observation"] == "terminal_result_cache_not_recorded"
+    assert all(item["observation"] == "not_recorded" for item in row["terminal_artifacts"].values())
 
 
 def test_replay_request_reference_and_wire_hash_are_distinct_from_semantic_request_hash(tmp_path):
