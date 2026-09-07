@@ -7,6 +7,18 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
+Parallel implementation is now explicitly active: Langfuse metadata transport,
+API evidence visibility, a fixed real-source Eval suite, and the DSH interface
+adapter. DSH is limited to UI, interaction sessions and plugin hosting; product
+state and authority stay in the existing backend. These are work-in-progress
+tracks, not completed Langfuse, Eval or deployment claims.
+
+Latest tool-semantics pass is complete: the shared worker sees owner-specific
+execution effects, supplied by the Graph's actual configuration. Registered refs
+remain eligible for either reading or justified reassessment. Offline contract
+tests passed; no real run was added, so 013 remains the latest model evidence.
+See reconciliation 0.19; this is not proof of better repair decisions.
+
 2026-09-07: public upstream continuation, current C2/F2 binding and new-Plan
 worker/Review/Dry-run composition passed offline acceptance. Shared budgets,
 unchanged verification requirements and separate per-segment records are retained.

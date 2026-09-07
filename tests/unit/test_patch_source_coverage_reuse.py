@@ -164,8 +164,14 @@ def test_new_failure_segment_can_recheck_the_same_reference_without_resetting_bu
     state = next(message.content for message in client.requests[-1].messages
                  if isinstance(message.content, dict)
                  and message.content.get("message_type") == "patch_agent_loop_state")
-    assert "B0 baseline, not generated code" in state["source_read_semantics"]
-    assert "original source baseline B0" in client.requests[3].tools[0].description
+    assert isinstance(state["source_read_semantics"], str) and state["source_read_semantics"]
+    assert state["source_snapshot_sha256"] == inspector.source_snapshot_sha256
+    final_request = client.requests[-1]
+    wire_results = [result.output for exchange in final_request.historical_tool_exchanges
+                    for result in exchange.tool_results]
+    wire_results.extend(result.output for result in final_request.tool_results)
+    restored = expand_patch_source_observations(wire_results)
+    assert restored[-1]["excerpt"] == (tmp_path / "Configuration.cs").read_bytes().decode("utf-8")
 
 
 def test_new_window_budget_exhaustion_keeps_reference_tool_available(tmp_path):

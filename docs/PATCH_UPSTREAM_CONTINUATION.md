@@ -14,6 +14,23 @@
 模型选择是否请求上游；没有请求时保留同 Plan 路径，不强制读取或重新规划。
 当前不支持与 `--qualified-model-routing` 同时启用，不静默降级模型资格。
 
+读取工具返回已登记源码或已保存API正文，不重算Evidence/Coverage或Plan。
+上游工具请求重评Evidence支持/冲突/覆盖判断，或Planning目标/范围。引用已经存在
+不排除需要重评；理由使用现有`reason`自由说明，无新增诊断JSON或固定调查顺序。
+
+Graph在worker开始前按当前配置声明`upstream_effects`，初次生成和失败修订共同使用：
+
+| 值 | 当前接受请求后的执行后果 |
+| --- | --- |
+| `record_and_stop` | 保存请求并结束本次运行，不自动重评 |
+| `assess_then_stop` | 直接Graph尝试重评，成功后停在Plan，不继续Patch |
+| `assess_and_continue` | 公开入口可在准入及剩余预算内重评，再接新Plan下的Patch |
+| `provider_unavailable_stop` | 该owner未配置provider，保存请求后停止，不假称已经重评 |
+
+Evidence与Planning可以有不同后果。一个自动周期结束后，新worker仍可提出上游请求，
+但声明会回到`record_and_stop`；工具不隐藏，请求不被静默替换为普通读取。
+这些事实只说明执行能力，不证明模型选对了动作。
+
 一次有界调用可以执行：当前被测代码及失败 → 上游请求 → 完整 Evidence/Coverage
 重算（需要时）→ 模型 Planning → 新 Plan → 重建 worker/Binding 上下文 → 原行为
 验证 → 新 Proposal/Review/Dry-run。`needs_evidence` 不回退到旧 Plan。

@@ -84,6 +84,7 @@ from src.mod_agent.proposal.patch_agent_loop import (
     PatchAgentLoopPolicy,
     PlanBoundSourceInspector,
     estimate_patch_source_reads,
+    normalize_upstream_effects,
     run_patch_agent_loop,
 )
 from src.mod_agent.product_execution import (
@@ -960,6 +961,7 @@ class LocalOllamaInitialPatchAdapter:
         self._attempt_recorder: Callable[[Mapping[str, Any]], None] | None = None
         self._shared_model_call_reserver: Callable[[str], None] | None = None
         self._upstream_continuation_context: dict[str, Any] | None = None
+        self._upstream_effects = normalize_upstream_effects(None)
         self._invocation_count = 0
         self._response_sidecar_path: Path | None = None
         self._receipt: dict[str, Any] = {
@@ -1030,6 +1032,16 @@ class LocalOllamaInitialPatchAdapter:
                 allow_nan=False,
             )
         )
+
+    def bind_upstream_effects(self, effects: Mapping[str, str]) -> None:
+        """The executing Graph declares consequences before this worker starts."""
+        normalized = normalize_upstream_effects(effects)
+        if self._invocation_count != 0:
+            if normalized != self._upstream_effects:
+                raise LocalEntryError("PATCH_AGENT_UPSTREAM_EFFECTS_ALREADY_STARTED")
+            return
+        self._upstream_effects = normalized
+        self._receipt["upstream_effects"] = dict(self._upstream_effects)
 
     def __call__(
         self,
@@ -1265,6 +1277,7 @@ class LocalOllamaInitialPatchAdapter:
                     final_response_format=response_format,
                     source_inspector=inspector,
                     policy=self.patch_agent_loop_policy,
+                    upstream_effects=self._upstream_effects,
                     **({**reservations, "consumed_observation_bytes": self._recovery_observation_bytes}
                        if self.enable_recovery_loop else {}),
                 )
@@ -1807,6 +1820,7 @@ class LocalOllamaInitialPatchAdapter:
             source_inspector=inspector, policy=self.patch_agent_loop_policy,
             consumed_model_turns=before_calls, consumed_tool_rounds=used_tools,
             consumed_observation_bytes=used_bytes + self._recovery_observation_bytes,
+            upstream_effects=self._upstream_effects,
         )
         self._receipt["model_call_count"] = before_calls + execution.model_turns_used
         correction_state.update(

@@ -1101,6 +1101,7 @@ def build_graph(
                 enable_upstream_replanning=(enable_patch_upstream_replanning
                     and (patch_replanning_context is None or patch_replanning_context.replan_count == 0)),
                 upstream_evidence_factory=evidence_pack_factory,
+                upstream_continues_patch=patch_replanning_context is not None,
                 proposal_git_binding_factory=effective_proposal_git_binding_factory,
                 patch_change_factory=(patch_replanning_context.factory if patch_replanning_context is not None else patch_change_factory),
                 source_snippet_char_limit=(patch_replanning_context.source_snippet_char_limit
@@ -2291,13 +2292,21 @@ def _run_patch_continuation_factory(
 
 
 def _run_generate_patch_with_upstream(state, artifact_store, *, enable_upstream_replanning=False,
-        upstream_evidence_factory=None, **kwargs):
+        upstream_evidence_factory=None, upstream_continues_patch=False, **kwargs):
+    from src.mod_agent.evidence.reassessment import RequirementCoverageReassessmentFactory
+
+    effect = ("assess_and_continue" if upstream_continues_patch else "assess_then_stop") if enable_upstream_replanning else "record_and_stop"
+    effects = {"planning": effect, "evidence": effect}
+    if enable_upstream_replanning and not isinstance(upstream_evidence_factory, RequirementCoverageReassessmentFactory):
+        effects["evidence"] = "provider_unavailable_stop"
+    binder = getattr(kwargs.get("patch_change_factory"), "bind_upstream_effects", None)
+    if callable(binder):
+        binder(effects)
     try:
         return _run_generate_patch_proposal(state, artifact_store, **kwargs)
     except Exception as exc:
         if not enable_upstream_replanning or str(exc) != "PATCH_AGENT_UPSTREAM_REQUESTED":
             raise
-        from src.mod_agent.evidence.reassessment import RequirementCoverageReassessmentFactory
         from src.mod_agent.repair.upstream import validate_active_worker_upstream
         next_state = _copy_state(state)
         try:

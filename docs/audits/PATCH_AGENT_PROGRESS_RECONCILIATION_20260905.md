@@ -6,6 +6,10 @@
 
 ## 0. 最新状态快照
 
+**工具语义收敛已完成离线验收（0.19）：读取与重评用途分开，Graph按当前配置声明保存停止／重评到Plan／重评后继续／provider未配置。**
+同一已登记引用仍可因支持关系或覆盖问题请求Evidence重评，没有“已可读就禁止上游”的规则。
+本轮没有新增真实模型、preview或Mod修改，013仍是最新真实记录；动作选择质量和有效修订仍未证明。
+
 **2026-09-07最新：整链适配`d6eda97`与指导去重`925790d`已提交。013真实2次调用后主动请求Evidence上游，没有生成代码或运行矩阵。**
 首轮5次读取为3新窗口＋2复用，内容进入第二实际请求；模型随后选择`request_patch_upstream`。
 三个所列引用都可在原worker读取，离线测算1新窗口/5,308字节，小于当时2窗口/5,839字节余额。
@@ -794,6 +798,40 @@ Get正文已在此前edit001窗口中，FirstShot两个方法尚未读；三个r
 
 [真实运行记录](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_013/actual/summary.json)、
 [只读查询](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_013/actual/execution-query.json)。
+
+### 0.19 一次工具语义收敛：用途与真实执行后果
+
+定点核查确认：013当时的上游工具只写“Request Evidence or Planning assessment”，没有说明
+该配置会保存请求并停止，也没有区分普通读取与Evidence判断重评。歧义存在，但不直接证明它导致013的选择。
+
+本轮只改工具描述及当前配置事实的传递：
+
+- 读取工具返回已登记正文；上游工具重评支持/冲突/覆盖判断或Planning范围。已有refs仍可有依据地重评。
+- Graph共同入口在worker启动前绑定`upstream_effects`，覆盖公开CLI及直接Graph。
+  各owner分别声明`record_and_stop`、`assess_then_stop`、`assess_and_continue`或`provider_unavailable_stop`。
+  新Plan的自动周期结束后继续保留上游工具，但如实声明保存后停止。
+- 初次生成、行为修订使用同一声明；两工具参数schema、read enum、reason格式、权限和实际Graph路线未改。
+  没有新增诊断JSON、指定FirstShot函数、隐藏上游工具或把上游请求改写成读取。
+
+验证：8项独立工具/直接Graph场景、6项公开CLI相反场景通过。既有ref可以直接读取后完成，
+也可以以query=[]复用已有Evidence、真正重算Coverage后继续；无需为了测试强制找新引用。
+统一checkpoint命令：
+
+```powershell
+python -B -m pytest tests/unit/test_patch_tool_effects.py tests/unit/test_patch_tool_effects_cli.py tests/unit/test_patch_agent_loop.py tests/unit/test_patch_recovery_worker.py tests/unit/test_patch_source_coverage_reuse.py tests/unit/test_patch_upstream_cli.py tests/unit/test_patch_upstream_replanning.py tests/unit/test_patch_upstream_budget.py tests/unit/test_patch_repair_cli.py tests/unit/test_patch_verified_replay.py -q --tb=short -n 2 --dist=loadfile -o cache_dir="$env:TEMP/tool-effects-cache" --basetemp="$env:TEMP/te-$PID"
+```
+
+185通过、2项旧英文措辞断言失败（74.93秒）。将这两项改为核对实际模型工具历史展开后的B0字节、
+当前代码及失败绑定，保留Windows原始换行，定点2项通过（1.21秒）。不写成一次187项全绿。
+这是仓库现有测试的适配，008/012验收器与全部历史输入均未修改。
+
+按013原wire只重建工具描述及能力声明字段，44,560→44,881字节；加原4,096输出预算为48,977，
+低于49,152代理线，余量175字节。其它消息、B0/C1/F1、原需求和工具参数schema不变。
+这是离线字段成本测量，不是新preview、真实模型消费或后续全程准入保证。
+[成本核对](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/tool_effects_013_cost.json)。
+
+本次工具语义工作到此收口，不继续对FirstShot做连续提示微调。真实动作选择与任务结果仍需独立模型试验，
+Langfuse真实出口、固定多任务Eval与部署交付按各自条件推进，不以该case成功为前置。
 
 ## 1. 结论与范围
 

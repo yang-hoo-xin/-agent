@@ -28,9 +28,22 @@ Current checkpoint: the three-part implementation and fixed-version 013 acceptan
 are complete. 013 read the five edits and voluntarily requested Evidence, with
 no new code/matrix; all three refs could have been read within the current worker.
 Do not turn this choice into automatic Plan expansion or another blind model attempt.
-Next bounded decision work should distinguish reading registered refs from formal
-Evidence reassessment, keeping c760 and the original success criteria. The real
-case verifier's new-Plan adaptation remains separate unfinished work.
+The one-pass distinction between registered reads and formal reassessment is now
+implemented and tested against current execution effects; see 0.19. Do not reopen
+continuous FirstShot prompt tuning. Real decision quality remains unproven, and
+the case verifier's new-Plan adaptation remains separate unfinished work.
+Independent ten-day tracks remain selected: A6 real destination/history import
+and service readback; A7 fixed real multi-task evidence; A8 current-version CI and
+delivery verification. They do not wait for FirstShot to pass. Their service,
+disclosure and execution inputs must be selected rather than invented.
+The user has now explicitly requested parallel implementation. Current bounded
+writers are A6 Patch-journal-to-Langfuse transport/readback, A5 API source-authority
+visibility and semantic-consumption acceptance, A7 three distinct real-source
+task definitions with executable preflight, and DSH product-interface integration.
+DSH owns UI, interaction sessions and plugin hosting only. The current Python
+backend retains task state, recovery, Evidence/Plan/Binding, approvals and execution.
+DSH sessions are correlation metadata, not a replacement Artifact or state owner.
+Do not confuse selected work, implementation in progress and executed delivery.
 Public A4 provider assembly, current failure rebinding, new-Plan
 worker assembly and original Review/Dry-run have passed offline composition;
 this does not qualify a real model or adapt the c760-only verifier to arbitrary
@@ -77,8 +90,9 @@ output. This bounded attempt is closed. Next execution decisions should compare
 the current model/profile's investigation needs and cost, or qualify an explicitly
 selected alternative under frozen inputs; do not add case-specific fixes or
 automatically spend another attempt. See reconciliation 0.10.
-The user's no-custom-frontend preference selects DSH as the future integration
-direction; no DSH implementation/deployment is activated by this queue entry.
+The user's no-custom-frontend preference selects DSH; the newer parallel-work
+request above activates its bounded interface adapter, not an independent agent
+control loop or unrestricted game/source access.
 
 Previous checkpoint `af36b5d`: the 005 initial-read blocker is resolved: public
 CLI 006 executed five requested reads and two real Qwen calls, using one Config

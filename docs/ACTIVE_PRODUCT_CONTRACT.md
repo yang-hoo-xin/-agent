@@ -41,6 +41,11 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
+Latest bounded change: source reading and upstream reassessment have distinct
+tool descriptions. The Graph declares each owner's actual continuation effect
+before the shared worker runs, including record-only and missing-provider modes.
+Opposite offline scenarios passed; no new model run or action-quality claim.
+This tool-semantics pass is closed; see reconciliation 0.19.
 Latest implementation: the existing public entry now completes one bounded
 upstream cycle with current failed-code/report binding, optional Evidence and
 Planning providers, new-Plan worker assembly and the original Review/Dry-run.

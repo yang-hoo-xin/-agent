@@ -29,6 +29,18 @@ PATCH_UPSTREAM_REQUEST_TOOL_NAME = "request_patch_upstream"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
+def normalize_upstream_effects(value: Mapping[str, str] | None) -> dict[str, str]:
+    """Describe caller-owned execution facts; this does not enable a route."""
+    if value is None:
+        return {"evidence": "record_and_stop", "planning": "record_and_stop"}
+    choices = {"record_and_stop", "assess_then_stop", "assess_and_continue", "provider_unavailable_stop"}
+    if (not isinstance(value, Mapping) or set(value) != {"evidence", "planning"}
+            or any(not isinstance(item, str) or item not in choices for item in value.values())):
+        raise PatchAgentLoopError("PATCH_AGENT_UPSTREAM_EFFECTS_INVALID", stage="loop_admission",
+            reason="Upstream effects must describe both existing owners using supported execution modes.")
+    return dict(value)
+
+
 class PatchAgentLoopError(RuntimeError):
     """Reject an invalid Patch loop input or a drifted source boundary."""
 
@@ -818,10 +830,12 @@ def run_patch_agent_loop(
     reserve_model_turns: int = 0,
     reserve_tool_reads: int = 0,
     reserve_observation_bytes: int = 0,
+    upstream_effects: Mapping[str, str] | None = None,
 ) -> PatchAgentLoopResult:
     """Run bounded source inspection turns and return final Patch content or a receipt."""
 
     selected_policy = policy or source_inspector.policy
+    actual_upstream_effects = normalize_upstream_effects(upstream_effects)
     reuse_covered = selected_policy.reuse_covered_source_observations
     encode_excerpts = selected_policy.deduplicate_source_excerpts or reuse_covered
     for value in (consumed_model_turns, consumed_tool_rounds, consumed_observation_bytes,
@@ -1028,6 +1042,7 @@ def run_patch_agent_loop(
             reserve_tool_reads=reserve_tool_reads,
             total_observation_bytes=total_observation_bytes,
             reserve_observation_bytes=reserve_observation_bytes,
+            upstream_effects=actual_upstream_effects,
         )
         tool_results = pending_tool_results or (
             (
@@ -1046,7 +1061,8 @@ def run_patch_agent_loop(
                 base_request.tool_result_insert_index if base_request.tool_result_insert_index is not None else len(base_request.messages)))
         available_tools = (
             () if must_finish else (_source_tool_definition(source_inspector, binding_ids=remaining_binding_ids),)
-        ) + ((_upstream_tool_definition(source_inspector),) if selected_policy.allow_upstream_request else ())
+        ) + ((_upstream_tool_definition(source_inspector, upstream_effects=actual_upstream_effects),)
+             if selected_policy.allow_upstream_request else ())
         request = AgentTurnRequest(
             messages=(*base_request.messages, state_message),
             tools=available_tools,
@@ -1597,6 +1613,7 @@ def _source_tool_definition(
     return AgentToolDefinition(
         name=PATCH_SOURCE_INSPECTION_TOOL_NAME,
         description=(
+            "Read existing registered content and return it here; no Evidence/Coverage or Plan reassessment. "
             "Read a bounded excerpt of the validated Plan-bound original source baseline B0 "
             "for one exact ImplementationPlan read binding. Generated changes are not applied here: "
             "the current checked code is the complete assistant Patch identified by the latest failure feedback. "
@@ -1644,6 +1661,7 @@ def _loop_state_message(
     reserve_tool_reads: int = 0,
     total_observation_bytes: int = 0,
     reserve_observation_bytes: int = 0,
+    upstream_effects: Mapping[str, str] | None = None,
 ) -> AgentMessage:
     return AgentMessage(
         role="user",
@@ -1654,10 +1672,10 @@ def _loop_state_message(
             "source_snapshot_sha256": source_inspector.source_snapshot_sha256,
             "read_source_snapshot_sha256": source_inspector.read_source_snapshot_sha256,
             **({"source_read_semantics": (
-                "Local source tools return the validated B0 baseline, not generated code. "
-                "Use the complete assistant Patch identified by the latest failure feedback for the current checked code. "
-                "Registered API tools return saved Evidence, not a new live inspection."
+                "Tools read B0; checked changes are in the assistant Patch referenced by feedback. "
+                "API excerpts are saved Evidence."
             )} if policy.reuse_covered_source_observations else {}),
+            **({"upstream_effects": normalize_upstream_effects(upstream_effects)} if policy.allow_upstream_request else {}),
             "read_execution": {"allow_batched_reads": policy.allow_batched_reads,
                 "execution": "sequential", "count_unit": "one_new_complete_source_window" if policy.reuse_covered_source_observations else "one_dispatched_binding_read",
                 "batch_must_fit_remaining_reads": True,
@@ -1723,9 +1741,20 @@ def _without_loop_states(request: AgentTurnRequest) -> AgentTurnRequest:
             for exchange in request.historical_tool_exchanges))
 
 
-def _upstream_tool_definition(inspector: PlanBoundSourceInspector) -> AgentToolDefinition:
+def _upstream_tool_definition(inspector: PlanBoundSourceInspector, *,
+        upstream_effects: Mapping[str, str] | None = None) -> AgentToolDefinition:
+    effects = normalize_upstream_effects(upstream_effects)
+    descriptions = {
+        "record_and_stop": "save request and stop this run; no automatic reassessment",
+        "assess_then_stop": "Graph checks and attempts reassessment, then stops at the Plan",
+        "assess_and_continue": "Graph checks and may reassess then resume Patch within remaining budget",
+        "provider_unavailable_stop": "provider unavailable; save request and stop without reassessment",
+    }
     return AgentToolDefinition(name=PATCH_UPSTREAM_REQUEST_TOOL_NAME,
-        description="Request Evidence or Planning assessment with bound facts. This does not change routing or edit authority.",
+        description=("Request reassessment, not a source read: Evidence support/conflicts/coverage or Planning targets/scope. "
+            "Explain which judgment needs review; known refs may justify reassessment. No edit authority is granted. "
+            f"Current evidence effect: {descriptions[effects['evidence']]}. "
+            f"Current planning effect: {descriptions[effects['planning']]}.") ,
         parameters={"type": "object", "additionalProperties": False,
             "required": ["required_owner", "reason", "source_refs"], "properties": {
                 "required_owner": {"type": "string", "enum": ["evidence", "planning"]},
