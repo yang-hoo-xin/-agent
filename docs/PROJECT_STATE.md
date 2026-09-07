@@ -7,6 +7,15 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
+P0 remains unresolved: 014 executed two 33/36 matrices on unchanged code; 015
+received one local-27B response, then timed out after 600 seconds with no code.
+Four owned-task histories are now verified in the user's Langfuse Cloud project
+(54 records and one bound score); the three additional histories received explicit
+user authorization after an initial approval-review rejection. DSH intake reached real stored planning briefs;
+exact diff viewing and trial comparison are implemented. API observation provenance
+and current-Plan domain-matrix consumption are integrated with bounded evidence.
+Full facts and limitations are in reconciliation 0.30; these are not Mod success.
+
 Fixed `90cfc27` Max acceptance completed: five real requests, compiler-error revision
 plus format recovery, successful isolated compilation and 15/15 original owned-task
 checks (23 application processes). Proposal/Review/Dry-run bind the passing bytes;

@@ -10,6 +10,16 @@ Completed, frozen, review, and superseded records belong in
 ## 1. Current Queue
 
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
+Latest bounded window is recorded in reconciliation 0.30. P0 014 did not improve
+the code (two 33/36 results), and 015 local 27B timed out with no code. Do not
+repeat either identical setup or claim a platform change repaired First Shot.
+Consume the new opt-in domain verifier only with a valid current Plan and
+declared original matrix applicability; do not force replanning as the diagnosis.
+Owned Max Langfuse import/readback is complete. Three additional owned-history
+imports were initially approval-review blocked, then explicitly authorized by the
+user and verified remotely (54 total records/one bound score). DSH intake/diff viewing, trial
+comparison and API provenance are implemented; execution/approval/resume and
+cross-task/model semantic qualification remain separate unfinished work.
 Current implementation is at the pre-approval boundary; the full chat buffer
 is not complete. The latest snapshot, Attempt index and per-requirement coverage are
 recorded in [the reconciliation](audits/PATCH_AGENT_PROGRESS_RECONCILIATION_20260905.md).

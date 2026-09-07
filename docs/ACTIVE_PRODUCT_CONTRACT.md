@@ -41,6 +41,13 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
+Current two-hour checkpoint: P0 014 returned unchanged code and twice 33/36;
+015 local 27B timed out at its second request, without code or a matrix. No P0
+success/Apply/Build/Runtime is claimed. Parallel results now include verified
+Langfuse Cloud readback of four owned-task histories (54 records/one bound score), DSH request intake and exact
+diff viewing, read-only trial comparison, preserved API provenance and an opt-in
+current-Plan domain verifier. See reconciliation 0.30 for commits and claim bounds.
+The earlier checkpoints below do not override this current status.
 Latest owned-task acceptance fixed `90cfc27`: Max used five real requests,
 repaired its compiler error, recovered a malformed revision in the same worker,
 then passed compilation and all original 15 checks. Proposal/Review/Dry-run exist;

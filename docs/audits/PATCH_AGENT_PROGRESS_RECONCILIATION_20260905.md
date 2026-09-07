@@ -6,6 +6,12 @@
 
 ## 0. 最新状态快照
 
+**两小时并行窗口检查点（0.30）：P0仍未修好；014两次原矩阵仍33/36，015本地27B在第二请求超时。**
+Langfuse美区项目已真实查回四次自有任务的54条历史记录和1条行为分数；额外三次历史最初被审核拦住，用户补充明确授权后完成。
+DSH需求准备已通过真实页面与原ArtifactStore验收，并新增按精确运行查看diff的只读入口。
+Eval可直接汇总一个任务四次独立对照；API按需读取保留来源语义；新Plan领域factory通过原矩阵兼容验收。
+以上均不构成First Shot修复、完整自动规划、整Mod Build或GTFO Runtime。此前各节为各自历史检查点。
+
 **真实验收最新（0.29）：冻结90cfc27，Max独立5次请求完成编译反馈修订与格式纠正；最终真实编译成功、原15项检查全过。**
 原Proposal/Review/Dry-run绑定通过检查的同一版字节，停止在exact diff审批前。
 这是OwnedConfigService、人辅Evidence/Plan下的一次成功；没有Apply、正式Build或游戏Runtime，
@@ -1273,6 +1279,95 @@ Dry-run `824cfd68…`，完整refs由以上查询定位。两份报告、矩阵�
 本次授权已执行完。此结果记为该任务/当前profile的一次通过样本；旧三组首筛仍为0/3，修后本次
 独立记1次通过，不覆盖旧失败。复杂任务、跨任务重复资格、自主Planning、First Shot仍未证明。
 下一步应消费这个真实样本选择后续独立任务，不重新扩建提交格式流程，也不自动外发GTFO或Apply。
+
+### 0.30 2026-09-07 两小时并行窗口
+
+当前任务用户授权自主推进两小时，并强调P0修复优先。执行窗口从北京时间19:36:52起至21:36:52；
+此处只记录安排和发生的事实，不向未来任务授予权限。保持产品模型生成、原验收标准、exact approval、
+外部披露和游戏操作边界；没有用Codex代写正确Mod补丁，也没有外发GTFO材料。
+本窗口新增P0模型发送6次、完整响应5份（014为4/4，015为2/1）；没有新增云端模型生成。
+0.29的Max成功发生在窗口之前，本轮对它做的是历史导入与查询，不重复计为新的成功运行。
+
+**P0两次实际运行：**
+
+| 运行 | 冻结条件与实际动作 | 结果 |
+|---|---|---|
+| 014 | HEAD `1415ebe`，原c760/5编辑绑定/29可读绑定、原006+r6精确失败输入、Qwen30B、5次总预算；4次实发/4次响应，9次读取为3新窗口+6复用 | 两份代码的after_text均与原失败版本相同，两次40进程/36检查均33通过3失败；终止PATCH_BEHAVIOR_CORRECTION_FAILED，无新Proposal/Review/Dry-run |
+| 015 | 与014首请求相比仅model字段变为本地qwen3.6:27b；原messages/tools/Plan/预算/600秒不变 | 2次实发、1次完整响应；首轮自主选择4个supporting读取，第二请求600秒超时，无代码、无矩阵；不是又一次行为修复失败 |
+
+两轮前均完成公开CLI零模型preview，并在首个真实send前逐字比较首请求。没有运行中改执行器或接续
+旧响应；源码/冻结文件及既有Store资料未改变。014代码与较早009完全相同，因此沿用合法006+r6选择器，
+没有把复验路径改成009来伪装新验证。
+
+014实际F1包含五个原观测字段`validGun/targetSpread/spreadScalar/scaleWrites/startedCoroutines`，
+与矩阵相应场景逐值相等，未丢核心状态：Match为false/0/0.2/0/2，第二次冷却的协程数3；
+Inner为false/0/1/0/2。协程详细生命周期等额外trace未全部投影；没有直接统计初始化方法入口，
+所以“初始化被跳过”仍是解释。不能继续把014失败归因为只给模型尺寸标签。
+
+015首轮输入12,238 token、输出197 token，生成耗时92.132秒，约2.14 token/秒。
+运行中Ollama ps报告加载约20.35GB、其中约5.12GB在显存；设备为8GB RTX4060 Laptop。
+这说明该部署没有整模GPU驻留和明显延迟约束，不是模型代码能力结论。没有延长超时、追加预算或自动换第三款。
+
+- [014结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_014/actual/summary.json)
+- [015结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_015/actual/summary.json)
+- [015与014首请求对照](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_015/comparison-to-014.json)
+
+**并行提交及验收：**
+
+| 提交 | 做了什么 | 实际证据与限制 |
+|---|---|---|
+| `98bb008` | 原Langfuse元数据导出器消费提交格式轨迹和脱敏请求引用；格式成功不加行为分数 | 29项聚焦通过/5.45秒；Max真实导入1次observations POST+1次score POST，初查pending，之后只GET查回15条记录和1条分数，身份匹配 |
+| `fcf3fc6` | DSH `/mod-submit`经固定stdin bridge调用原plan-request，持久化原request_planning_report/mod_planning_brief | Python11项/5.32秒，Node12项/8.60秒；真实官方页面提交并显示ready_for_feature_spec，2个Artifact核验，0模型；不等于FeatureSpec或实施Plan已生成 |
+| `1415ebe` | 一个固定任务的只读trial汇总，按profile/worker/policy分组，核对原矩阵及代码/Artifact链 | 初checkpoint71通过1依赖方向失败；移装配至script后新12项+原守卫13通过/4.33秒，防覆盖1项/0.90秒；一个任务四次trial、三失败一通过，不发布模型资格 |
+| `5536cb4` | Patch按需API观察保留source_authority/evidence_source_ref/risk_notes，binding引用与来源引用分开 | 独立worktree红测复现，115项checkpoint通过/3.98秒；合入8项通过/0.84秒；两种来源经真实HTTP序列化的离线传输替身核验。014未读API，不能当作它的失败根因 |
+| `088c78d` | 显式新领域factory分开原矩阵锚点与当前精确Plan，核对源码/模型字节，按响应分目录并精确重映射owner | 81项兼容检查通过/29.47秒；合入7项/8.62秒；独立Store合法新Plan/重命名binding、原失败代码，真实两次编译+40进程/36检查仍33/36，报告绑定新Plan。不是模型生成新Plan或修复成功 |
+| `46e80b9` | DSH `/mod-review <run_id>`读取该次精确Proposal/Review/Dry-run、显示diff及当前修改文件状态 | Python7项/7.32秒，Node bridge11项/6.38秒；真实handler+Python子进程对Max成功显示853B原diff，旧Max失败无diff；没有借用latest，没有批准/Apply |
+| `72a9183` | 补入mod-review的空会话活动识别 | 原遗漏经红测复现，4项客户端检查通过；不改后端权限或模型行为 |
+
+各测试集合有重叠，以上数字不相加为唯一测试总量。新文件Ruff/diff检查通过；local_entry原10项
+存量lint保持，不借本轮清理。A5/A4在独立工作树完成，在015结束后才合主树；未污染冻结运行。
+`98bb008`提交于19:31:21，属于两小时窗口前的并行准备；其它表列六个实现提交发生在窗口内。
+
+原36项矩阵仍不覆盖整Mod编译、配置解析/键绑定或游戏Runtime。新factory对未覆盖的新位置明确拒绝；
+已知旧Config编辑点沿用原范围并列入uncompiled_changed_files。不能将局部矩阵通过升级为全部功能保证。
+
+DSH审查命令随后在真实官方页面显示了853字节原diff与旧验证记录，未批准或执行。空会话活动列表
+最初漏掉mod-review，经1项红测复现后补入，4项客户端检查全过（0.234秒）；原官方Conversation
+组件参与该检查。[浏览器与会话快照验收](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/dsh_review_browser_20260907_001/acceptance.json)。
+
+**Langfuse实际接入：**用户提供美区项目并自行配置Secret Key。最初沙箱HKCU读不到实际用户变量，
+在真实Windows用户环境确认存在；Public Key和Base URL补至用户环境，密钥未写入仓库。
+GET projects核验对应项目后上传；最终15 observations/1 score已查回。记录为历史导入，原时序未知，
+不是所有阶段实时Tracing。源码、prompt、原回复和本地路径未导出。
+
+- [Cloud查回](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/a6_submission_import_owned_max_001/cloud-readback-20260907T114241864996.json)
+- [用户项目](https://us.cloud.langfuse.com/project/cmtr5q7ae024iad0im785u4xl/traces)
+- [额外三次失败历史预览](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/a6_owned_comparison_cloud_001/preparation.json)
+
+额外三次历史共39 observations、0 scores。自动审批最初拒绝该追加操作，理由是缺少对这三份具体数据
+导出的明确授权和项目归属证明。进程未启动、0HTTP/0POST；root未绕过，已向用户留下可选具体确认。
+已有Max成功导入不受影响。[审核阻断记录](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/a6_owned_comparison_cloud_001/approval-review-blocked.json)。
+随后用户明确回复“授权这三次历史元数据”，新授权后仍从原动作入口执行，再次GET projects核验同一
+项目。三次各1个POST，共3POST+12GET，39条全部verified_remote_readback、无缺失、0score。
+原拒绝记录不改写，未通过换工具绕过；4次自有对照合计54条历史记录、1条原15项行为分数。
+[追加三次真实导入及查回](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/a6_owned_comparison_cloud_001/import-result.json)。
+
+**本地入口/比较/领域适配证据：**
+
+- [DSH真实需求提交](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/dsh_submit_acceptance_20260907_001/acceptance.json)：原会话日志为可追加文件，后续动作前已保存匹配hash的独立session-at-submit快照及补充引用。
+- [DSH精确diff入口验收](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/dsh_review_actual_001/summary.json)
+- [四次trial只读报告](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/owned_config_trial_comparison_20260907_001/report-final.json)
+- [新Plan原矩阵真实兼容验收](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/vp1/execution-receipt.json)：0模型派生兼容输入，原after_text字节不变，不冒充新模型输出；只证明身份/binding ID变化，不证明扩大修改范围。
+
+**事故与恢复：**A7首次脚本误覆盖旧derived comparison摘要，未覆盖任何模型响应/journal/矩阵。
+已即时说明。随后定位当前任务日志14854行原生成命令及14857行原收据，从原未变事实文件恢复8,981字节，
+SHA严格回到`8de69acdafa7eb3ce8cfcd06d5919d0daea7e1f2872730307bab60efd23886bd`；误覆盖内容排他备份，
+14个保护资料前后hash一致。新查询输出现在排他创建，旧路径被拒绝。
+[事故与精确恢复](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/owned_config_history_restore_20260907_001/incident.json)。
+
+仍未完成：First Shot有效修订/原任务审批Apply/changed Build/GTFO Runtime；真实自主Planning与
+有依据的自动上游选择；RAG证据改变下游决策的实证；跨任务资格；DSH执行、批准、取消与恢复；
+完整实时Trace、hosted CI及Release交付。保留六份用户原WIP，不把本轮平台提交视为这些项目全部完成。
 
 ## 1. 结论与范围
 
