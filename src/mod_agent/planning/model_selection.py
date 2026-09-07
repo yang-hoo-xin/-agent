@@ -17,6 +17,7 @@ from src.libs.llm.agent_turn import (
     AgentTurnRequest,
 )
 from src.mod_agent.evidence.identity import feature_spec_payload_sha256
+from src.mod_agent.evidence.model_view import API_EVIDENCE_GUIDANCE, api_evidence_model_fields
 from src.mod_agent.evidence.requirement_coverage import validated_requirement_coverage_view
 
 from .implementation_plan import (
@@ -176,6 +177,7 @@ class ModelPlanningTargetSelector:
                     "excerpt",
                 )
             }
+            observation.update(api_evidence_model_fields(item))
             if item["source_type"] == "target_source":
                 # The model sees the exact current bytes, not an unverified copied excerpt.
                 source_bytes = (self.workspace_root / item["source_path"]).read_bytes()
@@ -214,6 +216,8 @@ class ModelPlanningTargetSelector:
             "requirements": evidence_pack["requirement_coverage"]["requirements"],
             "source_observations": observations,
             "allowed_edit_evidence_ids": allowed,
+            **({"api_evidence_guidance": API_EVIDENCE_GUIDANCE}
+               if any(item["source_type"] == "decompiled_api" for item in items) else {}),
         }
         return AgentTurnRequest(
             messages=(

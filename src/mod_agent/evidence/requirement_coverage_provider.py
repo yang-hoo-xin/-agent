@@ -9,6 +9,7 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Any, Protocol
 
+from .model_view import API_EVIDENCE_GUIDANCE, api_evidence_model_fields
 from .models import (
     DETERMINISTIC_EVIDENCE_AUTHORITY,
     EvidenceItem,
@@ -807,6 +808,8 @@ class StructuredModelRequirementCoverageProvider:
                 _source_observation_model_view(item.to_dict())
                 for item in retrieved_pack.items
             ],
+            **({"api_evidence_guidance": API_EVIDENCE_GUIDANCE}
+               if any(item.source_type == "decompiled_api" for item in retrieved_pack.items) else {}),
             "rules": [
                 (
                     "Return findings with exactly one item for every listed "
@@ -1882,7 +1885,7 @@ def requirement_findings_response_schema(
 
 
 def _source_observation_model_view(item: Mapping[str, Any]) -> dict[str, object]:
-    return {
+    observation = {
         key: item.get(key)
         for key in (
             "evidence_id",
@@ -1894,6 +1897,8 @@ def _source_observation_model_view(item: Mapping[str, Any]) -> dict[str, object]
             "excerpt",
         )
     }
+    observation.update(api_evidence_model_fields(item))
+    return observation
 
 
 def _projection_rejection_diagnostic(
