@@ -1055,6 +1055,15 @@ class LocalOllamaInitialPatchAdapter:
             raise LocalEntryError("LOCAL_PATCH_MODEL_CALL_ALREADY_CONSUMED")
         self._invocation_count = 1
         self._implementation_plan = deepcopy(implementation)
+        self._implementation_plan_ref = None
+        plan_path = (state.get("artifacts") or {}).get("implementation_plan")
+        plan_hash = (state.get("artifact_hashes") or {}).get("implementation_plan")
+        if plan_path is not None or plan_hash is not None:
+            ref = ArtifactRef(feature_id=state["feature_id"], artifact_type="implementation_plan",
+                              path=plan_path, artifact_hash=plan_hash)
+            if self.artifact_store.read(ref)["data"] != implementation:
+                raise LocalEntryError("PATCH_BEHAVIOR_PLAN_CONTEXT_MISMATCH")
+            self._implementation_plan_ref = asdict(ref)
         self._current_run_id = state.get("run_id")
         if self._repair_context is not None:
             failed_changes = self._repair_context.get("failed_diff_intent")
@@ -1960,6 +1969,8 @@ class LocalOllamaInitialPatchAdapter:
             "source_snapshot_sha256": inspector.source_snapshot_sha256,
             "evaluation_index": len(evaluations) + 1,
             "implementation_plan": deepcopy(self._implementation_plan),
+            **({"implementation_plan_ref": deepcopy(self._implementation_plan_ref)}
+               if getattr(self, "_implementation_plan_ref", None) is not None else {}),
         }
         if self.enable_recovery_loop:
             context.update(materialized_code_identity=code_identity, verification_identity=verification_identity)
