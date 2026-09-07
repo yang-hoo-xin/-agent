@@ -1081,20 +1081,7 @@ class LocalOllamaInitialPatchAdapter:
                 if callable(evaluator_receipt):
                     self._receipt["behavior_evaluator_configuration"] = deepcopy(evaluator_receipt())
                 self._emit("local_patch_behavior_evaluator_prepared")
-            identity = self.identity_reader(self.profile.base_url, self.profile.model)
-            _validate_ollama_model_identity(
-                identity,
-                expected_base_url=self.profile.base_url,
-                expected_model=self.profile.model,
-            )
-            if self.qualified_profile_selection is not None:
-                self.qualified_profile_selection.validate_live_identity(identity)
-                self._receipt["model_qualification"] = deepcopy(self.qualified_profile_selection.receipt)
-                self._emit("local_patch_qualified_profile_admitted")
-            model_context_limit = _validate_ollama_context_window(
-                identity,
-                requested_context_window=self.profile.context_window,
-            )
+            identity, model_context_limit = self._admit_model_identity(state, implementation, evidence_pack)
             feature_spec = self._read_feature_spec(state)
             if self._replay_attempt_ref is not None:
                 self._prepare_verified_tool_replay(state, identity)
@@ -1150,25 +1137,7 @@ class LocalOllamaInitialPatchAdapter:
             )
 
             def post_response_admission(response: ChatResponse) -> None:
-                if response.model != self.profile.model:
-                    raise LocalEntryError("OLLAMA_RESPONSE_MODEL_IDENTITY_MISMATCH")
-                observed = self.identity_reader(
-                    self.profile.base_url,
-                    self.profile.model,
-                )
-                _validate_ollama_model_identity(
-                    observed,
-                    expected_base_url=self.profile.base_url,
-                    expected_model=self.profile.model,
-                )
-                _assert_ollama_model_identity_stable(
-                    expected=identity,
-                    observed=observed,
-                )
-                _validate_ollama_context_window(
-                    observed,
-                    requested_context_window=self.profile.context_window,
-                )
+                observed = self._admit_response_model_identity(response, identity)
                 self._receipt["post_response_model_identity"] = dict(observed)
                 self._emit("local_patch_post_response_model_admitted")
 
@@ -1470,9 +1439,8 @@ class LocalOllamaInitialPatchAdapter:
                 {
                     **change,
                     "generation": {
-                        "provider": "ollama",
+                        **self._generation_provider_metadata(identity),
                         "model": generated.model,
-                        "model_digest": identity["digest"],
                         "usage": generated.usage,
                         "profile_version": self.profile.profile_version,
                         "patch_response_contract": dict(
@@ -1511,6 +1479,29 @@ class LocalOllamaInitialPatchAdapter:
             )
             self._emit("local_patch_generation_failed")
             raise
+
+    def _admit_model_identity(self, state, implementation, evidence_pack):
+        """Local provider boundary; shared Patch/Repair execution stays below it."""
+        identity = self.identity_reader(self.profile.base_url, self.profile.model)
+        _validate_ollama_model_identity(identity, expected_base_url=self.profile.base_url, expected_model=self.profile.model)
+        if self.qualified_profile_selection is not None:
+            self.qualified_profile_selection.validate_live_identity(identity)
+            self._receipt["model_qualification"] = deepcopy(self.qualified_profile_selection.receipt)
+            self._emit("local_patch_qualified_profile_admitted")
+        context_limit = _validate_ollama_context_window(identity, requested_context_window=self.profile.context_window)
+        return identity, context_limit
+
+    def _admit_response_model_identity(self, response, identity):
+        if response.model != self.profile.model:
+            raise LocalEntryError("OLLAMA_RESPONSE_MODEL_IDENTITY_MISMATCH")
+        observed = self.identity_reader(self.profile.base_url, self.profile.model)
+        _validate_ollama_model_identity(observed, expected_base_url=self.profile.base_url, expected_model=self.profile.model)
+        _assert_ollama_model_identity_stable(expected=identity, observed=observed)
+        _validate_ollama_context_window(observed, requested_context_window=self.profile.context_window)
+        return observed
+
+    def _generation_provider_metadata(self, identity):
+        return {"provider": "ollama", "model_digest": identity["digest"]}
 
     def _consume_correction_call(self) -> None:
         policy = self.patch_agent_loop_policy

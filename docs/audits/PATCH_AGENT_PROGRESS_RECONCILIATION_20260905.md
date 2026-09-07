@@ -6,6 +6,9 @@
 
 ## 0. 最新状态快照
 
+**外部模型接缝最新（0.23）：外部千问可复用原Patch/Repair worker，解析失败前也保留原HTTP响应；尚未真实外发。**
+真实服务可用性与模型修订能力未证明。独立自有代码任务正在准备真实对照，不复用受限GTFO材料。
+
 **A7最新（0.22）：3个不同Feature任务已冻结，当前代码下3/3输入准入通过；全部真实模型成绩仍为未运行。**
 两个新增任务的真实C#基线验证已执行，原P0保留36项检查；不把输入准入、基线缺陷或离线脚本响应计为模型成功。
 
@@ -135,7 +138,8 @@ Qwen在工具预算反馈后由请求5处改选2处；修正执行ID记账后，
 | 已提交 `ceeb1b6` | Findings/Planning实际输入保留API的source_authority、程序集hash、MVID、token和signature，并说明当前／参考来源及运行语义边界 | 来源信息传播已有；A5 Actual001一轮真实输出被编辑身份校验拒绝，不能称API语义成功，详0.20 |
 | 已提交 `3122c26` | `requirement_coverage.py`与`requirement_coverage_provider.py`共享原合法编辑身份谓词，生产schema区分引用域与编辑提示域；新增原Actual离线回归 | 4项聚焦及115项checkpoint通过；其它并行WIP不在本节A5验收范围，不能将工作树整体写成“无WIP” |
 | 已提交 `9efcac9` | 原Patch查询到Langfuse历史元数据OTLP导出、查询与有限查回；评分核验代码/报告/矩阵身份，防止同数量异矩阵错绑 | 65项相关回归通过；没有真实服务发送，不增加产品成功、原始时序或跨任务资格声明，详0.21 |
-| 本次A7提交 | 固定3任务及真实C#行为判定器，准备器输出原公开CLI参数；复用原任务资格合同和Patch worker，不另造执行器 | 基线和输入准入已有，3任务模型成功率为空；人辅Evidence/Planning，不声明自主规划，详0.22 |
+| 已提交 `fdb0fc7` | 固定3任务及真实C#行为判定器，准备器输出原公开CLI参数；复用原任务资格合同和Patch worker，不另造执行器 | 基线和输入准入已有，3任务模型成功率为空；人辅Evidence/Planning，不声明自主规划，详0.22 |
+| 本次外部接缝提交 | 从原Local adapter抽出3个provider hook，外部Qwen复用原worker；校验实际发送范围和模型身份，并在解析前保留HTTP响应 | 离线共享循环/兼容性与解析失败回归通过；0真实目录查询/生成请求，不声明强模型胜任，详0.23 |
 | 文档整理 | 本文顶部快照、历史标签、统一Attempt索引、剩余矩阵及短控制文档同步 | 不增加产品能力；文档提交单独记录 |
 | 用户原有WIP | ARCHITECTURE_OVERVIEW、ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT、SPEC_COVERAGE_MATRIX，以及3份未跟踪草案 | 六份文件hash与本轮开始完全一致；不混入本轮提交 |
 
@@ -956,6 +960,35 @@ python -B -m scripts.prepare_patch_eval_suite --suite artifacts/peval7/suite.jso
 root在当前工作树再次执行第二条零网络准入：3/3 admitted、`model_calls=0`、`task_success_rate=null`、
 `models_qualified=false`。Ruff/diff检查通过。详细用法见[MODEL_QUALIFIED_ROUTING](../MODEL_QUALIFIED_ROUTING.md)。
 更强外部模型对照仍需独立自有代码任务；本节GTFO来源任务不因此获得外发许可。
+
+### 0.23 外部千问复用同一个Patch/Repair执行器
+
+`src/mod_agent/external_patch.py`提供显式`ExternalQwenPatchProfile`和
+`run_external_patch_continuation`；原`local_entry.py`只抽出模型身份准入、响应身份核验和
+provider生成元数据3个hook。本地类及旧收据默认保持，外部实际标记`qwen_chat`、
+`model_digest=None`，不能伪造Ollama二进制身份。复用原continuation、Graph、worker、
+行为反馈、Proposal、Review和Dry-run，模型调用预算仍由同一worker配置传入。
+
+首版只支持明确清单中的独立target_source；不接受decompiled_api、隐式fallback、旧Ollama回放、
+本地qualified路由或外部A4自动续接。请求先核验本轮披露记录、目的地、源码manifest；
+每次实际wire分别记录hash、bytes和披露类别，代码/行为反馈出现时需要对应已有批准类别。
+模型目录只证明被列出，不证明生成服务可用或任务质量。实际模型字段缺失/漂移在工具执行前停止。
+
+独立审查用HTTP 200且`choices=[]`复现解析前原响应丢失；修复在现有sidecar保存有界响应后才调用
+AgentTurn parser。非法JSON、非UTF8、错误模型和超限保留明确原文或编码/前缀；超限不伪造完整hash。
+HTTP接收、JSON解码、AgentTurn解析和最终准入分别记账，不把HTTP 200当合法输出，不自动重试。
+实际反馈类别也同步到已有model_admission视图，避免同一请求的记录互相矛盾。
+
+旧Local与首版外部联合76项通过（47.02秒）；后续保留修复的专属18项通过（28.18秒）。最终相关检查：
+
+```powershell
+python -B -m pytest tests/unit/test_external_patch.py tests/unit/test_agent_turn_adapters.py tests/unit/test_patch_recovery_worker.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP/ext-retention-cp-$PID" -o cache_dir="$env:TEMP/ext-retention-cpc-$PID"
+```
+
+57 passed（30.71秒），Ruff/diff检查通过；与前述集合重叠，不合计。
+HTTP替身实际走过源码工具、合成验证失败、再次查证、修订及原Review/Dry-run；
+这证明生产机制组合，不证明真实千问生成过正确代码。
+本轮真实外部模型目录查询和生成调用均为0，披露批准仍需绑定具体任务与目的地。
 
 ## 1. 结论与范围
 
