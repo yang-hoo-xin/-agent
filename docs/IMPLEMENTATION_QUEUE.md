@@ -47,7 +47,11 @@ different retained failures, not completed quality claims. The observed output
 seam now has an explicit Patch profile policy and truthful request records, with
 offline checks and legacy identity compatibility (0.27). Do not extract JSON from
 the old Max output or automatically run another model. A fixed new acceptance needs its selected
-budget. See reconciliation 0.26. Correct API semantic use, qualified models,
+budget. The same worker now supplies submission-format feedback in both initial
+and behavior-revision phases, with public-entry offline coverage, retained
+request content and separate provider-stop handling (0.28). Next is one newly
+authorized fixed Max acceptance on the unchanged owned task/oracle, not another
+profile or framework expansion. See reconciliation 0.26. Correct API semantic use, qualified models,
 Langfuse destination and DSH submission/approval/resume/delivery remain open.
 No new P0 repair or hosted CI was run.
 DSH owns UI, interaction sessions and plugin hosting only. The current Python

@@ -11,7 +11,12 @@ from pathlib import Path
 import httpx
 import pytest
 
-from src.libs.llm.agent_turn import AgentMessage, AgentTurnRequest, QwenChatAgentAdapter
+from src.libs.llm.agent_turn import (
+    AgentMessage,
+    AgentTurnProviderError,
+    AgentTurnRequest,
+    QwenChatAgentAdapter,
+)
 from src.mod_agent.artifacts import ArtifactRef
 from src.mod_agent.external_patch import (
     PATCH_FEEDBACK_DATA_CLASSES,
@@ -201,16 +206,18 @@ def test_json_mode_does_not_extract_patch_from_prose_and_retains_exact_response(
 
     result = _run(case, profile, _consent(profile))
 
-    assert result.status != "terminal" and len(handler.wires) == 1
-    assert result.first_failure["code"] == "PatchGenerationError"
+    assert result.status != "terminal" and len(handler.wires) == 2
     assert result.execution_counts["review"] == result.execution_counts["dry_run"] == 0
     assert result.execution_counts["build"] == result.execution_counts["runtime"] == 0
     journal = json.loads(Path(result.attempt_receipt["path"]).read_text())
-    assert "not strict JSON" in journal["failure"]["message"]
     receipt = journal["factory_receipt"]
+    assert receipt["patch_agent_loop"]["termination"]["code"] == "PATCH_AGENT_REPEATED_INVALID_SUBMISSION"
+    assert [row["status"] for row in receipt["patch_agent_loop"]["submission_trace"]] == ["rejected", "rejected"]
     request = receipt["external_provider_requests"][0]
     assert request["requested_response_format"] == {"type": "json_object"}
-    assert Path(receipt["model_response"]["path"]).read_text(encoding="utf-8") == handler.outputs[0]
+    assert receipt["model_response"] is None and not receipt["model_responses"]
+    retained = json.loads(Path(receipt["worker_turns"][0]["response_ref"]["path"]).read_text())
+    assert retained["content"] == handler.outputs[0]
     raw = Path(request["response_body_ref"]["path"]).read_bytes()
     assert json.loads(raw)["choices"][0]["message"]["content"] == handler.outputs[0]
     assert hashlib.sha256(raw).hexdigest() == request["response_body_sha256"]
@@ -241,8 +248,10 @@ def test_json_mode_bytes_are_admitted_before_send_without_mutating_caller_payloa
     evidence = case.inputs.store.read(case.request.evidence_pack_ref)["data"]
     adapter._admit_model_identity({}, {}, evidence)
 
-    with pytest.raises(ExternalPatchError, match="EXTERNAL_PATCH_REQUEST_CONTEXT_PROXY_EXCEEDED"):
+    with pytest.raises(AgentTurnProviderError, match="EXTERNAL_PATCH_REQUEST_CONTEXT_PROXY_EXCEEDED") as rejected:
         adapter._external_client(profile).complete_turn(adapter._request_for_output_policy(request))
+    assert rejected.value.diagnostic["failure_boundary"] == "external_patch_admission"
+    assert rejected.value.diagnostic["provider_request_started"] is False
 
     assert request.response_format is None
     assert "response_format" not in payloads[0]
@@ -454,7 +463,9 @@ def test_rejected_http_bodies_keep_bounded_truthful_evidence_without_retry(tmp_p
     receipt = json.loads(Path(result.attempt_receipt["path"]).read_text())["factory_receipt"]
     request = receipt["external_provider_requests"][0]
     assert request["response_received"] is True and request["http_status"] == 200
-    assert request["agent_turn_parse_status"] == "rejected"
+    assert request["agent_turn_parse_status"] == "not_attempted"
+    if kind in ("invalid_json", "non_utf8"):
+        assert request["json_parse_status"] == "rejected"
     assert receipt["source_disclosure"]["occurred"] is True
     ref = request["response_body_ref"]
     raw = Path(ref["path"]).read_bytes()

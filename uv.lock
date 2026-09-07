@@ -1078,6 +1078,7 @@ dependencies = [
     { name = "chromadb" },
     { name = "datasets" },
     { name = "jieba" },
+    { name = "jsonschema" },
     { name = "langchain-text-splitters" },
     { name = "langgraph" },
     { name = "markitdown", extra = ["pdf"] },
@@ -1085,6 +1086,7 @@ dependencies = [
     { name = "pymupdf" },
     { name = "pyyaml" },
     { name = "ragas" },
+    { name = "referencing" },
     { name = "streamlit" },
 ]
 
@@ -1105,6 +1107,7 @@ requires-dist = [
     { name = "chromadb", specifier = ">=0.4.0" },
     { name = "datasets", specifier = ">=2.0.0" },
     { name = "jieba", specifier = ">=0.42" },
+    { name = "jsonschema", specifier = ">=4.26,<5" },
     { name = "langchain-text-splitters", specifier = ">=0.3.0" },
     { name = "langgraph", specifier = ">=0.2.0" },
     { name = "markitdown", extras = ["pdf"], specifier = ">=0.1.0" },
@@ -1119,6 +1122,7 @@ requires-dist = [
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = "==3.8.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ragas", specifier = ">=0.4,<0.5" },
+    { name = "referencing", specifier = ">=0.37,<1" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
     { name = "streamlit", specifier = ">=1.39.0" },
 ]

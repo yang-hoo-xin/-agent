@@ -1524,6 +1524,15 @@ class LocalOllamaInitialPatchAdapter:
                 "request_sha256": _sha256_json(asdict(request)),
             }
             turns.append(record)
+            request_path = _local_patch_response_sidecar_path(
+                self.artifact_store.root, run_id=run_id, response_label=f"request-{number:03d}",
+            ).with_suffix(".json")
+            request_path.parent.mkdir(parents=True, exist_ok=True)
+            request_bytes = _patch_agent_context_json(asdict(request)).encode("utf-8")
+            with request_path.open("xb") as stream:
+                stream.write(request_bytes)
+            record["request_ref"] = {"path": str(request_path), "sha256": hashlib.sha256(request_bytes).hexdigest()}
+            record["request_ref_scope"] = "effective_agent_turn_request_not_provider_wire_or_send_proof"
             self._emit("local_patch_worker_turn_requested")
             replayed_before = self._replayed_turn_count
             try:

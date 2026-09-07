@@ -9,6 +9,11 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from jsonschema.exceptions import SchemaError
+from jsonschema.validators import validator_for
+from referencing import Registry
+from referencing.exceptions import Unresolvable
+
 from src.libs.llm import BaseLLM, ChatResponse, Message
 
 PATCH_RESPONSE_CONTRACT_ID = "patch_generation"
@@ -2029,6 +2034,83 @@ def _parse_json_object(raw: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise PatchGenerationError("Model output root must be an object.")
     return value
+
+
+def _submission_diagnostic_path(path: Any) -> list[str | int]:
+    """Keep feedback bounded even when an output contains unusually long keys."""
+
+    return [part if isinstance(part, int) else str(part)[:96] for part in list(path)[:32]]
+
+
+def _patch_submission_validator(schema: Mapping[str, Any]) -> Any:
+    if not isinstance(schema, Mapping):
+        raise ValueError("Patch submission schema must be an object.")
+    if "$schema" in schema and not isinstance(schema["$schema"], str):
+        raise ValueError("Patch submission schema dialect must be a string.")
+    validator_class = validator_for(dict(schema), default=None)
+    if validator_class is None:
+        # The production schema omits $schema; use the library's current default.
+        if "$schema" in schema:
+            raise ValueError("Patch submission schema declares an unsupported dialect.")
+        validator_class = validator_for(dict(schema))
+    try:
+        validator_class.check_schema(dict(schema))
+    except SchemaError as exc:
+        path = _submission_diagnostic_path(exc.absolute_path)
+        raise ValueError(f"Invalid Patch submission schema at {path}.") from exc
+    # This boundary is deterministic and cannot fetch a remote schema.
+    return validator_class(dict(schema), registry=Registry())
+
+
+def validate_patch_submission_schema(schema: Mapping[str, Any]) -> None:
+    """Reject configuration defects before a model call, without defining a schema."""
+
+    _patch_submission_validator(schema)
+
+
+def validate_patch_submission(
+    content: str, schema: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Validate one complete submission, without extracting or materializing code.
+
+    Model format errors use PatchGenerationError. Invalid or unresolvable schemas
+    are configuration errors (ValueError), never instructions to repair code.
+    """
+
+    validator = _patch_submission_validator(schema)
+    try:
+        value = _parse_json_object(content)
+    except PatchGenerationError as exc:
+        if not exc.diagnostics:
+            exc.diagnostics.update(
+                failure_boundary="deterministic_patch_validation",
+                failure_classification="malformed_structured_output",
+                field_path=[],
+                schema_constraint="type",
+            )
+        raise
+    try:
+        error = next(validator.iter_errors(value), None)
+    except Unresolvable as exc:
+        raise ValueError("Patch submission schema contains an unresolved reference.") from exc
+    if error is None:
+        return value
+    path = _submission_diagnostic_path(error.absolute_path)
+    constraint = str(error.validator)
+    details = ""
+    if constraint == "required" and isinstance(error.instance, dict):
+        missing = [key[:96] for key in error.validator_value if key not in error.instance][:8]
+        details = f"; missing required fields: {json.dumps(missing)}"
+    raise PatchGenerationError(
+        f"Patch submission at {path} violates schema constraint {constraint}{details}.",
+        diagnostics={
+            "failure_boundary": "deterministic_patch_validation",
+            "failure_classification": "patch_submission_schema_violation",
+            "field_path": path,
+            "schema_path": _submission_diagnostic_path(error.absolute_schema_path),
+            "schema_constraint": constraint,
+        },
+    )
 
 
 def _native_validation_error(

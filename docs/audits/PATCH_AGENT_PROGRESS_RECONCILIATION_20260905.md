@@ -6,13 +6,19 @@
 
 ## 0. 最新状态快照
 
+**提交闭环最新（0.28）：同一Patch worker现在区分工具、合规提交、完整格式错误和不完整响应；首次及行为修订均可在原余额内纠正格式。**
+公开入口的两条五回合离线路径经过原Review/Dry-run；使用预设HTTP响应与合成marker检查，
+没有新模型请求、真实编译或原15项验收。请求正文与提交轨迹进入原账本/查询；保存请求不等于发送。
+Max修后真实验收尚未执行；当前Mod仍未修好。0.27中的未实现描述保留为该提交的历史边界。
+
 **输出策略最新（0.27）：外部Patch入口改为显式profile策略；默认旧行为/哈希不变，发送层不再无条件强加JSON。**
 实际请求模式按每请求记录。纯工具回合与已有格式声明保留；严格Patch校验不放宽。
 离线组合验证已通过；尚无修后Max实际验收，也未实现格式失败自动回同worker。
 
 **模型首筛最新（0.26）：同一自有任务真实运行30B、云端3.6 Plus和3.8 Max，均未形成可交付结果，但失败层不同。**
 30B为编译失败后原样修订；Plus为编译失败后请求上游；Max为说明文字加JSON，在结构化解析前停止。
-三组都未执行15项行为矩阵，不合并成同一种失败率，不推导模型排名或First Shot根因。
+可以统计为一个任务、三种配置、三次独立首筛、零次任务完成；三组都未执行15项行为矩阵，
+不能记为行为通过率0/15，也不把不同阶段失败合成单一根因或推导模型排名。
 
 **DSH最新（0.25）：真实官方宿主已执行原后端查询，重启后页面显示013的未完成结果。**
 只读命令与原session记录已连通；没有模型调用或产品执行。任务提交、审批、执行恢复和交付仍未完成。
@@ -1143,6 +1149,76 @@ python -B -m pytest tests/unit/test_external_patch.py tests/unit/test_agent_turn
 验证覆盖默认策略、纯工具/混合/最终声明保留、原四回合工具与修订链、普通回合直接提交、
 非法说明文字仍拒绝/原文保存，以及最终wire hash/字节预算。Ruff/diff检查通过。
 测试响应替身只证明合同与装配；没有新外部请求、Model Actual、Mod代码或审批/执行行为。
+
+### 0.28 同一worker内的提交识别、格式反馈与停止分层
+
+本轮补的是允许动作、请求协议、收到输出和恢复路径的对应关系。没有新增Graph、Repair层、
+自由聊天回合或任务专用修法；决策仍由模型选择，最终提交继续遵守原JSON/schema、Binding与物化合同。
+
+| 实际输出/故障 | 当前处理 |
+|---|---|
+| 合法工具调用，可附说明文字 | 执行现有工具合同；附带文字不作为Patch提交 |
+| 完整JSON满足当前请求schema | 进入原物化、代码验证、Proposal/Review/Dry-run；格式通过不等于代码通过 |
+| 完整但非JSON，或违反原schema | 保留原文与具体错误，未物化；原阶段剩余预算内返回同worker |
+| 相同非法提交重复，或模型/观察字节不足 | 明确停止；不新增格式专用额度，也不挪用已预留的行为恢复额度 |
+| 截断、拒绝、发送/准入失败 | 分别保留原停止信号或provider诊断；不包装成要求模型修JSON的反馈 |
+
+`code_generator.py`复用原严格整段JSON解析和调用方提供的schema；使用已锁定的jsonschema与
+referencing，不建立第二份Patch字段定义，不提取说明文字之后的JSON。schema配置错误独立停止，
+不从网络取schema。完整格式错误保留原输出、schema和有界错误位置；新上下文沿用原需求、
+B0、被测代码、失败与原生工具历史，格式反馈本身计入现有观察字节预算。
+
+独立审查复现了另一处同边界缺陷：原生`length`或`done=false`已说明输出不完整，适配器却先
+解析残缺工具参数。Qwen/Ollama现在先识别停止状态，保留raw/state，但不把残缺参数变成可执行动作。
+完整的非法工具调用仍由原工具合同拒绝，没有借此放宽工具解析。
+
+`local_entry.py`为每个worker回合保存生效后的`AgentTurnRequest`正文及hash；该记录不是provider
+wire，也不是网络发送证明。外部反馈披露缺失时，第二次客户端请求在发送前停止，原提交轨迹仍保存。
+原`patch_execution_index`只读展示格式检查、工具执行和行为检查各自的事实；历史缺少请求正文时
+标为unknown，不对旧运行追加新门。未准入文本仅为原响应sidecar，不提升为已生成的正式代码记录。
+
+**能力验收：**公开`run_external_patch_continuation`保留生产配置、适配器、序列化、Graph、共享worker、
+物化、Review和Dry-run；替换底层HTTP为预设响应，验证器沿用合成静态marker检查。
+
+1. 读取→说明加JSON→格式反馈→合法代码但行为失败→再次读取→修订→Review/Dry-run：
+   共5次替身请求；行为失败位置确有2次模型、2次读取及足够字节余额，并实际消费。
+2. 读取→合法代码但行为失败→修订回复格式错误→消费格式反馈后再次读取→修订→Review/Dry-run：
+   仍共5次；行为恢复段实耗3次模型/1次读取。最终请求保留C1、F1、格式错误原文、原义务及两次工具结果。
+
+这两条离线路径都没有真实模型推理、真实C#编译或原OwnedConfigService 15项检查。
+不强迫真实模型采用该工具顺序；初次直接合规并通过也可结束。
+
+**验证记录（各集合有重叠，不相加）：**
+
+```powershell
+python -B -m pytest tests/unit/test_external_patch.py tests/unit/test_patch_submission_cli.py tests/unit/test_patch_execution_index.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\psx-$PID"
+# 首次75通过/10失败，49.56秒。定位为query旧缺ref兼容及旧异常断言/fixture问题。
+python -B -m pytest tests/unit/test_external_patch.py tests/unit/test_patch_submission_cli.py tests/unit/test_patch_execution_index.py --lf -q --tb=short --basetemp="$env:TEMP\psl-$PID"
+# 仅重跑10项全部通过，10.40秒；不是一次85项全绿。
+python -B -m pytest tests/unit/test_patch_submission_cli.py::test_public_external_behavior_revision_corrects_format_then_reads_with_same_remaining_budget -q --tb=short --basetemp="$env:TEMP\psc3-$PID"
+# 新增修订阶段用例1通过，5.14秒；首跑测试误用段内回合号，按全局记录修正断言。
+python -B -m pytest tests/unit/test_patch_execution_index.py::test_retained_request_reference_does_not_claim_send_or_expose_full_prompt -q --tb=short --basetemp="$env:TEMP\psq-$PID"
+# 请求正文可查不等于观察送达，显示词修正后1通过，1.64秒。
+python -X utf8 -B -m pytest tests/unit/test_agent_turn_adapters.py tests/unit/test_patch_agent_loop.py tests/unit/test_patch_recovery_worker.py tests/unit/test_patch_submission_loop.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\psub-worker-$PID" -o cache_dir="$env:TEMP\psub-worker-cache"
+# 首次111通过/1失败，16.23秒；旧测试期待空回复耗尽，现明确记录重复非法提交。
+python -X utf8 -B -m pytest tests/unit/test_patch_agent_loop.py::test_loop_uses_remaining_fifth_turn_for_feedback_then_stops_repeated_empty_output -q --tb=short --basetemp="$env:TEMP\psub-empty-$PID" -o cache_dir="$env:TEMP\psub-empty-cache-$PID"
+# 更新该断言并核对第5回合消费反馈，1通过，0.81秒。
+python -X utf8 -B -m pytest tests/unit/test_agent_turn_adapters.py -q --tb=short --basetemp="$env:TEMP\psub-stopfix-$PID" -o cache_dir="$env:TEMP\psub-stopfix-cache"
+# 4项截断参数反例先复现失败；修正识别顺序后本文件29通过，0.26秒。
+```
+
+提交解析独立17项通过（0.71秒），较早与原codegen组合106通过（3.26秒），后补的1项不冒充已重跑
+整个组合。依赖锁离线一致性检查通过196包。新改动的Ruff通过；local_entry原10项和code_generator
+原2项存量lint问题与HEAD逐项一致，本轮未清理。diff-check通过。
+
+**前三组编译输入核查：**同构建配置下原基线能编译，三份源码均在编译集合；未定义的Environment/
+Console由模型新增，其所在文件原无System导入，没有发现丢失声明或遗漏编译文件。账本中的完整
+F1与原报告一致，Plus末轮明确提到这些错误；历史后续请求未保存完整正文，因此不能声称独立核验过
+那些旧请求的全部wire。这一限制由新回合正文记录改善，不回写旧Actual。
+
+**下一步边界：**固定本实现与显式Max profile，沿用原自有源码/Plan、原判定器和5次总预算，
+取得本次新增运行授权后才实发。是否编译、15项是否执行/通过、是否有效修订分别报告。
+尚未证明Max修后表现、任意provider全兼容、多任务资格、自主Planning或First Shot修复。
 
 ## 1. 结论与范围
 

@@ -32,6 +32,7 @@ from src.mod_agent.fresh_planning_continuation import (
     run_fresh_patch_continuation,
 )
 from src.mod_agent.local_entry import (
+    LocalEntryError,
     LocalOllamaInitialPatchAdapter,
     _verify_source_disclosure,
     _write_local_patch_response_sidecar,
@@ -241,6 +242,10 @@ class ExternalQwenPatchAdapter(LocalOllamaInitialPatchAdapter):
                 extra.add("generated_patch")
             if isinstance(value.get("validator_feedback"), dict):
                 extra.add("verification_feedback")
+            if message.get("role") == "user" and value.get("message_type") == "patch_submission_feedback":
+                # An unadmitted generated response is returned for format repair;
+                # these classes do not assert it is valid Patch or behavior evidence.
+                extra.update(PATCH_FEEDBACK_DATA_CLASSES)
         return (*SOURCE_DISCLOSURE_DATA_CLASSES, *(name for name in PATCH_FEEDBACK_DATA_CLASSES if name in extra))
 
     def _retain_http_response(self, record, body, *, complete, bytes_seen, credential):
@@ -358,10 +363,24 @@ class ExternalQwenPatchAdapter(LocalOllamaInitialPatchAdapter):
             before = len(self._receipt.get("external_provider_requests", []))
             try:
                 response = client.complete_turn(request)
+            except (ExternalPatchError, LocalEntryError) as exc:
+                # Admission failure is not a model formatting error. Normalize
+                # the existing provider boundary so the loop can retain its
+                # feedback state before stopping without another send.
+                raise AgentTurnProviderError(str(exc), diagnostic={
+                    "failure_boundary": "external_patch_admission",
+                    "admission_error_type": type(exc).__name__,
+                    "admission_error_code": getattr(exc, "code", "EXTERNAL_PATCH_DISCLOSURE_OR_SOURCE_ADMISSION_FAILED"),
+                    "provider_request_started": len(self._receipt.get("external_provider_requests", [])) > before,
+                }) from exc
             except Exception:
                 if len(self._receipt.get("external_provider_requests", [])) > before:
-                    self._receipt["external_provider_requests"][-1]["agent_turn_parse_status"] = "rejected"
-                    self._emit("external_patch_agent_turn_rejected")
+                    failed = self._receipt["external_provider_requests"][-1]
+                    if failed.get("json_parse_status") == "decoded_not_agent_turn_admitted":
+                        failed["agent_turn_parse_status"] = "rejected"
+                        self._emit("external_patch_agent_turn_rejected")
+                    else:
+                        self._emit("external_patch_provider_turn_failed")
                 raise
             retained = self._receipt["external_provider_requests"][-1]
             retained["agent_turn_parse_status"] = "parsed_not_identity_admitted"

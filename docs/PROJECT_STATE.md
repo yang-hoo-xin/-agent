@@ -12,8 +12,11 @@ Real model screening now has three independent results on the same owned C# task
 then requested Evidence; cloud Max stopped on prose preceding JSON, before any
 compiler/check execution. P0 013 remains unchanged. Max ordinary-turn JSON mode
 was not requested; its dedicated profile now has an explicit phase-sensitive
-format policy with legacy identity preserved. Offline checks passed; no new Max
-acceptance or automatic in-worker format correction is claimed (0.27).
+format policy with legacy identity preserved (0.27). Initial and behavior-revision
+format correction now run in the same worker within shared limits; complete
+submissions, tools and incomplete/provider failures are distinguished (0.28).
+Public-entry offline composition passed; no new Max acceptance or real 15-check
+result is claimed. The three original independent task trials had zero completions.
 See reconciliation 0.26; this is not a cross-model ranking or First Shot result.
 
 Parallel checkpoint is committed: API input/schema alignment (`ceeb1b6`, `3122c26`),

@@ -23,6 +23,11 @@ from src.libs.llm.agent_turn import (
     AgentTurnRequest,
     AgentTurnResponse,
 )
+from src.mod_agent.proposal.code_generator import (
+    PatchGenerationError,
+    validate_patch_submission,
+    validate_patch_submission_schema,
+)
 
 PATCH_SOURCE_INSPECTION_TOOL_NAME = "inspect_plan_binding_source"
 PATCH_UPSTREAM_REQUEST_TOOL_NAME = "request_patch_upstream"
@@ -284,6 +289,7 @@ class PatchAgentLoopResult:
     dispatched_binding_reads: int = 0
     reused_source_observations: int = 0
     turn_progress_trace: tuple[dict[str, object], ...] = ()
+    submission_trace: tuple[dict[str, object], ...] = ()
 
     @property
     def completed(self) -> bool:
@@ -319,6 +325,8 @@ class PatchAgentLoopResult:
             ],
             "termination": deepcopy(self.termination),
             "tool_availability_trace": [deepcopy(item) for item in self.tool_availability_trace],
+            **({"submission_trace": [deepcopy(item) for item in self.submission_trace]}
+               if self.submission_trace else {}),
         }
 
 
@@ -870,6 +878,11 @@ def run_patch_agent_loop(
             stage="loop_admission",
             reason="Initial messages and a final response format are required.",
         )
+    try:
+        validate_patch_submission_schema(final_response_format.schema)
+    except ValueError as exc:
+        raise PatchAgentLoopError("PATCH_AGENT_SUBMISSION_CONTRACT_INVALID",
+            stage="loop_admission", reason=str(exc)) from exc
 
     provider = str(getattr(client, "provider", "") or "unknown")
     model = str(getattr(client, "model", "") or "unknown")
@@ -877,6 +890,7 @@ def run_patch_agent_loop(
     tool_call_trace: list[dict[str, object]] = []
     observation_trace: list[dict[str, object]] = []
     observations: list[PatchSourceObservation | Mapping[str, object]] = []
+    submission_trace: list[dict[str, object]] = []
     tool_availability_trace: list[dict[str, object]] = []
     response_actions: dict[int, dict[str, object]] = {}
     inspected_binding_ids: set[str] = set()
@@ -940,6 +954,13 @@ def run_patch_agent_loop(
             raise PatchAgentLoopError("PATCH_AGENT_LOOP_BUDGET_INVALID", stage="loop_admission",
                 reason="Resume counters cannot discard calls or inspections recorded in the prior request.")
     base_request = _without_loop_states(base_request)
+    rejected_submissions = {
+        message.content["response_sha256"] for message in base_request.messages
+        if message.role == "user" and isinstance(message.content, Mapping)
+        and message.content.get("message_type") == "patch_submission_feedback"
+        and isinstance(message.content.get("response_sha256"), str)
+    }
+    format_correction_pending = False
 
     def result_for_segment(**kwargs: Any) -> PatchAgentLoopResult:
         kwargs["model_turns_used"] -= consumed_model_turns
@@ -958,11 +979,14 @@ def run_patch_agent_loop(
                 "observation_bytes_added": sum(item.get("encoded_payload_bytes", item["model_payload_bytes"])
                     for item in observations_in_turn) + sum(item.get("feedback_payload_bytes", 0)
                     for item in tool_call_trace if item["turn_index"] == turn)})
+            progress[-1]["observation_bytes_added"] += sum(
+                int(item.get("feedback_payload_bytes", 0)) for item in submission_trace
+                if item["turn_index"] == turn and item.get("feedback_queued"))
         return replace(_loop_result(**kwargs), tool_availability_trace=tuple(deepcopy(tool_availability_trace)),
             read_accounting_version="new_source_window_v2" if reuse_covered else "binding_dispatch_v1",
             dispatched_binding_reads=sum(bool(item.get("dispatch_started")) for item in tool_call_trace),
             reused_source_observations=sum(item.get("read_cost") == 0 for item in tool_call_trace),
-            turn_progress_trace=tuple(progress))
+            turn_progress_trace=tuple(progress), submission_trace=tuple(deepcopy(submission_trace)))
     pending_response: AgentTurnResponse | None = None
     pending_observation: PatchSourceObservation | None = None
     pending_tool_results: tuple[AgentToolResult, ...] = ()
@@ -1074,7 +1098,7 @@ def run_patch_agent_loop(
                 else "auto"
             ),
             parallel_tool_calls=False,
-            response_format=final_response_format if must_finish else None,
+            response_format=final_response_format if must_finish or format_correction_pending else None,
             tool_results=tool_results or base_request.tool_results,
             tool_result_insert_index=(len(base_request.messages) if tool_results else base_request.tool_result_insert_index),
             provider_state=(pending_response.provider_state if tool_results else base_request.provider_state),
@@ -1086,6 +1110,14 @@ def run_patch_agent_loop(
             "budget_state": deepcopy(state_message.content["budget_state"]),
             "selection": "forbidden" if not request.tools else "allowed_not_selected"}
         tool_availability_trace.append(availability)
+        feedback_in_request = {
+            message.content.get("response_sha256") for message in request.messages
+            if message.role == "user" and isinstance(message.content, Mapping)
+            and message.content.get("message_type") == "patch_submission_feedback"
+        }
+        for entry in submission_trace:
+            if entry.get("feedback_queued") and entry["response_sha256"] in feedback_in_request:
+                entry["feedback_in_request"] = True
         try:
             response = client.complete_turn(request)
         except AgentTurnProviderError as exc:
@@ -1138,14 +1170,33 @@ def run_patch_agent_loop(
             )
         provider = response.provider
         model = response.model
+        for entry in submission_trace:
+            if entry.get("feedback_queued") and entry["response_sha256"] in feedback_in_request:
+                entry["followup_response_observed"] = True
+                entry.setdefault("consumed_in_model_turn", turn_index)
         if response.tool_calls:
             availability["selection"] = "selected" if request.tools else "forbidden_attempt"
         usage_by_turn.append(_usage_record(turn_index, response))
-        response_actions[turn_index] = {"submitted_patch": bool(response.content and not response.tool_calls),
+        response_actions[turn_index] = {"submitted_patch": False,
+            "text_response_received": bool(response.content and not response.tool_calls),
             "requested_source_reads": sum(call.name == PATCH_SOURCE_INSPECTION_TOOL_NAME for call in response.tool_calls)}
         pending_response = None
         pending_observation = None
         pending_tool_results = ()
+
+        if response.stop_reason in {"length", "max_tokens", "max_output_tokens", "incomplete", "content_filter", "refusal"}:
+            incomplete = response.stop_reason in {"length", "max_tokens", "max_output_tokens", "incomplete"}
+            code = "PATCH_AGENT_RESPONSE_INCOMPLETE" if incomplete else "PATCH_AGENT_PROVIDER_STOPPED"
+            availability["selection"] = "incomplete_not_executed" if incomplete else "provider_stopped_not_executed"
+            submission_trace.append({"turn_index": turn_index, "status": "incomplete" if incomplete else "provider_stopped",
+                "response_sha256": hashlib.sha256((response.content if isinstance(response.content, str) else "").encode("utf-8")).hexdigest(),
+                "schema_sha256": _canonical_sha256(final_response_format.schema), "stop_reason": response.stop_reason,
+                "code_validation_performed": False, "feedback_queued": False})
+            return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                termination=_termination(code, "Provider output is incomplete or stopped; it is not a complete submission to format-correct.", turn_index))
 
         if len(response.tool_calls) > 1 and not selected_policy.allow_batched_reads:
             code = "PATCH_AGENT_PARALLEL_TOOL_CALLS_FORBIDDEN"
@@ -1516,7 +1567,68 @@ def run_patch_agent_loop(
                     turn_index,
                 ),
             )
-        if isinstance(content, str) and content.strip():
+        if content is not None and not isinstance(content, str):
+            return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                termination=_termination("PATCH_AGENT_RESPONSE_INVALID", "Normalized response content must be text or absent.", turn_index))
+        raw_content = content or ""
+        submission = {"turn_index": turn_index, "response_sha256": hashlib.sha256(raw_content.encode("utf-8")).hexdigest(),
+            "schema_sha256": _canonical_sha256(final_response_format.schema), "status": "rejected",
+            "content_present": content is not None, "code_validation_performed": False,
+            "feedback_queued": False, "feedback_in_request": False, "followup_response_observed": False}
+        submission_trace.append(submission)
+        try:
+            validate_patch_submission(raw_content, final_response_format.schema)
+        except ValueError as exc:
+            submission["status"] = "contract_invalid"
+            return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                termination=_termination("PATCH_AGENT_SUBMISSION_CONTRACT_INVALID", str(exc), turn_index))
+        except PatchGenerationError as exc:
+            submission["diagnostics"] = deepcopy(exc.diagnostics)
+            if submission["response_sha256"] in rejected_submissions:
+                stop_code, reason = "PATCH_AGENT_REPEATED_INVALID_SUBMISSION", "The same unadmitted submission was returned after format feedback."
+            elif turn_index >= allowed_model_end:
+                stop_code, reason = "PATCH_AGENT_SUBMISSION_CORRECTION_BUDGET_EXHAUSTED", "No model turn remains in this segment to correct the submission; reserved behavior turns are unchanged."
+            else:
+                stop_code, reason = None, ""
+            if stop_code:
+                return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                    model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                    total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                    tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                    termination=_termination(stop_code, reason, turn_index))
+            feedback = {"message_type": "patch_submission_feedback", "response_sha256": submission["response_sha256"],
+                "schema_sha256": submission["schema_sha256"], "diagnostics": deepcopy(exc.diagnostics),
+                "error": str(exc), "response_schema": deepcopy(final_response_format.schema),
+                "code_validation_performed": False,
+                "required_action": "The preceding output was not admitted as a Patch. Use only the actions currently listed. "
+                    "If submitting, return one complete JSON object matching response_schema, without surrounding explanation. "
+                    "Keep the original requirements, bindings and unchanged source baseline; no code has been accepted or applied."}
+            original_output = (AgentMessage("assistant", raw_content),) if raw_content else ()
+            additions = (*original_output, AgentMessage("user", feedback))
+            feedback_bytes = len(_canonical_json([{"role": item.role, "content": item.content} for item in additions]).encode("utf-8"))
+            if total_observation_bytes + feedback_bytes > allowed_observation_end:
+                return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                    model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                    total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                    tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                    termination=_termination("PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED", "Submission feedback does not fit the existing observation allowance.", turn_index))
+            total_observation_bytes += feedback_bytes
+            submission.update(feedback_queued=True, feedback_payload_bytes=feedback_bytes)
+            rejected_submissions.add(submission["response_sha256"])
+            base_request = _without_loop_states(request)
+            base_request = replace(base_request, messages=(*base_request.messages, *additions))
+            format_correction_pending = True
+            last_reused_only_batch = None
+            continue
+        else:
+            submission["status"] = "accepted"
+            response_actions[turn_index]["submitted_patch"] = True
             try:
                 source_inspector.validate_snapshot()
             except PatchAgentLoopError as exc:

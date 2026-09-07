@@ -46,7 +46,10 @@ the same worker. Their distinct compilation/action/format failures are recorded
 in reconciliation 0.26. No P0 repair or model qualification is implied. The next
 bounded provider fix now offers an explicit Patch output-format policy, preserving
 pure tool turns, declared formats and legacy profile identity. It passed offline
-checks; a new Max acceptance and automatic format recovery remain unproven (0.27).
+checks (0.27). The same worker now handles complete malformed submissions within
+the existing budget in both initial and behavior-revision phases; provider stops
+remain separate. Public-entry offline paths reached original Review/Dry-run.
+No new Max acceptance, real compilation or task success is implied (0.28).
 Parallel checkpoints are now implemented: API input/schema fixes, historical
 Langfuse transport, three-task preparation, external shared-worker adapter,
 owned process-test input and DSH read-only host/query/display. A5's one real

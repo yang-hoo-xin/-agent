@@ -30,10 +30,12 @@ dependencies = [
     "chromadb>=0.4.0",
     "mcp>=1.0.0,<2.0.0",
     "jieba>=0.42",
+    "jsonschema>=4.26,<5",
     "markitdown[pdf]>=0.1.0",
     "pymupdf>=1.24.0",
     "streamlit>=1.39.0",
     "ragas>=0.4,<0.5",
+    "referencing>=0.37,<1",
     "datasets>=2.0.0",
 ]
 

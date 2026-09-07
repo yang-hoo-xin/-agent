@@ -96,6 +96,72 @@ def test_failed_attempt_index_links_response_tools_verification_without_inventin
     assert "DO_NOT_PROJECT" not in json.dumps(projection)
 
 
+def test_retained_request_reference_does_not_claim_send_or_expose_full_prompt(tmp_path):
+    root, path, journal, _ = _fixture(tmp_path)
+    turn = journal["factory_receipt"]["worker_turns"][0]
+    request_ref = _retain(root / "cr" / "turn.request.json", {"messages": [
+        {"role": "user", "content": {"message_type": "patch_submission_feedback",
+            "error": "DO_NOT_PROJECT_REQUEST_BODY"}}]})
+    turn["request_ref"] = request_ref
+    turn["status"] = "requested"
+    turn.pop("response_origin")
+    _retain(path, journal)
+    result = project_patch_executions(root)
+    row = result["attempts"][0]["worker_turns"][0]
+    assert row["request_ref"]["integrity"] == "verified_bytes"
+    assert row["request_observation"] == "retained_request_identity_verified_not_send_proof"
+    assert row["observation_delivery"] == "unknown_observation_to_request_link_not_verified"
+    assert row["send_observation"] == "requested_send_unconfirmed"
+    assert "DO_NOT_PROJECT_REQUEST_BODY" not in json.dumps(result)
+    Path(request_ref["path"]).write_text("{}", encoding="utf-8")
+    row = project_patch_executions(root)["attempts"][0]["worker_turns"][0]
+    assert row["request_ref"]["integrity"] == "hash_mismatch"
+    assert row["request_observation"] == "unknown_no_verified_request_reference"
+    assert row["observation_delivery"] == "unknown_no_explicit_request_reference"
+
+
+def test_submission_trace_is_distinct_from_tools_behavior_and_actual_send_claims(tmp_path):
+    root, path, journal, _ = _fixture(tmp_path)
+    factory = journal["factory_receipt"]
+    retained = factory["worker_turns"][0]["response_ref"]
+    raw = "Explanation preceding JSON. DO_NOT_PROJECT_RAW_SUBMISSION"
+    response_ref = _retain(Path(retained["path"]), {"content": raw, "tool_calls": []})
+    factory["worker_turns"][0]["response_ref"] = response_ref
+    factory["patch_agent_loop"]["submission_trace"] = [{
+        "turn_index": 1, "response_sha256": hashlib.sha256(raw.encode()).hexdigest(), "schema_sha256": "c" * 64,
+        "status": "rejected", "feedback_payload_bytes": 170, "feedback_queued": True,
+        "feedback_in_request": True, "followup_response_observed": False, "consumed_in_model_turn": 2,
+        "diagnostics": {"failure_classification": "malformed_structured_output", "json_error_line": 1,
+            "json_error_column": 1, "field_path": [], "message": raw, "raw_response": raw},
+    }]
+    _retain(path, journal)
+    row = project_patch_executions(root)["attempts"][0]
+    submission = row["submission_trace"][0]
+    assert submission["phase"] == "initial" and submission["status"] == "rejected"
+    assert submission["response_binding"] == "matching_retained_content_hash"
+    assert submission["retained_response_matches"][0]["ref"]["sha256"] == response_ref["sha256"]
+    assert submission["feedback_in_request"] is True and submission["followup_response_observed"] is False
+    assert "feedback_sent" not in submission
+    assert "not_independent_send_proof" in submission["feedback_observation_basis"]
+    assert len(row["tool_execution"]) == 2 and len(row["behavior_evaluations"]) == 1
+    assert "DO_NOT_PROJECT_RAW_SUBMISSION" not in json.dumps(row)
+    Path(response_ref["path"]).write_text("{}")
+    damaged = project_patch_executions(root)["attempts"][0]["submission_trace"][0]
+    assert damaged["response_binding"] == "unknown_no_verified_matching_content"
+
+
+def test_submission_trace_preserves_correction_phase_and_missing_history(tmp_path):
+    root, path, journal, _ = _fixture(tmp_path)
+    assert project_patch_executions(root)["attempts"][0]["submission_trace"] == []
+    journal["factory_receipt"]["patch_agent_loop"]["behavior_correction"] = {
+        "execution": {"submission_trace": [{"turn_index": 1, "response_sha256": "f" * 64,
+            "schema_sha256": "c" * 64, "status": "incomplete", "feedback_queued": False}]}}
+    _retain(path, journal)
+    row = project_patch_executions(root)["attempts"][0]["submission_trace"][0]
+    assert row["phase"] == "behavior_correction" and row["status"] == "incomplete"
+    assert row["response_binding"] == "unknown_no_verified_matching_content"
+
+
 def test_source_reference_projection_distinguishes_encoded_and_full_payload_sizes(tmp_path):
     root, path, journal, _ = _fixture(tmp_path)
     observation = journal["factory_receipt"]["patch_agent_loop"]["observation_trace"][0]

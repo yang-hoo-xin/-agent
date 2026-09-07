@@ -531,7 +531,7 @@ def test_loop_stops_when_total_observation_bytes_would_be_exceeded(
     assert result.observation_trace[0]["admitted_to_model"] is False
 
 
-def test_loop_uses_fifth_turn_only_for_one_forced_final_retry(tmp_path: Path) -> None:
+def test_loop_uses_remaining_fifth_turn_for_feedback_then_stops_repeated_empty_output(tmp_path: Path) -> None:
     _, _, _, inspector = _fixture(tmp_path, binding_count=3)
     client = _ScriptedClient(
         [
@@ -546,13 +546,16 @@ def test_loop_uses_fifth_turn_only_for_one_forced_final_retry(tmp_path: Path) ->
     result = _run(client, inspector)
 
     assert result.status == "blocked"
-    assert result.termination["code"] == "PATCH_AGENT_MODEL_TURN_BUDGET_EXHAUSTED"
+    assert result.termination["code"] == "PATCH_AGENT_REPEATED_INVALID_SUBMISSION"
     assert result.model_turns_used == 5
     assert result.tool_rounds_used == 3
     assert len(result.usage_by_turn) == 5
     assert client.requests[4].tools == ()
     assert client.requests[4].tool_choice == "none"
     assert client.requests[4].response_format == _final_format()
+    assert result.submission_trace[0]["feedback_in_request"] is True
+    assert result.submission_trace[0]["consumed_in_model_turn"] == 5
+    assert result.submission_trace[1]["feedback_queued"] is False
 
 
 def test_loop_records_source_drift_after_model_tool_selection(tmp_path: Path) -> None:

@@ -487,6 +487,58 @@ def test_ollama_adapter_uses_native_tools_and_local_usage() -> None:
     }
 
 
+def test_ollama_adapter_preserves_incomplete_response_for_worker_stop() -> None:
+    raw = {"model": "local-code-model", "done": False,
+        "message": {"role": "assistant", "content": '{"changes":['}}
+    adapter = OllamaChatAgentAdapter(base_url="http://127.0.0.1:11434",
+        model="local-code-model", max_output_tokens=128, context_window=4096,
+        request_sender=lambda *_: raw)
+    response = adapter.complete_turn(AgentTurnRequest(messages=(AgentMessage("user", "Submit patch"),)))
+    assert response.stop_reason == "incomplete"
+    assert response.content == raw["message"]["content"]
+    assert response.raw_response == raw
+
+
+def test_qwen_adapter_preserves_refusal_for_worker_stop() -> None:
+    raw = {"model": "qwen3.6-plus", "choices": [{"finish_reason": "stop",
+        "message": {"content": None, "refusal": "Request declined"}}]}
+    adapter = QwenChatAgentAdapter(api_key="test-key",
+        base_url="https://dashscope.example/compatible-mode/v1", model="qwen3.6-plus",
+        max_completion_tokens=128, request_sender=lambda *_: raw)
+    response = adapter.complete_turn(AgentTurnRequest(messages=(AgentMessage("user", "Submit patch"),)))
+    assert response.stop_reason == "refusal" and response.content is None
+    assert response.raw_response == raw
+
+
+@pytest.mark.parametrize("stop", ["length", "content_filter"])
+def test_qwen_stop_precedes_truncated_tool_arguments(stop) -> None:
+    raw = {"model": "qwen3.6-plus", "choices": [{"finish_reason": stop,
+        "message": {"content": None, "tool_calls": [{"id": "partial-tool", "type": "function",
+            "function": {"name": "search_dotnet_metadata", "arguments": '{"source_id":'}}]}}]}
+    adapter = QwenChatAgentAdapter(api_key="test-key",
+        base_url="https://dashscope.example/compatible-mode/v1", model="qwen3.6-plus",
+        max_completion_tokens=128, request_sender=lambda *_: raw)
+    response = adapter.complete_turn(AgentTurnRequest(messages=(AgentMessage("user", "Inspect"),), tools=(_tool(),)))
+    assert response.stop_reason == stop and response.tool_calls == ()
+    assert response.raw_response == raw
+    assert response.provider_diagnostic["tool_calls"][0]["arguments_valid_json"] is False
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_ollama_stop_precedes_required_tool_argument_parsing(native) -> None:
+    message = {"role": "assistant", "content": '{"source_id":'}
+    if native:
+        message["tool_calls"] = [{"function": {"name": "search_dotnet_metadata", "arguments": '{"source_id":'}}]
+    raw = {"model": "local-code-model", "done": False, "message": message}
+    adapter = OllamaChatAgentAdapter(base_url="http://127.0.0.1:11434",
+        model="local-code-model", max_output_tokens=128, context_window=4096,
+        request_sender=lambda *_: raw)
+    response = adapter.complete_turn(AgentTurnRequest(messages=(AgentMessage("user", "Inspect"),),
+        tools=(_tool(),), tool_choice="required"))
+    assert response.stop_reason == "incomplete" and response.tool_calls == ()
+    assert response.raw_response == raw
+
+
 def test_ollama_adapter_blocks_oversized_payload_before_sender() -> None:
     calls: list[dict[str, object]] = []
 

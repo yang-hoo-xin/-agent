@@ -160,8 +160,19 @@ def _turns(factory: Mapping[str, Any], refs: _References) -> list[dict[str, Any]
             "hash_basis", "provider_body_sha256", "provider_body_utf8_bytes",
         )
         row["wire_identity_verification"] = "digest_recorded_not_wire_replayed"
+        row["request_ref"] = (refs.check(turn["request_ref"])[0] if "request_ref" in turn
+            else {"integrity": "unverifiable_reference"})
+        row["request_observation"] = (
+            "retained_request_identity_verified_not_send_proof"
+            if row["request_ref"]["integrity"] == "verified_bytes"
+            else "unknown_no_verified_request_reference"
+        )
         row["observation_request_links"] = []
-        row["observation_delivery"] = "unknown_no_explicit_request_reference"
+        row["observation_delivery"] = (
+            "unknown_observation_to_request_link_not_verified"
+            if row["request_ref"]["integrity"] == "verified_bytes"
+            else "unknown_no_explicit_request_reference"
+        )
         response, document = refs.check(turn.get("response_ref"))
         row["response_ref"] = response
         if "original_response_ref" in turn:
@@ -216,6 +227,38 @@ def _tools(loop: Mapping[str, Any]) -> list[dict[str, Any]]:
                 and observation.get("turn_index") == call.get("turn_index")
                 and observation.get("binding_id") == call.get("binding_id")]
             row["delivery_verification"] = "journal_admission_only_not_wire_consumption"
+            result.append(row)
+    return result
+
+
+def _submissions(factory: Mapping[str, Any], loop: Mapping[str, Any], refs: _References):
+    """Expose submission checks without counting them as tools or behavior runs."""
+    retained = []
+    for turn in _rows(factory.get("worker_turns")):
+        ref, document = refs.check(turn.get("response_ref"))
+        content = document.get("content")
+        if ref.get("integrity") == "verified_bytes" and isinstance(content, str):
+            retained.append({"turn_index": turn.get("turn_index"), "ref": ref,
+                "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest()})
+    result = []
+    for phase, execution in _phases(loop):
+        for submission in _rows(execution.get("submission_trace")):
+            row = {"phase": phase, **_fields(submission, "turn_index", "response_sha256", "schema_sha256",
+                "status", "stop_reason", "code_validation_performed", "feedback_payload_bytes", "feedback_queued", "feedback_in_request",
+                "followup_response_observed", "consumed_in_model_turn")}
+            diagnostics = _object(submission.get("diagnostics"))
+            row["diagnostics"] = _fields(diagnostics, "failure_boundary", "failure_classification", "schema_constraint",
+                "json_error_line", "json_error_column", "json_error_character_index")
+            for key in ("field_path", "schema_path"):
+                value = diagnostics.get(key)
+                if isinstance(value, list):
+                    row["diagnostics"][key] = [item[:96] if isinstance(item, str) else item
+                        for item in value if type(item) in (str, int)][:32]
+            matches = [item for item in retained if item["content_sha256"] == submission.get("response_sha256")]
+            row["retained_response_matches"] = matches
+            row["response_binding"] = "matching_retained_content_hash" if matches else "unknown_no_verified_matching_content"
+            row["claim_scope"] = "submission_format_and_schema_only_not_patch_or_behavior_success"
+            row["feedback_observation_basis"] = "journal_request_and_response_observations_not_independent_send_proof"
             result.append(row)
     return result
 
@@ -304,6 +347,7 @@ def _factory_execution(factory: Mapping[str, Any], refs: _References) -> dict[st
             "matching_explicit_response_hash" if matches else "unknown_no_matching_response_ref")
     return {
         "worker_turns": _turns(factory, refs), "tool_execution": _tools(loop),
+        "submission_trace": _submissions(factory, loop, refs),
         "code_responses": responses, "behavior_evaluations": evaluations,
         "replay_request_observations": [{
             **_fields(item, "current_wire_sha256", "all_json_values_and_text_exact", "exact_wire_bytes_match"),
@@ -513,6 +557,7 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
         "worker_turns": turns,
         "replay_request_observations": execution.get("replay_request_observations", []),
         "tool_execution": execution.get("tool_execution", []),
+        "submission_trace": execution.get("submission_trace", []),
         "code_responses": execution.get("code_responses", []),
         "behavior_evaluations": evaluations,
         "terminal": _fields(terminal, "status", "terminal_stage", "stopped_before", "reason",

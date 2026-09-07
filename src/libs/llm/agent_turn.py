@@ -399,13 +399,15 @@ class OllamaChatAgentAdapter:
             raise AgentTurnProviderError(
                 "OLLAMA_CHAT_RESPONSE_INVALID", diagnostic={"request_identity": request_identity}
             )
+        stop_reason = "incomplete" if data.get("done") is False else str(data.get("done_reason") or "") or None
+        stopped = stop_reason in {"length", "max_tokens", "max_output_tokens", "incomplete", "content_filter", "refusal"}
         raw_tool_calls = message.get("tool_calls") or []
         if not isinstance(raw_tool_calls, list):
             raise AgentTurnProviderError(
                 "OLLAMA_CHAT_TOOL_CALLS_INVALID", diagnostic={"request_identity": request_identity}
             )
         try:
-            if not raw_tool_calls and required_single_tool:
+            if not stopped and not raw_tool_calls and required_single_tool:
                 raw_tool_calls = [
                     {
                         "function": {
@@ -414,7 +416,7 @@ class OllamaChatAgentAdapter:
                         }
                     }
                 ]
-            tool_calls = tuple(_parse_ollama_tool_call(item) for item in raw_tool_calls)
+            tool_calls = () if stopped else tuple(_parse_ollama_tool_call(item) for item in raw_tool_calls)
         except AgentTurnProviderError as exc:
             raise AgentTurnProviderError(
                 str(exc), diagnostic={**exc.diagnostic, "request_identity": request_identity},
@@ -424,7 +426,7 @@ class OllamaChatAgentAdapter:
             model=str(data.get("model") or self.model),
             content=str(message.get("content") or "") or None,
             tool_calls=tool_calls,
-            stop_reason=str(data.get("done_reason") or "") or None,
+            stop_reason=stop_reason,
             usage=AgentUsage(
                 input_tokens=_int_value(data.get("prompt_eval_count")),
                 output_tokens=_int_value(data.get("eval_count")),
@@ -588,10 +590,14 @@ class QwenChatAgentAdapter:
                 (usage_data.get("prompt_tokens_details") or {}).get("cached_tokens")
             ),
         )
+        stop_reason = "refusal" if message.get("refusal") else str(choice.get("finish_reason") or "") or None
+        stopped = stop_reason in {"length", "max_tokens", "max_output_tokens", "incomplete", "content_filter", "refusal"}
         raw_tool_calls = message.get("tool_calls") or []
         parsed_tool_calls: list[AgentToolCall] = []
         try:
-            for item in raw_tool_calls:
+            # A stopped response may contain truncated tool arguments. Retain
+            # them in raw/state data, but never parse them as executable actions.
+            for item in (() if stopped else raw_tool_calls):
                 parsed_tool_calls.append(_parse_chat_tool_call(item))
         except AgentTurnProviderError as exc:
             raise AgentTurnProviderError(
@@ -615,7 +621,7 @@ class QwenChatAgentAdapter:
             model=str(data.get("model") or self.model),
             content=message.get("content"),
             tool_calls=tool_calls,
-            stop_reason=str(choice.get("finish_reason") or "") or None,
+            stop_reason=stop_reason,
             request_id=str(data.get("id") or "") or None,
             usage=usage,
             provider_state={
