@@ -72,6 +72,9 @@ test('display keeps a failed or unresolved task separate from query success', ()
     proposal_admitted: false, worker_state: { termination: { code: 'PATCH_AGENT_UPSTREAM_REQUESTED' } },
     source_currentness: 'not_rechecked_by_index', private_payload: 'must not render' };
   const result = JSON.parse(renderResult(data([row]), 'r1'));
+  assert.ok(result.display_notice.startsWith('查询已有运行：'));
+  assert.equal(result.query_model_calls, 0);
+  assert.equal(result.product_execution_started, false);
   assert.equal(result.records[0].state, 'partial');
   assert.equal(result.records[0].proposal_admitted, false);
   assert.equal(result.records[0].source_currentness, 'not_rechecked_by_index');

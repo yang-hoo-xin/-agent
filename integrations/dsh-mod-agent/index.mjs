@@ -93,7 +93,10 @@ export function renderResult(data, runId) {
   const selected = runId === undefined ? data.attempts : data.attempts.filter(row => row.run_id === runId);
   if (runId !== undefined && selected.length !== 1) throw new Error('RUN_NOT_UNIQUE_OR_MISSING');
   const rows = selected.slice(-20).map(summary);
-  return JSON.stringify({ read_only: true, backend_authority: 'original_journal_and_artifacts',
+  return JSON.stringify({
+    display_notice: '查询已有运行：本次没有启动模型、重新修订或重新验证。下方状态与调用次数属于已保存的运行。',
+    query_model_calls: 0, query_verifier_executions: 0, product_execution_started: false,
+    read_only: true, backend_authority: 'original_journal_and_artifacts',
     matching_runs: selected.length, shown_runs: rows.length, truncated: selected.length > rows.length,
     records: rows }, null, 2);
 }
