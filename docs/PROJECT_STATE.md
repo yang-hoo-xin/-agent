@@ -10,9 +10,11 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 2026-09-07: public upstream continuation, current C2/F2 binding and new-Plan
 worker/Review/Dry-run composition passed offline acceptance. Shared budgets,
 unchanged verification requirements and separate per-segment records are retained.
-011 stopped during zero-network context admission; no real model ran. Repeated
-guidance is consolidated and independent 012 is prepared; the c760-specific verifier excludes
-real A4 claims. Reconciliation 0.16 is the current detailed evidence location.
+013 completed two real model calls and source inspection, then requested Evidence
+upstream; no new code or matrix ran. The requested refs were readable within the
+current budget, so routing quality is unproven. The c760-specific verifier excludes
+real A4 continuation claims. 011/012 remain zero-model previews. Reconciliation
+0.16–0.18 contains the current engineering and actual-run evidence; no run remains active.
 The checkpoints below are historical and do not override this snapshot.
 
 Platform implementation: Patch reuse `54dff43`; Graph return `aa4e00f`/`b792c41`;

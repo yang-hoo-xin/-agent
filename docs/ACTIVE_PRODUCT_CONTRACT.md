@@ -46,11 +46,13 @@ upstream cycle with current failed-code/report binding, optional Evidence and
 Planning providers, new-Plan worker assembly and the original Review/Dry-run.
 Offline synthetic acceptance passed; model/read/observation budgets remain shared,
 old reports and approvals are not inherited. See reconciliation 0.16.
-011 stopped before any model send: added guidance exceeded the byte proxy by ten
-bytes. Redundant guidance is consolidated without changing semantic inputs or
-budgets; independent 012 is prepared for the unchanged c760 case with updated general
-guidance and B0/version labels. Its fixed case verifier does not support arbitrary
-new Plans, so it does not claim real A4 acceptance. No new Mod success is recorded.
+Latest real trial 013 used frozen 925790d: two model sends/responses, five reads
+(three new windows and two reuses), then a voluntary Evidence upstream request.
+No new code or matrix ran. Its three requested refs were readable within the
+available budget, so upstream necessity is unproven. The fixed c760 verifier did
+not enable real A4 providers; no new Mod success is recorded. See 0.18.
+011/012 are retained zero-model preview failures (byte allowance, then stale
+auditor wording); original semantics were preserved. No further trial is running.
 The implementation descriptions below retain their historical checkpoint scope.
 Current implementation: Patch reuse `54dff43`, Graph upstream return `aa4e00f`/
 `b792c41`, optional qualified-model routing `7b82698`, Planning path display `2e746c7`.

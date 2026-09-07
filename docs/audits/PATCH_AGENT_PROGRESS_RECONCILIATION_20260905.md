@@ -6,11 +6,15 @@
 
 ## 0. 最新状态快照
 
-**2026-09-07整链适配：`d6eda97`已通过合成项目的完整上游续接验收；011仅零网络预览被阻断，真实Mod结果仍待独立012。**
+**2026-09-07最新：整链适配`d6eda97`与指导去重`925790d`已提交。013真实2次调用后主动请求Evidence上游，没有生成代码或运行矩阵。**
+首轮5次读取为3新窗口＋2复用，内容进入第二实际请求；模型随后选择`request_patch_upstream`。
+三个所列引用都可在原worker读取，离线测算1新窗口/5,308字节，小于当时2窗口/5,839字节余额。
+因此请求结构合法，但必要性未证明；不是工具隐藏、额度耗尽，也不是又一次33/36的新测试结果。
+本轮不追加真实尝试；工程与真实行为结论分别见0.16及0.18。
 不同代码产生的新失败会绑定到实际被测版本；可选Evidence/Planning回流后，新Plan重新装配worker，
 经过原行为检查、Proposal、Review和Dry-run。模型、读取及观察字节不重置；原报告不覆盖，旧审批不继承。
 新增上游路径为一个有界周期，既有同Plan路径不强迫读取或重新规划。资格路由与A4配置组合仍未支持。
-当前case验证器固定c760，因此012仅检验通用失败指导和B0/被测版本的区分，不冒充真实A4验收。
+当前case验证器固定c760，因此013未配置真实A4自动续接，不冒充模型已走完上游链。
 本轮工程命令、兼容缺陷及限制见0.16；历史窗口中的“当前”不覆盖本快照。
 
 **更新时间：2026-09-06；Patch覆盖复用：`54dff43`；Graph回流：`aa4e00f`／`b792c41`；资格路由：`7b82698`。本节为当前读入口，旧章节保留当时事实。**
@@ -111,6 +115,7 @@ Qwen在工具预算反馈后由请求5处改选2处；修正执行ID记账后，
 | 已提交 `7b82698`／`596dae5` | 既有公开Patch CLI可选qualified角色路由；真实执行/完整固定矩阵/原物化代码/当前worker指纹决定资格；CLI与API缓存重验 | 离线Repair正例与拒绝路径通过；主仓联合176通过，1旧schema测试补排除空新字段后定点通过。没有发布真实qualified profile |
 | 已提交 `2e746c7` | Planning可编辑选项内联其已有完整source_path并校验共享表一致，保持原ID/源码/范围/选择自由 | 32项相关检查通过；仅表示改进，不能凭测试称模型语义质量改善 |
 | 已提交 `d6eda97` | 三方面整链适配：公开A4 provider装配、当前C2/F2绑定、新Plan共享worker与原Review/Dry-run、共享预算和分段查询 | 335项checkpoint通过；之后最终refs两例、查询一例定点通过。真实Mod尚未修复，详0.16 |
+| 已提交 `925790d` | 合并通用失败指导的重复说明；保留原需求/代码/失败、输出基线与动作选择自由 | 18项相关回归通过；首wire44,560字节。013真实模型选择了上游，但未产生代码，详0.17–0.18 |
 | 本轮生产代码WIP | 无；以上生产变更均已提交 | 文档状态不能代替Actual成功 |
 | 文档整理 | 本文顶部快照、历史标签、统一Attempt索引、剩余矩阵及短控制文档同步 | 不增加产品能力；文档提交单独记录 |
 | 用户原有WIP | ARCHITECTURE_OVERVIEW、ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT、SPEC_COVERAGE_MATRIX，以及3份未跟踪草案 | 六份文件hash与本轮开始完全一致；不混入本轮提交 |
@@ -148,6 +153,9 @@ Fresh/A3/A8支线另见第11.4、12.4、12.5节，不混进下列P0调用总数�
 | 覆盖复用轮：public_cli_repair_008 | 固定`54dff43`；短验证目录r8 | 3 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_008/actual/result.json)；9工具＝3新窗口＋6复用→旧代码→33/36→第四请求被旧auditor误拒绝，未发送；非模型修订失败 |
 | 验收器修正版：public_cli_repair_009 | 生产`54dff43`，冻结HEAD`62a996b`，修正auditor；r9 | 5 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_009/actual/result.json)；11工具＝3新＋8复用，完整修订/两次矩阵均33/36，代码相同 |
 | 独立27B对照：public_cli_repair_010 | 生产`54dff43`，冻结HEAD`2c5f5d6`；r10 | 2发送/1返回 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_010/actual/result.json)；不同模型首轮自主选4support，3新＋1复用；第二请求600秒超时，无代码/矩阵 |
+| 零网络预览：public_cli_repair_011 | `d6eda97` | 0 | 0 | body45,066＋4,096超49,152十字节；未实发、未生成、未验证，原记录保留 |
+| 零网络预览：public_cli_repair_012 | `925790d` | 0 | 0 | body44,560准入；旧auditor要求两句旧英文而误拒绝，所有B0/C1/F1/需求检查成立，未实发 |
+| 通用指导验收：public_cli_repair_013 | `925790d`，新auditor绑定该版本；r13 | 2发送/2返回 | 0 | [结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_013/actual/summary.json)；5读实际入模→请求Evidence上游；无新代码/矩阵，未启用实际A4续接 |
 
 001–004窗口新请求为0+1+2+2=5；004收据中的4是2回放+2新响应，不能重复累计。
 后续独立005另有2次新调用；两个已结束窗口合计7次新调用，不包含2份历史响应回放。
@@ -156,6 +164,7 @@ Fresh/A3/A8支线另见第11.4、12.4、12.5节，不混进下列P0调用总数�
 008新增3次，001–008合计16次真实调用。008客户端计数4包含一次发送前被auditor拒绝，物理发送仍为3。
 009新增5次，001–009合计21次真实调用，0新增回放；009无发送前误拒绝。
 010新增2次真实发送、仅1次完整返回；001–010合计23次模型POST，不代表23个成功完成的响应。
+011/012及013-preview均0实发；013新增2次发送与返回，001–013合计25次POST，本轮实际新增只有2次。
 001收据中的requested计数也不能冒充HTTP发送，其外层实发计数为0。
 
 ### 0.3 最新剩余能力矩阵
@@ -163,17 +172,17 @@ Fresh/A3/A8支线另见第11.4、12.4、12.5节，不混进下列P0调用总数�
 | 能力 | 最新已证实 | 仍缺什么 |
 |---|---|---|
 | 共享Patch/行为Repair入口 | 真实父Proposal→RepairPlan→同worker，模拟可到完整Review/Dry-run | 当前真实修订未通过，不能称成功Repair |
-| 公开CLI恢复装配 | 007已由系统绑定两条来源、完成真实生成/验证/反馈/修订/重验 | 两份代码未改善，First Shot仍失败；不等于通用自动恢复/模型资格 |
+| 公开CLI恢复装配 | d6eda97可选provider配置在原Graph完成一个上游周期，再经新Plan/worker及原Review/Dry-run；同Plan入口保持 | 合成项目已验收，实际case验证器仍固定c760；无任意新Plan的GTFO验收 |
 | 真实往返与观察驱动 | 真实预算反馈→重选2处；2处实际源码返回模型→真实完整输出 | 输出代码未改善；不能把工具使用等同语义正确 |
-| 覆盖复用与计数 | 008实际3份源码窗口、6次复用；9条观察进入第三实发请求；旧记录按旧计数解释 | 第二轮仅复用已知信息，未取得新源码；不能保证每个模型回合都有语义进展 |
-| C1与失败可见、原义务保留 | 008前三实发保留原语义；第四待发送请求的唯一完整C1与新F1仍在、8项原字段相等 | 第四请求未发送；准备阶段漏测旧auditor对引用表示的兼容，不能声称模型消费了该次新F1 |
-| 只读范围／三部分上下文 | 29读/5编辑；完整源码与3份登记API可按需读取 | 本次只实际选读2个edit binding；未真实消费新增API工具 |
+| 覆盖复用与计数 | 013实际3新窗口＋2复用，5条观察进入第二实际请求；不同阶段预算累计不重置已有离线证据 | 允许复核；不以新增字节判断有用，不以不同代码判断修好 |
+| C1与失败可见、原义务保留 | 013两份实际请求核验B0、完整C1、三项F1与8项原字段；新失败C2/F2绑定也经合成验证 | 入模不是模型理解证明；008邻接缺陷与012旧短语缺陷分别关闭，不反写历史 |
+| 只读范围／三部分上下文 | 29读/5编辑；013实读全部5edit；B0与被测代码的角色明确，API仍是保存Evidence | 未真实消费API工具；未建设全量新的读取目录或任意版本源码切换 |
 | 行为修订与Revalidation | 同一产品循环实际完成一次反馈修订和原矩阵重验 | 五项代码均等于旧父版本，原3个First Shot失败未消除 |
 | 新草稿失败后再查证 | 54dff43公开CLI离线5＋5路径通过；009失败后001/005引用实际进入第五请求并获得修订 | 只选择已见信息，没有新增源码；两份代码和三项失败不变，有效修复未证明 |
 | 停止与来源 | 失败未流入新Proposal/Apply；同B0实际代码比较、无变化反馈和显式确定性结果复用已测试 | 原矩阵仍决定行为结果；旧报告缺完整验证身份则不复用；不宣称通用恢复 |
-| 可查询执行索引 | 单Store薄投影显示v2新增/复用计数、每轮观察进展、代码比较轮次与来源；008查询已生成 | 旧attempt缺失保持unknown；查询不等于真实发送证明，未接通全部旧Trace/Eval/Langfuse |
+| 可查询执行索引 | 同Store查询分段Plan/worker、整链预算、上游角色、blocked新Plan及原/当前失败；013查询已生成 | 缺失保持unknown；预算预留不等于真实发送；未完成全部旧Trace/Eval/Langfuse整合 |
 | 接续与预算 | 精确原JSON值、类型及文本校验；2原响应回放不新发网；全工作5次新调用 | 仅限定0已执行读的工具选择前缀；不是任意节点或副作用的自动恢复 |
-| 上游请求／Replan | A4在原Graph中消费明确human/worker请求，旧＋新Evidence全集重算→ModelPlanning→新Plan已离线通过；无需Codex抄worker selection | 当前自动入口支持绑定的原C1/F1；新行为F1未重绑则拒绝。CLI provider装配、自动新Patch/Build/Runtime仍未交付 |
+| 上游请求／Replan | 当前不同C2/F2→Evidence/Planning→新Plan→新Patch→原Review/Dry-run的公开链已离线通过；013真实自主请求Evidence | 013请求必要性未证明且该case未配A4；多上游周期、真实新Plan与Build/Runtime闭环仍未证明 |
 | 自主Planning／模型资格 | A4真实模型生成新Plan与preflight；公开Patch入口已有可选证据资格路由及离线Repair正例 | 新Plan语义未通过；c760仍人辅P0基线；真实3任务资格集/合格模型条目未发布，initial角色正向资格未验收 |
 | Apply／Build／Runtime | 保留原控制合同，Mod源码未变 | 本次全部未执行；隔离C# Harness不是实际游戏运行 |
 | 七组完整十日目标 | 本轮推进执行与一类恢复；其它已有底座继续复用 | 自主Evidence/API语义消费、固定Eval、真实Langfuse、hosted CI、Release等未由本轮完成 |
@@ -755,6 +764,36 @@ qualified路由与A4的组合资格；跨任务稳定性。原c760仍为P0所选
 
 相关验证：`python -B -m pytest tests/unit/test_patch_visible_revision_context.py tests/unit/test_patch_recovery_worker.py -q --tb=short -o cache_dir="$env:TEMP/upguide-cache" --basetemp="$env:TEMP/upguide-$PID"`，18 passed，12.51秒。
 这个测量不是模型已接收；独立012将通过同公开CLI预览核验最终wire后才发送，输入/模型/原矩阵保持。
+
+### 0.18 013：真实自主上游请求，仍无代码修复
+
+012通过字节准入后，旧auditor的`C2_requirement_directive_present`仍要求两个旧英文子串，误拒绝新指导。
+B0、8项原语义、完整C1/物化及三项F1全为true。新独立auditor绑定`925790d`和local_entry文件hash，
+只将该项改成与当前生产`_revision_messages`产生的完整指导逐字比较；不改wire，不取消其它校验。
+9项离线检查通过，含缺需求、错误基线、缺C1、错误指导、损坏引用与缺引用全文的拒绝；旧auditor与012记录不变。
+[审计器验证](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/auditor_013_current_revision_925790d/result-v2.json)。
+
+013固定`925790d`、181文件、原006+r6/Feature/Evidence/c760、Qwen30B与原5模型/6读取/32,768观察字节。
+公开CLI preview与实际首wire逐字一致（44,560字节）；第二实际body62,989字节已发送并收到响应，
+两次真实返回记录的输入token分别为12,133和17,429，不能用JSON字节当token数。
+实际2次POST/2次响应，另1次模型身份GET，0回放；总176.91秒。
+首轮5个edit读取为3新窗口＋2复用，进入第二实际请求。第二轮原生调用`request_patch_upstream`，
+required_owner=evidence，理由是需要理解FirstShotPatches相关行为；没有返回代码。
+
+三个refs对应ResetStoredCrosshair、GetCrosshairSize(float scalar)、SetStoredCrosshair。第二请求仍有
+`inspect_plan_binding_source`，action为`inspect_or_finish_or_request_upstream`，没有force_final。
+Get正文已在此前edit001窗口中，FirstShot两个方法尚未读；三个refs均在当前read enum。
+按生产codec只读测量，该批需1新窗口＋2复用，共5,308字节，小于当时2新窗口/5,839字节额度；
+此测量不是新执行、不是模型已读。请求合法但上游必要性未证明，不因它声称需要Evidence就自动扩大Plan。
+
+终态为`PATCH_AGENT_UPSTREAM_REQUESTED`（外层failure class为LocalEntryError）。本次case verifier仍固定c760，
+没有启用真实A4 providers，因此没有实际取证/重规划。新代码0、矩阵0、Proposal/Review/Dry-run/Apply/Build/Runtime均0。
+不能把013写成又一次33/36，也不能写成新策略已提高修复成功率；它证明了该次工具观察后模型自主选择上游。
+本轮真实尝试到此停止，尚无通过原矩阵的Mod修订。后续应区分已有引用读取与上游重新评估的决策，
+以及领域验证器对新Plan的适配，不把这次选择当作旧Plan错误的证据。
+
+[真实运行记录](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_013/actual/summary.json)、
+[只读查询](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/public_cli_repair_013/actual/execution-query.json)。
 
 ## 1. 结论与范围
 
