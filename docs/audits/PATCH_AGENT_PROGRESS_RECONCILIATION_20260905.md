@@ -6,6 +6,9 @@
 
 ## 0. 最新状态快照
 
+**A7最新（0.22）：3个不同Feature任务已冻结，当前代码下3/3输入准入通过；全部真实模型成绩仍为未运行。**
+两个新增任务的真实C#基线验证已执行，原P0保留36项检查；不把输入准入、基线缺陷或离线脚本响应计为模型成功。
+
 **A6最新（0.21）：原Patch查询已接上历史元数据OTLP导出与查回代码，评分必须绑定被测代码和精确矩阵。**
 65项相关回归通过；没有发送Langfuse请求，目标服务尚未配置，不能声称真实sink、完整时序或生产观测已交付。
 
@@ -131,7 +134,8 @@ Qwen在工具预算反馈后由请求5处改选2处；修正执行ID记账后，
 | 已提交 `925790d` | 合并通用失败指导的重复说明；保留原需求/代码/失败、输出基线与动作选择自由 | 18项相关回归通过；首wire44,560字节。013真实模型选择了上游，但未产生代码，详0.17–0.18 |
 | 已提交 `ceeb1b6` | Findings/Planning实际输入保留API的source_authority、程序集hash、MVID、token和signature，并说明当前／参考来源及运行语义边界 | 来源信息传播已有；A5 Actual001一轮真实输出被编辑身份校验拒绝，不能称API语义成功，详0.20 |
 | 已提交 `3122c26` | `requirement_coverage.py`与`requirement_coverage_provider.py`共享原合法编辑身份谓词，生产schema区分引用域与编辑提示域；新增原Actual离线回归 | 4项聚焦及115项checkpoint通过；其它并行WIP不在本节A5验收范围，不能将工作树整体写成“无WIP” |
-| 本次A6提交 | 原Patch查询到Langfuse历史元数据OTLP导出、查询与有限查回；评分核验代码/报告/矩阵身份，防止同数量异矩阵错绑 | 65项相关回归通过；没有真实服务发送，不增加产品成功、原始时序或跨任务资格声明，详0.21 |
+| 已提交 `9efcac9` | 原Patch查询到Langfuse历史元数据OTLP导出、查询与有限查回；评分核验代码/报告/矩阵身份，防止同数量异矩阵错绑 | 65项相关回归通过；没有真实服务发送，不增加产品成功、原始时序或跨任务资格声明，详0.21 |
+| 本次A7提交 | 固定3任务及真实C#行为判定器，准备器输出原公开CLI参数；复用原任务资格合同和Patch worker，不另造执行器 | 基线和输入准入已有，3任务模型成功率为空；人辅Evidence/Planning，不声明自主规划，详0.22 |
 | 文档整理 | 本文顶部快照、历史标签、统一Attempt索引、剩余矩阵及短控制文档同步 | 不增加产品能力；文档提交单独记录 |
 | 用户原有WIP | ARCHITECTURE_OVERVIEW、ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT、SPEC_COVERAGE_MATRIX，以及3份未跟踪草案 | 六份文件hash与本轮开始完全一致；不混入本轮提交 |
 
@@ -920,6 +924,38 @@ python -B -m pytest tests/unit/test_patch_langfuse.py tests/unit/test_patch_exec
 真实Langfuse Cloud/自托管服务的接收、持久化、页面显示和查回仍未验收。
 已实现的是导出消费代码与离线验证；不是实时全链追踪、模型资格或Mod修复。
 配置、接口与边界见[PATCH_LANGFUSE_IMPORT](../PATCH_LANGFUSE_IMPORT.md)。
+
+### 0.22 A7：固定真实源码任务与实际行为基线
+
+新准备器`python -m scripts.prepare_patch_eval_suite`使用原`patch_qualification_tasks_v1`合同、
+ArtifactStore和`preflight_patch_continuation`；选定任务后输出原`continue-fresh-patch`参数。
+默认只准备/准入；只有显式执行才进入模型。没有新的执行控制面或资格结论。
+
+冻结任务集为`artifacts/peval7/suite.json`，SHA
+`0c86555524bfb1a2086a546c8735ab5ced7a98a07fdd6feb1871460f57df2ba3`。
+三个Feature分别是独立Eval请求下的Follow Recoil默认值保持、SpreadAPI非法输入保持、原Accurate Spread切换。
+前两项是新Eval任务，不能冒充用户要求修改生产默认配置。原P0的重复Repair不增加独立任务分母。
+
+| 任务 | 当前实际结果 |
+|---|---|
+| 配置默认值任务 | `artifacts/peval7/c1/baseline-verification.json`：3个独立C#进程，5项检查中新增要求1项失败、原行为4项通过 |
+| 公开API输入任务 | `artifacts/peval7/c2/baseline-verification.json`：5个独立C#进程，17项检查中非法输入12项断言失败、正常行为5项通过 |
+| 原P0任务 | 沿用原36项矩阵；这轮未重跑，不产生新的33/36或修复结果 |
+
+使用原始C#输入、明确的依赖替身、固定.NET7 compiler/references/runtime，在短临时目录编译运行；
+不把源码字符串匹配当行为判定，也不称GTFO Runtime。原输入有来源hash，没有导入正确修订答案。
+两个新任务的支持关系与目标选择明确为人工编排，不证明模型Evidence/Planning质量。
+各attempt的报告按既有response路径隔离，避免覆盖同名matrix；旧报告不改写。
+
+```powershell
+python -B -m pytest tests/unit/test_accurate_crosshair_eval.py tests/unit/test_patch_task_suite.py tests/unit/test_model_qualification.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP/a7suite-cp-$PID" -o cache_dir="$env:TEMP/a7suite-cache-$PID"
+python -B -m scripts.prepare_patch_eval_suite --suite artifacts/peval7/suite.json
+```
+
+24项checkpoint通过，84.29秒；之后报告隔离和反馈调整的8项受影响检查通过，11.29秒，不相加计数。
+root在当前工作树再次执行第二条零网络准入：3/3 admitted、`model_calls=0`、`task_success_rate=null`、
+`models_qualified=false`。Ruff/diff检查通过。详细用法见[MODEL_QUALIFIED_ROUTING](../MODEL_QUALIFIED_ROUTING.md)。
+更强外部模型对照仍需独立自有代码任务；本节GTFO来源任务不因此获得外发许可。
 
 ## 1. 结论与范围
 

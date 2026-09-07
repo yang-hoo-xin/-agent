@@ -86,3 +86,46 @@ The included tests use synthetic production-path receipts and an HTTP transport
 stub. They demonstrate the Repair role selector and rejection paths; they do not
 qualify any installed real model or establish cross-task model performance.
 No production model qualification configuration is shipped by this change.
+
+## Fixed real-source task preparation and selection
+
+`python -m scripts.prepare_patch_eval_suite` prepares and selects task inputs for
+the existing `continue-fresh-patch` CLI. It does not introduce a service, another
+queue, or an execution database. `--suite PATH` performs input preflight only;
+`--select CASE_ID --attempt-id ID` prints the exact existing CLI arguments.
+Only an explicit additional `--execute` calls that CLI and its real model path.
+The returned run and attempt receipt references remain the existing result/query
+interface. This document does not authorize an execution.
+
+Preparation takes one explicit `--prepare-seed PATH`. The seed binds an output
+root, existing P0 CLI arguments, the unchanged original P0 matrix, and the files
+that identify its validator, source input and execution environment. Existing
+output directories are not overwritten. The result uses the already-supported
+`patch_qualification_tasks_v1` schema and can be consumed as `task_suite_ref` by
+the qualification resolver after independent real trials exist.
+
+The first dataset defines three distinct AccurateCrosshair Feature tasks:
+
+| Task | Scope and independent oracle |
+| --- | --- |
+| `accurate-crosshair-recoil-default-off` | A newly defined Eval request, not a change to the user's production request. Fresh Follow Recoil defaults false; explicit true/false, five other defaults and configuration keys are preserved. Five checks across three C# processes. |
+| `accurate-crosshair-spread-api-input-validation` | A newly defined public Mod API request. Negative/non-finite modifiers throw `ArgumentOutOfRangeException` without changing state or callback count; finite non-negative input, replacement, removal and notification semantics remain. Seventeen checks across five C# processes. |
+| `accurate-crosshair-spread-toggle` | The existing P0 Feature and Plan, counted once. Reuses its original 36-check matrix; prospective verification identity is added to new report copies without rewriting historical reports or changing expected results. |
+
+The two new input Plans and source-support judgments are explicitly operator
+authored. Their requests and checks are fixed before any product model attempt.
+They qualify only the Patch role being measured, not autonomous Evidence or
+Planning. Repeating P0 in Repair mode does not create another Feature task or
+increase the denominator. All new task trials start as `not_run`; baseline
+oracle runs and successful input preflight do not count as model successes.
+
+Evidence levels remain separate:
+
+1. Synthetic contract tests validate selection, rejection and record binding.
+2. Real original C# source with explicit dependency/engine doubles validates
+   the selected local behavior. Compiler, references and runtime are fixed;
+   this is not a complete host/OS reproducibility claim.
+3. Real-model task trials must retain original responses, behavior matrices
+   and the Proposal/Review/Dry-run chain before A7 can qualify a profile.
+4. DSH/service operation and GTFO Runtime remain separate, unexecuted acceptance
+   layers. Neither is implied by this task dataset.
