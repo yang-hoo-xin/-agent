@@ -6,6 +6,9 @@
 
 ## 0. 最新状态快照
 
+**DSH最新（0.25）：真实官方宿主已执行原后端查询，重启后页面显示013的未完成结果。**
+只读命令与原session记录已连通；没有模型调用或产品执行。任务提交、审批、执行恢复和交付仍未完成。
+
 **近真实对照输入最新（0.24）：独立自有C#配置任务已准备，真实编译/磁盘/进程基线可运行。**
 15项检查中7项新增要求失败、8项保留行为通过；没有模型生成、Apply或完整一站式交付。
 
@@ -143,7 +146,8 @@ Qwen在工具预算反馈后由请求5处改选2处；修正执行ID记账后，
 | 已提交 `9efcac9` | 原Patch查询到Langfuse历史元数据OTLP导出、查询与有限查回；评分核验代码/报告/矩阵身份，防止同数量异矩阵错绑 | 65项相关回归通过；没有真实服务发送，不增加产品成功、原始时序或跨任务资格声明，详0.21 |
 | 已提交 `fdb0fc7` | 固定3任务及真实C#行为判定器，准备器输出原公开CLI参数；复用原任务资格合同和Patch worker，不另造执行器 | 基线和输入准入已有，3任务模型成功率为空；人辅Evidence/Planning，不声明自主规划，详0.22 |
 | 已提交 `5a6ca38` | 从原Local adapter抽出3个provider hook，外部Qwen复用原worker；校验实际发送范围和模型身份，并在解析前保留HTTP响应 | 离线共享循环/兼容性与解析失败回归通过；0真实目录查询/生成请求，不声明强模型胜任，详0.23 |
-| 本次自有任务提交 | 新编多文件JSON配置程序、独立真实进程判定器及原continuation输入，支持相同任务/标准作本地与外部对照 | 基线已验证，产品模型未运行；不是完整服务生命周期或模型资格通过，详0.24 |
+| 已提交 `68088bc` | 新编多文件JSON配置程序、独立真实进程判定器及原continuation输入，支持相同任务/标准作本地与外部对照 | 基线已验证，产品模型未运行；不是完整服务生命周期或模型资格通过，详0.24 |
+| 本次DSH提交 | 官方宿主加载只读命令插件，查询原Patch记录；原会话/结果组件显示纯命令结果，stock factory保留但DSH模型step拒绝 | 8项桥接/官方组件测试通过，真实会话查询及重启后显示通过；无产品提交/审批/执行恢复，详0.25 |
 | 文档整理 | 本文顶部快照、历史标签、统一Attempt索引、剩余矩阵及短控制文档同步 | 不增加产品能力；文档提交单独记录 |
 | 用户原有WIP | ARCHITECTURE_OVERVIEW、ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT、SPEC_COVERAGE_MATRIX，以及3份未跟踪草案 | 六份文件hash与本轮开始完全一致；不混入本轮提交 |
 
@@ -1020,6 +1024,38 @@ Ruff通过。无模型调用、外发、产品Apply或游戏操作。
 source-disclosure-preview明确`approved=false`；MIT身份和源码清单不授予外发权限。
 后续真实对照保持同一源码、需求、Plan、检查集和共享worker，分别记录profile与预算。
 当前没有产生通过15项检查的模型修订，也没有验证审批退出/恢复、Apply、正式Build和交付查询全链。
+
+### 0.25 DSH：真实宿主、原后端查询与纯命令结果显示
+
+`integrations/dsh-mod-agent`实现`/mod-runs`和`/mod-status`人类命令，调用原Python
+`verification-claims / patch-execution`只读查询；不向DSH模型注册产品执行工具。
+固定官方DSH 0.1.2-rc.1、Node 24.19.0，独立DSH_HOME，服务只绑定127.0.0.1:3087。
+配置指定Python、仓库、Store和Feature；命令不能指定任意路径或Shell。
+
+实际装配中发现并解决三个接缝：
+
+- DSH patch中的name是匹配断言，不能直接改旧目录选择器类型；现禁用auto并组合官方browse前后端。
+- stock agent-loop还拥有session factory，整项禁用会导致新建会话失败；现保留factory，使用官方
+  `agent/pre-step`拒绝模型step。title模型和遥测等另按查询专用配置关闭，不另写Agent。
+- 原chat target把纯command排除在active内容之外；只读客户端activity target激活原会话外壳，
+  原CommandNodeView/GenericCommandCard继续显示原command结果。没有伪assistant消息或复制renderer。
+
+```powershell
+$env:DSH_RUNTIME_NODE_MODULES='C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/dsh-runtime/node_modules'
+$env:MOD_AGENT_PYTHON='C:/Users/10160/miniforge3/python.exe'
+node --test integrations/dsh-mod-agent/tests/*.test.mjs
+```
+
+8项通过（2.266秒），含真实Python查询与published DSH组件，0skip。
+真实UI创建session并执行013的精确`/mod-status`：原session JSONL保留command/run和command/done，
+返回`partial`、`PATCH_AGENT_UPSTREAM_REQUESTED`、`proposal_admitted=false`。
+重启官方宿主后，CUA在真实页面展开并核对了相同结果；没有以工具成功宣称Mod完成。
+证据摘要为[readonly-acceptance.json](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/dsh-runtime/readonly-acceptance.json)。
+
+该查询没有模型事件、行为验证、产品Apply或游戏操作。普通消息的pre-step拒绝有局部测试，
+没有作为独立真实transport试验验收；不能扩大为所有DSH插件/任意输入都已隔离。
+任务提交、diff审批、任务取消、产品执行恢复、完整交付和界面易用性仍需后续真实验收。
+配置与兼容边界见[插件说明](../../integrations/dsh-mod-agent/README.md)。
 
 ## 1. 结论与范围
 
