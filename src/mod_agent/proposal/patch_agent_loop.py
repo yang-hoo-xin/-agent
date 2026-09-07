@@ -70,16 +70,18 @@ class PatchAgentLoopPolicy:
         if type(self.max_total_model_turns) is not int or not 1 <= self.max_total_model_turns <= 5:
             raise PatchAgentLoopError("PATCH_AGENT_POLICY_INVALID", stage="policy",
                 reason="The selected model-turn limit must be between one and the shared maximum of five.")
-        if type(self.max_tool_rounds) is not int or self.max_tool_rounds < 1:
+        if (type(self.max_tool_rounds) is not int or self.max_tool_rounds < 0
+                or (self.max_tool_rounds == 0 and self.require_source_inspection)):
             raise PatchAgentLoopError("PATCH_AGENT_POLICY_INVALID", stage="policy",
-                reason="The selected binding-read limit must be a positive integer.")
+                reason="The binding-read limit must be non-negative, and positive when source inspection is required.")
         for name in ("max_observation_bytes", "context_radius_lines"):
             value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            minimum = 1 if name == "context_radius_lines" else 0
+            if type(value) is not int or value < minimum:
                 raise PatchAgentLoopError(
                     "PATCH_AGENT_POLICY_INVALID",
                     stage="policy",
-                    reason=f"{name} must be a positive integer.",
+                    reason=f"{name} must be an integer greater than or equal to {minimum}.",
                 )
 
 
@@ -1595,8 +1597,10 @@ def _source_tool_definition(
     return AgentToolDefinition(
         name=PATCH_SOURCE_INSPECTION_TOOL_NAME,
         description=(
-            "Read a bounded current-source excerpt for one exact ImplementationPlan "
-            "read binding. Reading supporting source does not grant edit permission. "
+            "Read a bounded excerpt of the validated Plan-bound original source baseline B0 "
+            "for one exact ImplementationPlan read binding. Generated changes are not applied here: "
+            "the current checked code is the complete assistant Patch identified by the latest failure feedback. "
+            "Reading supporting source does not grant edit permission. "
             "Registered API bindings return the complete saved Evidence excerpt, not a new live API inspection. "
             + ("Calls execute sequentially. Only a newly supplied complete source window consumes one read budget unit; "
                 "a reference to an already visible complete window costs zero reads, but still consumes observation bytes. "
@@ -1649,6 +1653,11 @@ def _loop_state_message(
             "allowed_read_binding_ids": list(source_inspector.available_read_binding_ids),
             "source_snapshot_sha256": source_inspector.source_snapshot_sha256,
             "read_source_snapshot_sha256": source_inspector.read_source_snapshot_sha256,
+            **({"source_read_semantics": (
+                "Local source tools return the validated B0 baseline, not generated code. "
+                "Use the complete assistant Patch identified by the latest failure feedback for the current checked code. "
+                "Registered API tools return saved Evidence, not a new live inspection."
+            )} if policy.reuse_covered_source_observations else {}),
             "read_execution": {"allow_batched_reads": policy.allow_batched_reads,
                 "execution": "sequential", "count_unit": "one_new_complete_source_window" if policy.reuse_covered_source_observations else "one_dispatched_binding_read",
                 "batch_must_fit_remaining_reads": True,

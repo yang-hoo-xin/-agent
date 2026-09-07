@@ -289,6 +289,137 @@ def _evaluations(loop: Mapping[str, Any], refs: _References) -> list[dict[str, A
     return result
 
 
+def _factory_execution(factory: Mapping[str, Any], refs: _References) -> dict[str, Any]:
+    """Project one worker without borrowing another segment's code or counters."""
+    loop = _object(factory.get("patch_agent_loop"))
+    evaluations = _evaluations(loop, refs)
+    responses = [refs.check(item)[0] for item in _rows(factory.get("model_responses"))]
+    if not responses and isinstance(factory.get("model_response"), dict):
+        responses.append(refs.check(factory["model_response"])[0])
+    for evaluation in evaluations:
+        matches = [ref for ref in responses if isinstance(evaluation.get("model_response_sha256"), str)
+                   and ref.get("output_sha256") == evaluation["model_response_sha256"]]
+        evaluation["code_response_refs"] = matches
+        evaluation["code_response_link"] = (
+            "matching_explicit_response_hash" if matches else "unknown_no_matching_response_ref")
+    return {
+        "worker_turns": _turns(factory, refs), "tool_execution": _tools(loop),
+        "code_responses": responses, "behavior_evaluations": evaluations,
+        "replay_request_observations": [{
+            **_fields(item, "current_wire_sha256", "all_json_values_and_text_exact", "exact_wire_bytes_match"),
+            "original_request_ref": refs.check(item.get("original_request_ref"))[0],
+            "comparison_basis": "historical_journal_claim_not_comparison_reexecuted",
+        } for item in _rows(factory.get("replay_request_matches"))],
+        "tool_availability": [{
+            "phase": phase, **_fields(item, "turn_index", "selection"),
+            "allowed_tools": _strings(item.get("allowed_tools")),
+        } for phase, execution in _phases(loop)
+            for item in _rows(execution.get("tool_availability_trace"))],
+        "turn_progress": [{"phase": phase, **_fields(
+            item, "turn_index", "submitted_patch", "requested_source_reads", "dispatched_binding_reads",
+            "new_source_windows", "reused_source_observations", "read_cost", "observation_bytes_added",
+            "no_new_source_information",
+        )} for phase, execution in _phases(loop) for item in _rows(execution.get("turn_progress_trace"))],
+        "source_read_accounting": [{"phase": phase, **_fields(
+            execution, "read_accounting_version", "tool_rounds_used", "dispatched_binding_reads",
+            "reused_source_observations",
+        )} for phase, execution in _phases(loop)],
+    }
+
+
+def _count(value: Any) -> int | None:
+    return value if type(value) is int and value >= 0 else None
+
+
+def _upstream_provider_turns(journal: Mapping[str, Any], refs: _References) -> list[dict[str, Any]]:
+    """Requested/responded events describe one call, not two model sends."""
+    groups: dict[tuple[Any, ...], list[Mapping[str, Any]]] = {}
+    for event in _rows(journal.get("events")):
+        if event.get("phase") != "patch_upstream_provider_turn":
+            continue
+        request = _object(event.get("request_ref"))
+        key = (event.get("role"), request.get("path"), request.get("sha256"))
+        if not all(isinstance(value, str) for value in key):
+            key = ("unknown_request", event.get("event_index"), len(groups))
+        groups.setdefault(key, []).append(event)
+    result = []
+    for events in groups.values():
+        event = events[-1]
+        response, _ = refs.check(event.get("response_ref"))
+        requested, _ = refs.check(event.get("request_ref"))
+        result.append({
+            **_fields(event, "role", "status", "error_code", "response_origin", "new_model_call_reserved"),
+            "event_indexes": [item["event_index"] for item in events if type(item.get("event_index")) is int],
+            "request_ref": requested, "response_ref": response,
+            "configuration_ref": refs.check(event.get("configuration_ref"))[0],
+            "usage": _fields(_object(event.get("usage")), "input_tokens", "output_tokens", "total_tokens"),
+            "provider_request_identity": _fields(
+                _object(_object(event.get("provider_diagnostic")).get("request_identity")),
+                "hash_basis", "provider_body_sha256", "provider_body_utf8_bytes"),
+            "send_observation": (
+                "journal_claim_live_response_with_verified_ref"
+                if event.get("status") == "responded" and event.get("response_origin") == "live_provider_response"
+                and response["integrity"] == "verified_bytes" else "requested_send_unconfirmed"),
+            "send_observation_basis": "journal_claim_with_reference_checks_not_independent_send_proof",
+        })
+    return result
+
+
+def _chain_execution(journal: Mapping[str, Any], refs: _References):
+    segments = _rows(journal.get("patch_execution_segments"))
+    combined: dict[str, list[dict[str, Any]]] = {}
+    projected = []
+    for segment in segments:
+        factory = _object(segment.get("factory_receipt"))
+        number = _count(segment.get("segment_index"))
+        values = _factory_execution(factory, refs) if factory else {}
+        for key, rows in values.items():
+            combined.setdefault(key, []).extend({"segment_index": number, **row} for row in rows)
+        projected.append({
+            "segment_index": number,
+            "allocated_model_calls": _count(segment.get("allocated_model_calls")),
+            "model_call_count": _count(factory.get("model_call_count")),
+            "live_response_count": _count(factory.get("live_response_count")),
+            "replayed_model_turns": _count(factory.get("replayed_model_turns")),
+            "worker_receipt_observation": "recorded" if factory else "unknown_missing_factory_receipt",
+            "factory_status": factory.get("status"),
+            "selected_artifacts": {name: refs.check(ref)[0]
+                for name, ref in sorted(_object(segment.get("selected_artifacts")).items())},
+        })
+    shared = _object(journal.get("shared_model_budget"))
+    lineage = _object(journal.get("replanned_patch_lineage"))
+    metadata = {
+        "execution_segments_observation": (
+            "unknown_not_recorded" if "patch_execution_segments" not in journal else
+            "recorded" if isinstance(journal.get("patch_execution_segments"), list) else "invalid"),
+        "patch_execution_segments": projected,
+        "initial_selected_artifacts": ({name: refs.check(ref)[0]
+            for name, ref in sorted(journal["initial_selected_artifacts"].items())}
+            if isinstance(journal.get("initial_selected_artifacts"), dict) else None),
+        **({"current_upstream_artifacts": {name: refs.check(ref)[0]
+            for name, ref in sorted(_object(journal["current_upstream_artifacts"]).items())}}
+            if "current_upstream_artifacts" in journal else {}),
+        "shared_model_budget": {
+            **{key: _count(shared.get(key)) for key in ("maximum", "consumed", "remaining")},
+            "by_role": ({role: _count(value) for role, value in shared["by_role"].items()}
+                if isinstance(shared.get("by_role"), dict) else None),
+            "basis": "whole_invocation_owner_declaration_not_independent_send_audit",
+        },
+        "replanned_patch_lineage": ({
+            **{key: refs.check(lineage[key])[0] for key in (
+                "repair_plan", "prior_plan", "failed_response_ref", "failure_report_ref") if key in lineage},
+            "approval_inherited": lineage.get("approval_inherited") if isinstance(lineage.get("approval_inherited"), bool) else None,
+        } if lineage else None),
+        "upstream_provider_turns": _upstream_provider_turns(journal, refs),
+        "latest_factory_scope": "latest_patch_segment_not_entire_invocation",
+    }
+    counts = {}
+    for key in ("live_response_count", "replayed_model_turns"):
+        values = [_count(_object(segment.get("factory_receipt")).get(key)) for segment in segments]
+        counts[key] = sum(values) if values and all(value is not None for value in values) else None
+    return combined, metadata, counts
+
+
 def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _References):
     factory = _object(journal.get("factory_receipt"))
     loop = _object(factory.get("patch_agent_loop"))
@@ -332,24 +463,16 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
     verified_replay = _object(factory.get("verified_replay"))
     if "source_attempt_ref" in verified_replay:
         parents["replayed_from_attempt"] = refs.check(verified_replay["source_attempt_ref"])[0]
-    replay_requests = [{
-        **_fields(item, "current_wire_sha256", "all_json_values_and_text_exact", "exact_wire_bytes_match"),
-        "original_request_ref": refs.check(item.get("original_request_ref"))[0],
-        "comparison_basis": "historical_journal_claim_not_comparison_reexecuted",
-    } for item in _rows(factory.get("replay_request_matches"))]
-    turns = _turns(factory, refs)
-    evaluations = _evaluations(loop, refs)
-    code_responses = [refs.check(item)[0] for item in _rows(factory.get("model_responses"))]
-    if not code_responses and isinstance(factory.get("model_response"), dict):
-        code_responses.append(refs.check(factory["model_response"])[0])
-    for evaluation in evaluations:
-        matches = [ref for ref in code_responses
-                   if isinstance(evaluation.get("model_response_sha256"), str)
-                   and ref.get("output_sha256") == evaluation["model_response_sha256"]]
-        evaluation["code_response_refs"] = matches
-        evaluation["code_response_link"] = (
-            "matching_explicit_response_hash" if matches else "unknown_no_matching_response_ref"
-        )
+    chain_metadata = {}
+    counts = _fields(factory, "live_response_count", "replayed_model_turns")
+    if any(key in journal for key in ("patch_execution_segments", "shared_model_budget",
+                                     "initial_selected_artifacts", "replanned_patch_lineage",
+                                     "current_upstream_artifacts")):
+        execution, chain_metadata, counts = _chain_execution(journal, refs)
+    else:
+        execution = _factory_execution(factory, refs)
+    turns = execution.get("worker_turns", [])
+    evaluations = execution.get("behavior_evaluations", [])
     integrity = Counter(item[0]["integrity"] for item in refs.cache.values())
     if refs.unverifiable_references:
         integrity["unverifiable_reference"] = refs.unverifiable_references
@@ -368,17 +491,8 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
         "worker_state": {
             "factory_status": factory.get("status"), "loop_status": loop.get("status"),
             "termination": _fields(_object(loop.get("termination")), "status", "code", "turn_index"),
-            "tool_availability": [{
-                "phase": phase, **_fields(item, "turn_index", "selection"),
-                "allowed_tools": _strings(item.get("allowed_tools")),
-            } for phase, execution in _phases(loop)
-                for item in _rows(execution.get("tool_availability_trace"))],
-            "turn_progress": [{"phase": phase, **_fields(
-                item, "turn_index", "submitted_patch", "requested_source_reads",
-                "dispatched_binding_reads", "new_source_windows", "reused_source_observations",
-                "read_cost", "observation_bytes_added", "no_new_source_information",
-            )} for phase, execution in _phases(loop)
-                for item in _rows(execution.get("turn_progress_trace"))],
+            "tool_availability": execution.get("tool_availability", []),
+            "turn_progress": execution.get("turn_progress", []),
         },
         "integrity": "references_need_attention" if problems else "checked_references_match",
         "reference_freshness": (
@@ -390,28 +504,26 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
         "worker_profile_sha256": worker_profile,
         "worker_profile_identity_verification": "recorded_not_recomputed" if worker_profile else "unknown",
         "behavior_evaluator_configuration": evaluator_identity,
+        **chain_metadata,
         "selected_upstreams": upstream,
         "current_artifacts": current_artifacts,
         "terminal_artifacts": terminal_artifacts,
         "parents": parents,
         "revision_semantics": _fields(_object(factory.get("repair_context")), "revision_semantics"),
         "worker_turns": turns,
-        "replay_request_observations": replay_requests,
-        "tool_execution": _tools(loop),
-        "code_responses": code_responses,
+        "replay_request_observations": execution.get("replay_request_observations", []),
+        "tool_execution": execution.get("tool_execution", []),
+        "code_responses": execution.get("code_responses", []),
         "behavior_evaluations": evaluations,
         "terminal": _fields(terminal, "status", "terminal_stage", "stopped_before", "reason",
                             "product_source_writes_performed", "source_modified_during_run"),
         "failure": _fields(_object(journal.get("failure")), "code", "failure_class", "stage"),
         "budget_and_counts_recorded": {
             **_fields(journal, "max_model_calls", "model_call_count"),
-            **_fields(factory, "live_response_count", "replayed_model_turns"),
+            **counts,
             "observed_turn_origins": dict(Counter(row["response_origin"] for row in turns)),
             "turn_origin_count_basis": "journal_declarations_not_independent_send_audit",
-            "source_read_accounting": [{"phase": phase, **_fields(
-                execution, "read_accounting_version", "tool_rounds_used",
-                "dispatched_binding_reads", "reused_source_observations",
-            )} for phase, execution in _phases(loop)],
+            "source_read_accounting": execution.get("source_read_accounting", []),
         },
         "eval_observation": {
             "reported_results": dict(Counter(row.get("status", "unknown") for row in evaluations)),

@@ -6,9 +6,16 @@
 
 ## 0. 最新状态快照
 
+**2026-09-07整链适配：公开入口已通过合成项目的完整上游续接验收，真实Mod结果仍待独立011。**
+不同代码产生的新失败会绑定到实际被测版本；可选Evidence/Planning回流后，新Plan重新装配worker，
+经过原行为检查、Proposal、Review和Dry-run。模型、读取及观察字节不重置；原报告不覆盖，旧审批不继承。
+新增上游路径为一个有界周期，既有同Plan路径不强迫读取或重新规划。资格路由与A4配置组合仍未支持。
+当前case验证器固定c760，因此011仅检验通用失败指导和B0/被测版本的区分，不冒充真实A4验收。
+本轮工程命令、兼容缺陷及限制见0.16；历史窗口中的“当前”不覆盖本快照。
+
 **更新时间：2026-09-06；Patch覆盖复用：`54dff43`；Graph回流：`aa4e00f`／`b792c41`；资格路由：`7b82698`。本节为当前读入口，旧章节保留当时事实。**
 
-**最新009：修正验收器后，5次真实模型调用和修订/重验完整执行，但两份代码仍相同、两次33/36。**
+**此前009：修正验收器后，5次真实模型调用和修订/重验完整执行，但两份代码仍相同、两次33/36。**
 源代码覆盖复用和可见C1引用都在实际请求中成立，未出现008的误拒绝；总11次工具执行为3新窗口＋8复用。
 失败后模型只重读已见001/005，未选择新源码；原三项First Shot失败未消除。
 独立27B对照010已执行：首轮工具选择有效，第二请求600秒超时，没有代码/矩阵；不能判为语义修复失败。
@@ -698,6 +705,42 @@ Plan `3075cde29024372e3ef7c9a1c95241688ad5543a283655fc510804da39e13bb3`，结构
 历史owner按物理身份映射为相关位置，新输出失败默认unknown，不冒充原根因；旧adapter/wrapper与原Harness源码均未改。
 002未获语义通过，因此仅用于零模型构造和3个负向身份检查，未执行Patch或矩阵。
 [实例化准备](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/firstshot_feedback_001/replan_support/preparation_result.json)。
+
+### 0.16 决策指导、上下文与整链适配（2026-09-07）
+
+本轮复用原Graph与Proposal/Review schema，新增的本地provider配置只装配现有owner。
+接口说明见[Patch上游续接](../PATCH_UPSTREAM_CONTINUATION.md)，配置不是授权或第二队列。
+
+实际实现及边界：
+
+- 失败指导围绕原需求、被观察否定的假设、缺失事实和合法下一步；保留直接修订、必要复核及上游请求。
+  不要求每次读取新增源码，不给First Shot正确实现，不以代码不同替代行为改善。
+- 工具说明明确读取的是B0基线，当前被测代码是失败所引用的完整assistant输出；API读取仍是保存的Evidence。
+  连续纯引用防循环状态原本不会跨新失败恢复段继承，未修改停止条件；新增跨段复核回归。
+- 真实worker形式的合成C1→不同C2→新F2→上游请求现在核验实际response sidecar、物化代码、报告及入模F2，
+  原C1/F1保留历史。live与从保存记录进入Graph两条路径均消费新的admitted context。
+- `--patch-upstream-config`在现有CLI装配Query、Findings和Planning；必要时旧有效与新Evidence全集重算。
+  新Plan重新建立worker、Binding和上下文，不沿用旧prepared input；同一验证器实例连续保存报告，接收当前Plan。
+- 原Reviewer在新增Evidence路径暴露了旧源码片段预算不足，修为按新Plan/Evidence重新计算，未放宽Review。
+  原RepairPlan编辑子集从新Plan的活动审查输入移除，只保留历史血缘；新Proposal仍经原Review/Dry-run。
+- 所有角色共享模型调用上限；新worker继承剩余读取和观察字节，包含已用失败反馈。零读取额度允许直接生成。
+  超时不重试；阶段计数按已发生节点保存。预算消耗表示已预留/尝试，实际HTTP发送和响应另看transport记录。
+- 同journal保留`patch_execution_segments`、初/当前Plan与角色调用；查询不把末段factory冒充整条链。
+  blocked新Plan和预算耗尽时的最终Plan/Evidence也按Graph实际对象返回；缓存重验这些对象，不退回旧成功Plan。
+
+统一checkpoint命令：
+
+```powershell
+python -B -m pytest tests/unit/test_patch_upstream_cli.py tests/unit/test_patch_upstream_replanning.py tests/unit/test_patch_upstream_budget.py tests/unit/test_patch_agent_loop.py tests/unit/test_patch_source_coverage_reuse.py tests/unit/test_patch_recovery_worker.py tests/unit/test_patch_behavior_feedback.py tests/unit/test_patch_execution_index.py tests/unit/test_patch_repair_cli.py tests/unit/test_patch_repair_continuation.py tests/unit/test_model_qualification.py tests/unit/test_patch_worker_configuration.py tests/unit/test_patch_read_accounting_admission.py tests/unit/test_patch_covered_source_cli.py tests/unit/test_patch_visible_revision_context.py tests/unit/test_fresh_planning_continuation.py -q --tb=short -n 2 --dist=loadfile -o cache_dir="$env:TEMP/upstream-check-cache" --basetemp="$env:TEMP/upc-$PID"
+```
+
+335 passed，204.14秒。其后最终输出引用修正的两个公开CLI负例通过（8.70秒），
+预算耗尽后新Plan查询的独立案例通过（1项，4.15秒）；不把重叠验证相加。
+新模块与修改后的专属测试Ruff通过；local_entry原有10项、Graph原有2项lint问题未混入本轮清理。
+六份用户原有WIP字节未变。上述全部为离线工程/合成项目验收，无真实模型质量或GTFO Runtime结论。
+
+尚未证明：真实模型会在合适时自主请求上游；真实AccurateCrosshair使用新Plan的验证适配；多上游周期；
+qualified路由与A4的组合资格；跨任务稳定性。原c760仍为P0所选Plan，002/003/004未晋升为可用修订。
 
 ## 1. 结论与范围
 

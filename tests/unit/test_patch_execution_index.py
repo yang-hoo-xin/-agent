@@ -159,6 +159,8 @@ def test_legacy_journal_does_not_acquire_new_source_accounting_claims(tmp_path):
     result = project_patch_executions(root)["attempts"][0]
     assert result["budget_and_counts_recorded"]["source_read_accounting"] == [{"phase": "initial"}]
     assert result["worker_state"]["turn_progress"] == []
+    assert "patch_execution_segments" not in result
+    assert "shared_model_budget" not in result
 
 
 def test_replay_and_pending_turns_do_not_become_new_sends(tmp_path):
@@ -554,3 +556,116 @@ def test_worker_configuration_reference_damage_is_not_reported_verified(tmp_path
     assert row["behavior_evaluator_configuration"][reference]["integrity"] == "hash_mismatch"
     assert row["integrity"] == "references_need_attention"
     assert not marker.exists()
+
+
+def test_public_upstream_chain_projects_both_plans_and_all_provider_roles(tmp_path, monkeypatch, capsys):
+    from tests.unit.test_patch_upstream_cli import _case, _install, _run
+
+    case = _case(tmp_path, monkeypatch, evidence=True)
+    handler = _install(monkeypatch, tmp_path / "wire", case)
+    code, result = _run(case, capsys)
+    assert code == 0, result
+    model_calls = len(handler.chat_requests)
+    journal_path = Path(result["attempt_receipt"]["path"])
+    before = journal_path.read_bytes()
+    row = project_patch_executions(case.inputs.store.root,
+        attempt_locator=str(journal_path))["attempts"][0]
+    assert len(row["worker_turns"]) == 2
+    assert [turn["segment_index"] for turn in row["worker_turns"]] == [1, 2]
+    assert row["shared_model_budget"]["consumed"] == 5
+    assert row["shared_model_budget"]["by_role"] == {
+        "patch": 2, "evidence_query": 1, "evidence_findings": 1, "planning": 1}
+    segments = row["patch_execution_segments"]
+    assert [item["segment_index"] for item in segments] == [1, 2]
+    assert segments[0]["selected_artifacts"]["implementation_plan"]["artifact_hash"] == case.request.implementation_plan_ref.artifact_hash
+    assert segments[1]["selected_artifacts"]["implementation_plan"]["artifact_hash"] != case.request.implementation_plan_ref.artifact_hash
+    assert row["initial_selected_artifacts"] == segments[0]["selected_artifacts"]
+    assert row["selected_upstreams"] == segments[1]["selected_artifacts"]
+    assert row["replanned_patch_lineage"]["approval_inherited"] is False
+    assert row["replanned_patch_lineage"]["repair_plan"]["integrity"] == "verified_artifact"
+    upstream = row["upstream_provider_turns"]
+    assert [turn["role"] for turn in upstream] == ["evidence_query", "evidence_findings", "planning"]
+    assert all(turn["status"] == "responded" for turn in upstream)
+    assert all(turn["request_ref"]["integrity"] == turn["response_ref"]["integrity"] == "verified_bytes" for turn in upstream)
+    assert row["terminal"]["status"] == result["status"]
+    assert journal_path.read_bytes() == before
+    assert len(handler.chat_requests) == model_calls
+
+
+def test_missing_segment_receipt_and_shared_counts_stay_unknown(tmp_path):
+    root, path, journal, _ = _fixture(tmp_path)
+    journal["patch_execution_segments"] = [{"segment_index": 1, "selected_artifacts": {}, "factory_receipt": None}]
+    _retain(path, journal)
+    row = project_patch_executions(root)["attempts"][0]
+    assert row["execution_segments_observation"] == "recorded"
+    assert row["patch_execution_segments"][0]["model_call_count"] is None
+    assert row["shared_model_budget"]["consumed"] is None
+    assert row["shared_model_budget"]["remaining"] is None
+    assert row["shared_model_budget"]["by_role"] is None
+    assert row["worker_turns"] == []
+    assert row["budget_and_counts_recorded"]["live_response_count"] is None
+    assert row["initial_selected_artifacts"] is None
+
+
+def test_initial_failure_does_not_replace_replanned_final_outcome(tmp_path, monkeypatch, capsys):
+    from tests.unit.test_patch_upstream_cli import _case, _install, _run
+
+    case = _case(tmp_path, monkeypatch)
+    handler = _install(monkeypatch, tmp_path / "wire", case, fail_first=True)
+    code, result = _run(case, capsys)
+    assert code == 0, result
+    calls = len(handler.chat_requests)
+    row = project_patch_executions(case.inputs.store.root,
+        attempt_locator=result["attempt_receipt"]["path"])["attempts"][0]
+    assert [item["status"] for item in row["behavior_evaluations"]] == ["behavior_failed", "passed"]
+    assert [item["segment_index"] for item in row["behavior_evaluations"]] == [1, 2]
+    assert row["behavior_evaluations"][0]["model_response_sha256"] != row["behavior_evaluations"][1]["model_response_sha256"]
+    assert all(item["code_response_link"] == "matching_explicit_response_hash" for item in row["behavior_evaluations"])
+    assert row["terminal"]["status"] == result["status"]
+    assert row["terminal_artifacts"]["patch_proposal_artifact"]["ref"]["artifact_hash"] == result["patch_proposal_artifact"]["artifact_hash"]
+    assert row["eval_observation"]["reported_results"] == {"behavior_failed": 1, "passed": 1}
+    assert row["eval_observation"]["repair_success_rate"] is None
+    assert row["shared_model_budget"]["consumed"] == 4
+    assert len(row["worker_turns"]) == 3
+    assert len(row["upstream_provider_turns"]) == 1
+    assert len(handler.chat_requests) == calls
+
+
+def test_reserved_upstream_call_without_response_is_not_a_completed_send(tmp_path):
+    root, path, journal, _ = _fixture(tmp_path)
+    request = _retain(root / "cr" / "planning-request.json", {"private": "DO_NOT_PROJECT"})
+    configuration = _retain(root / "cr" / "configuration.json", {})
+    event = {"phase": "patch_upstream_provider_turn", "role": "planning", "request_ref": request,
+             "configuration_ref": configuration, "status": "requested", "event_index": 2}
+    journal["events"].extend([event, {**event, "status": "failed", "event_index": 3, "error_code": "timeout"}])
+    journal["shared_model_budget"] = {"maximum": 5, "consumed": 1, "remaining": 4, "by_role": {"planning": 1}}
+    _retain(path, journal)
+    row = project_patch_executions(root)["attempts"][0]
+    assert row["execution_segments_observation"] == "unknown_not_recorded"
+    assert row["patch_execution_segments"] == []
+    assert row["worker_turns"] == []
+    assert len(row["upstream_provider_turns"]) == 1
+    turn = row["upstream_provider_turns"][0]
+    assert turn["status"] == "failed" and turn["event_indexes"] == [2, 3]
+    assert turn["send_observation"] == "requested_send_unconfirmed"
+    assert turn["response_ref"]["integrity"] == "unverifiable_reference"
+    assert "DO_NOT_PROJECT" not in json.dumps(row)
+
+
+def test_blocked_new_plan_is_distinct_from_last_worker_input(tmp_path, monkeypatch, capsys):
+    from tests.unit.test_patch_upstream_cli import _case, _install, _run
+
+    case = _case(tmp_path, monkeypatch, evidence=True, max_model_calls=4)
+    handler = _install(monkeypatch, tmp_path / "wire", case)
+    code, result = _run(case, capsys)
+    assert code != 0, result
+    assert handler.stage_roles == ["patch", "evidence_query", "evidence_findings", "planning"]
+    row = project_patch_executions(case.inputs.store.root,
+        attempt_locator=result["attempt_receipt"]["path"])["attempts"][0]
+    current = row["current_upstream_artifacts"]["implementation_plan"]
+    assert current["integrity"] == "verified_artifact"
+    assert current["artifact_hash"] != case.request.implementation_plan_ref.artifact_hash
+    assert row["selected_upstreams"]["implementation_plan"]["artifact_hash"] == case.request.implementation_plan_ref.artifact_hash
+    assert len(row["patch_execution_segments"]) == 1
+    assert row["shared_model_budget"]["remaining"] == 0
+    assert row["terminal_artifacts"]["patch_proposal_artifact"]["ref"] is None

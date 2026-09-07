@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from copy import deepcopy
 from dataclasses import replace
 
 import pytest
 
 from src.libs.llm.agent_turn import AgentMessage
+from src.mod_agent.local_entry import LocalOllamaInitialPatchAdapter
 from src.mod_agent.proposal.patch_agent_loop import (
     PatchAgentLoopError,
     PatchAgentLoopPolicy,
@@ -110,6 +112,60 @@ def test_same_binding_provider_id_can_reuse_but_repeating_without_new_informatio
     assert result.to_dict()["turn_progress_trace"][1]["no_new_source_information"] is True
     assert len(client.requests[-1].historical_tool_exchanges) == 1
     assert client.requests[-1].tool_results[0].output["excerpt_ref"]
+
+
+@pytest.mark.parametrize("changed_code", [False, True])
+def test_new_failure_segment_can_recheck_the_same_reference_without_resetting_budget(tmp_path, changed_code):
+    """A new checked-output context permits review, even when no new source is needed."""
+    inspector = _coverage_inspector(tmp_path)
+    prior_output = json.dumps({"changes": [{"after_text": "void Run() { First(); }"}]})
+    checked_output = (json.dumps({"changes": [{"after_text": "void Run() { Second(); }"}]})
+                      if changed_code else prior_output)
+    client = _ScriptedClient([
+        _response(turn=1, tool_calls=(_tool_call("edit_binding_002", turn=1),)),
+        _response(turn=2, tool_calls=(_tool_call("edit_binding_002", turn=2),)),
+        _response(turn=3, content=checked_output),
+        _response(turn=4, tool_calls=(_tool_call("edit_binding_002", turn=4),)),
+        _response(turn=5, content='{"changes":[]}'),
+    ])
+    initial = (
+        AgentMessage(role="user", content="Preserve the original behavior on B0."),
+        AgentMessage(role="assistant", content=prior_output),
+        AgentMessage(role="user", content={"failure": "prior verification result"}),
+    )
+    first = run_patch_agent_loop(client=client, initial_messages=initial,
+        final_response_format=_final_format(), source_inspector=inspector, reserve_model_turns=2)
+    assert first.completed and first.model_turns_used == 3
+    assert [row["read_cost"] for row in first.observation_trace] == [1, 0]
+    feedback = {"status": "behavior_failed", "observations": [
+        {"check_id": "new_check", "expected": True, "observed": False}]}
+    revision_messages = LocalOllamaInitialPatchAdapter._revision_messages(
+        checked_output, feedback, message_type="patch_behavior_correction",
+        visible_messages=first.final_request.messages)
+    resumed = replace(first.final_request,
+        messages=(*first.final_request.messages, *revision_messages))
+    second = run_patch_agent_loop(client=client, initial_messages=resumed.messages, resume_request=resumed,
+        final_response_format=_final_format(), source_inspector=inspector,
+        consumed_model_turns=first.model_turns_used, consumed_tool_rounds=first.tool_rounds_used,
+        consumed_observation_bytes=first.total_observation_bytes)
+    assert second.completed and second.model_turns_used == 2
+    assert second.tool_rounds_used == 0 and second.dispatched_binding_reads == 1
+    assert second.reused_source_observations == 1 and second.total_observation_bytes > 0
+    assert second.observation_trace[0]["admitted_to_model"] is True
+    assert second.observation_trace[0]["consumed_in_model_turn"] == 5
+    assert client.requests[-1].tool_results[0].output["excerpt_ref"]
+    assert len(client.requests) == 5
+    assert first.tool_rounds_used + second.tool_rounds_used == 1
+    assert any(message.role == "assistant" and message.content == checked_output
+               for message in client.requests[-1].messages)
+    assert next(message.content for message in client.requests[-1].messages
+                if isinstance(message.content, dict)
+                and message.content.get("message_type") == "patch_behavior_correction")["validator_feedback"] == feedback
+    state = next(message.content for message in client.requests[-1].messages
+                 if isinstance(message.content, dict)
+                 and message.content.get("message_type") == "patch_agent_loop_state")
+    assert "B0 baseline, not generated code" in state["source_read_semantics"]
+    assert "original source baseline B0" in client.requests[3].tools[0].description
 
 
 def test_new_window_budget_exhaustion_keeps_reference_tool_available(tmp_path):

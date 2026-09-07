@@ -1,11 +1,18 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-09-06
+Last updated: 2026-09-07
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
+
+2026-09-07: public upstream continuation, current C2/F2 binding and new-Plan
+worker/Review/Dry-run composition passed offline acceptance. Shared budgets,
+unchanged verification requirements and separate per-segment records are retained.
+011 is prepared but not yet a live result; the c760-specific verifier excludes
+real A4 claims. Reconciliation 0.16 is the current detailed evidence location.
+The checkpoints below are historical and do not override this snapshot.
 
 Platform implementation: Patch reuse `54dff43`; Graph return `aa4e00f`/`b792c41`;
 qualified routing `7b82698`; Planning source labels `2e746c7`; current API projection `75f4d49`.

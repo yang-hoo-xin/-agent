@@ -66,6 +66,7 @@ from .local_entry import (
     run_local_request,
 )
 from .model_qualification import ModelQualificationError, resolve_qualified_patch_profile
+from .patch_upstream_configuration import PatchUpstreamConfiguration
 from .patch_worker_configuration import PatchWorkerConfiguration, read_json_object
 from .planning import ModPlanningBriefBuilder, RequestPlanner
 from .preflight_preparation import (
@@ -826,6 +827,11 @@ def build_parser(
         "--patch-worker-config",
         help=("Explicit local worker JSON configuration. Overrides the legacy loop defaults; "
               "its hash-pinned evaluator factory is trusted local Python code executed by the host, not a model tool."),
+    )
+    patch_continuation_parser.add_argument(
+        "--patch-upstream-config",
+        help=("Optional local Evidence/Planning provider configuration for the existing Repair return. "
+              "All provider calls share this attempt's model budget; it grants no additional edit or apply authority."),
     )
     patch_repair_selection = patch_continuation_parser.add_mutually_exclusive_group()
     patch_repair_selection.add_argument(
@@ -1677,6 +1683,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 PatchWorkerConfiguration.load(args.patch_worker_config)
                 if args.patch_worker_config else None
             )
+            upstream_configuration = (
+                PatchUpstreamConfiguration.load(args.patch_upstream_config)
+                if args.patch_upstream_config else None
+            )
             repair_inputs = _read_patch_repair_inputs(args.repair_inputs) if args.repair_inputs else {}
             recovery_selection = read_json_object(args.repair_from_verification) if args.repair_from_verification else None
             if recovery_selection is not None and set(recovery_selection) != {"source_attempt_ref", "verification_result_ref"}:
@@ -1723,6 +1733,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     output_budget=args.ollama_output_budget if args.ollama_output_budget is not None else 4096,
                     timeout_seconds=args.ollama_timeout_seconds,
                 )
+            if upstream_configuration is not None:
+                if not repair_inputs and recovery_selection is None:
+                    raise PatchContinuationError(
+                        "PATCH_UPSTREAM_FAILURE_REQUIRED", "request",
+                        "Upstream return requires the existing exact Repair failure input.",
+                    )
+                upstream_configuration = upstream_configuration.with_worker(
+                    profile=profile, worker_configuration=worker_config,
+                    qualified_profile_selection=qualified_selection,
+                )
             request = PatchContinuationInputV1(
                 contract_version=PATCH_CONTINUATION_CONTRACT_VERSION,
                 artifact_store_root=args.artifact_root,
@@ -1750,6 +1770,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 worker_configuration_ref=worker_config.reference if worker_config else None,
                 worker_profile_sha256=_canonical_sha256(profile.to_dict()) if worker_config else None,
                 qualified_model_routing_ref=qualified_selection.routing_ref if qualified_selection else None,
+                **({"patch_upstream_configuration_ref": upstream_configuration.reference}
+                   if upstream_configuration is not None else {}),
             )
             if recovery_selection is not None:
                 request = bind_patch_repair_verification(request=request, **recovery_selection)
@@ -1777,6 +1799,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.workspace_root
                 ),
                 max_model_calls=policy.max_total_model_turns if policy is not None else 1,
+                **({"upstream_configuration": upstream_configuration}
+                   if upstream_configuration is not None else {}),
             )
         except (PatchContinuationError, LocalEntryError, OSError, ValueError) as exc:
             result = blocked_patch_continuation_result(

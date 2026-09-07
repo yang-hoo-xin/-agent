@@ -29,9 +29,10 @@ from src.mod_agent.repair.upstream import (
     run_patch_upstream_replanning,
 )
 from src.mod_agent.workflow import build_graph
-from tests.unit.test_fresh_planning_continuation import _source_hashes
+from tests.unit.test_fresh_planning_continuation import _PatchAgentTurnClient, _source_hashes
 from tests.unit.test_model_planning_selection import _Client, _selector
 from tests.unit.test_patch_behavior_feedback import _adapter, _BehaviorOracle
+from tests.unit.test_patch_recovery_worker import _DeclaredOracle
 from tests.unit.test_patch_repair_continuation import _file_ref, _repair_case
 
 
@@ -323,3 +324,156 @@ def test_new_source_and_old_full_evidence_jointly_determine_new_binding_revision
     assert len(plan["binding_registry"]["edit_bindings"]) == 2
     prepared = prepare_replanned_patch_input(prior_request=request, state=state)
     assert preflight_patch_continuation(prepared).implementation_plan == plan
+
+
+class _ChangedCodeThenUpstream(_PatchAgentTurnClient):
+    """A synthetic worker produces different failing code, then requests reassessment."""
+
+    def complete_turn(self, request):
+        feedback = next((message.content for message in request.messages
+            if isinstance(message.content, dict)
+            and message.content.get("message_type") == "patch_behavior_correction"), None)
+        if feedback is not None:
+            self.requests.append(request)
+            selected = _selection()
+            return AgentTurnResponse(provider=self.provider, model=self.model, content=None,
+                tool_calls=(AgentToolCall(call_id="current-failure-upstream",
+                    name=PATCH_UPSTREAM_REQUEST_TOOL_NAME,
+                    arguments={key: selected[key] for key in ("required_owner", "reason", "source_refs")}),),
+                usage=AgentUsage(input_tokens=100, output_tokens=20))
+        response = super().complete_turn(request)
+        if response.content:
+            return replace(response, content=response.content.replace("RecordRuntimeMarker", "RecordStillMissingMarker"))
+        return response
+
+
+def _current_failed_worker(tmp_path):
+    inputs, request, _ = _repair_case(tmp_path)
+    initial = preflight_patch_continuation(request)
+    client = _ChangedCodeThenUpstream()
+    evaluator = _DeclaredOracle(tmp_path / "current-verification", reusable=False)
+    adapter = _adapter(inputs, client, evaluator)
+    adapter.enable_recovery_loop = True
+    adapter.patch_agent_loop_policy = PatchAgentLoopPolicy(require_source_inspection=False,
+        allow_upstream_request=True, enable_supporting_reads=True, finalize_after_first_observation=False)
+    result = run_fresh_patch_continuation(request, patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace), max_model_calls=5)
+    receipt = adapter.patch_attempt_receipt()
+    assert receipt["upstream_decision"]["code"] == "PATCH_AGENT_UPSTREAM_REQUESTED"
+    assert len(evaluator.contexts) == 1
+    assert receipt["patch_agent_loop"]["behavior_evaluations"][0]["status"] == "behavior_failed"
+    assert receipt["patch_agent_loop"]["behavior_evaluations"][0]["code_revision"]["same_materialized_code"] is False
+    return inputs, request, initial, result, receipt
+
+
+def test_current_changed_code_and_failure_can_request_upstream_without_borrowing_old_context(tmp_path):
+    from src.mod_agent.repair.upstream import validate_active_worker_upstream
+
+    inputs, request, initial, _, receipt = _current_failed_worker(tmp_path)
+    before = _source_hashes(inputs.workspace)
+    admitted, selected = validate_active_worker_upstream(request, receipt, artifact_store=inputs.store)
+    latest = receipt["patch_agent_loop"]["behavior_evaluations"][-1]
+    assert admitted.repair_context["failure_report_ref"] == latest["report_ref"]
+    assert admitted.repair_context["failure_report"]["observations"] == latest["observations"]
+    assert admitted.repair_context["generated_changes_sha256"] == latest["generated_changes_sha256"]
+    assert admitted.repair_context["failed_response_ref"]["sha256"] == latest["model_response_sha256"]
+    assert admitted.repair_context["previous_response"] != initial.repair_context["previous_response"]
+    assert "RecordStillMissingMarker" in admitted.repair_context["previous_response"]
+    assert admitted.repair_context["parent_proposal"] == initial.repair_context["parent_proposal"]
+    assert admitted.repair_context["approval_inherited"] is False
+    assert admitted.repair_context["previous_failure_binding"] == {
+        "failed_response_ref": initial.repair_context["failed_response_ref"],
+        "failure_report_ref": initial.repair_context["failure_report_ref"],
+        "generated_changes_sha256": initial.repair_context["generated_changes_sha256"],
+    }
+    assert selected["failure_report_ref"] == latest["report_ref"]
+    assert selected["origin"] == "model"
+    assert _source_hashes(inputs.workspace) == before
+
+
+@pytest.mark.parametrize("mutation", ["stale_feedback", "other_code", "report_changed", "not_executed", "persisted_incomplete", "wrong_response"])
+def test_current_failure_upstream_rejects_mixed_or_unverified_facts(tmp_path, mutation):
+    from src.mod_agent.repair.upstream import validate_active_worker_upstream
+
+    inputs, request, initial, _, receipt = _current_failed_worker(tmp_path)
+    altered = deepcopy(receipt)
+    latest = altered["patch_agent_loop"]["behavior_evaluations"][-1]
+    if mutation == "stale_feedback":
+        altered["patch_agent_loop"]["behavior_correction"]["validator"]["report_sha256"] = initial.repair_context["failure_report_ref"]["sha256"]
+    elif mutation == "other_code":
+        latest["model_response_sha256"] = initial.repair_context["failed_response_ref"]["sha256"]
+    elif mutation == "report_changed":
+        latest["observations"][0]["input"] = {"enabled": False}
+    elif mutation == "not_executed":
+        latest["execution_origin"] = "unknown"
+    elif mutation == "persisted_incomplete":
+        path = Path(latest["report_ref"]["path"])
+        persisted = json.loads(path.read_text(encoding="utf-8"))
+        persisted["execution_origin"] = "incomplete"
+        path.write_text(json.dumps(persisted), encoding="utf-8")
+        latest["report_ref"] = _file_ref(path)
+        altered["patch_agent_loop"]["behavior_correction"]["validator"]["report_sha256"] = latest["report_ref"]["sha256"]
+    else:
+        altered["worker_turns"][-1]["response_ref"] = altered["worker_turns"][0]["response_ref"]
+    with pytest.raises(PatchContinuationError):
+        validate_active_worker_upstream(request, altered, artifact_store=inputs.store)
+
+
+def test_changed_code_cannot_borrow_current_failure_return_from_sibling_input(tmp_path):
+    from src.mod_agent.repair.upstream import validate_active_worker_upstream
+
+    inputs, request, _, _, receipt = _current_failed_worker(tmp_path)
+    original = json.loads(Path(request.repair_failure_report_ref["path"]).read_text(encoding="utf-8"))
+    original["observations"][0]["input"] = {"enabled": False}
+    path = tmp_path / "different-original-failure.json"
+    path.write_text(json.dumps(original), encoding="utf-8")
+    sibling = replace(request, repair_failure_report_ref=_file_ref(path))
+    with pytest.raises(PatchContinuationError, match="PATCH_UPSTREAM_FAILURE_BINDING_REQUIRED"):
+        validate_active_worker_upstream(sibling, receipt, artifact_store=inputs.store)
+
+
+def test_archived_model_request_replans_from_its_current_checked_failure(tmp_path):
+    inputs, request, _, result, receipt = _current_failed_worker(tmp_path)
+    selection = {**_selection(), "origin": "model",
+        "source_attempt_ref": _file_ref(Path(result.attempt_receipt["path"]))}
+    planning_client = _Client()
+    state = run_patch_upstream_replanning(request=request, selection=selection,
+        planning_target_selection_factory=_selector(inputs, planning_client))
+    assert not state["blockers"] and len(planning_client.calls) == 1
+    latest = receipt["patch_agent_loop"]["behavior_evaluations"][-1]
+    repair = _artifact(inputs, state, "repair_plan")["data"]
+    assert repair["repair_context"]["failure_report_ref"] == latest["report_ref"]
+    assert repair["repair_context"]["failed_response_ref"]["sha256"] == latest["model_response_sha256"]
+    feedback = planning_client.calls[0].messages[1].content["semantic_feedback"]
+    observed = [json.loads(item)["observed_failure"] for item in feedback
+        if item.startswith("{") and "observed_failure" in json.loads(item)]
+    assert observed == [latest["observations"]]
+
+
+def test_same_graph_repair_replans_using_new_code_failure_and_keeps_parent_history(tmp_path):
+    inputs, request, _ = _repair_case(tmp_path)
+    initial = preflight_patch_continuation(request)
+    adapter = _adapter(inputs, _ChangedCodeThenUpstream(), _DeclaredOracle(tmp_path / "new-failure", reusable=False))
+    adapter.enable_recovery_loop = True
+    adapter.patch_agent_loop_policy = PatchAgentLoopPolicy(require_source_inspection=False,
+        allow_upstream_request=True, enable_supporting_reads=True, finalize_after_first_observation=False)
+    events = []
+    _bind_patch_attempt_recorder(adapter, events.append)
+    client = _Client()
+    state = _patch_continuation_state(run_id="current-failure-auto", request_id="current-failure-auto",
+        request=request, admitted=initial)
+    graph = build_graph(inputs.store, use_default_proposal_git_binding=False, patch_continuation_mode=request,
+        enable_patch_upstream_replanning=True, patch_change_factory=adapter,
+        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace), patch_continuation_max_model_calls=5,
+        patch_continuation_attempt_recorder=events.append, planning_target_selection_factory=_selector(inputs, client))
+    final = graph.invoke(state)
+    assert not final["blockers"] and final["current_stage"] == "implementation_plan"
+    assert len(client.calls) == 1
+    latest = adapter.patch_attempt_receipt()["patch_agent_loop"]["behavior_evaluations"][-1]
+    repair = _artifact(inputs, final, "repair_plan")["data"]["repair_context"]
+    assert repair["failure_report_ref"] == latest["report_ref"]
+    assert repair["failed_response_ref"]["sha256"] == latest["model_response_sha256"]
+    assert repair["previous_failure_binding"]["failure_report_ref"] == initial.repair_context["failure_report_ref"]
+    assert repair["approval_inherited"] is False
+    started = [event["node_name"] for event in final["trace_events"] if event["event_type"] == "node_started"]
+    assert started == ["create_repair_plan", "generate_patch_proposal", "create_repair_plan", "create_implementation_plan"]

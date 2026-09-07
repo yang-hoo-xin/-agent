@@ -16,6 +16,7 @@ from src.mod_agent.fresh_planning_continuation import (
     _patch_continuation_state,
     _repair_json,
     _source_tree_snapshot_sha256,
+    admit_active_worker_failure,
     preflight_patch_continuation,
 )
 from src.mod_agent.planning.model_selection import ModelPlanningTargetSelector
@@ -59,7 +60,8 @@ def validate_patch_upstream_selection(request: PatchContinuationInputV1, selecti
                 or source.get("current_snapshot_sha256") != snapshot
                 or terminal.get("upstream_request") != validated or not turns):
             raise PatchContinuationError("PATCH_UPSTREAM_ATTEMPT_MISMATCH", "upstream_admission", "The source attempt does not carry this exact model return.")
-        _validate_worker_failure_binding(admitted, receipt, arguments)
+        admitted, _ = _validate_worker_failure_binding(admitted, receipt, arguments,
+            request=request, artifact_store=admitted.artifact_store)
     elif selection["source_attempt_ref"] is not None:
         raise PatchContinuationError("PATCH_UPSTREAM_SELECTION_INVALID", "upstream_admission", "A human selection must not impersonate a model attempt.")
     return admitted, {**deepcopy(dict(selection)), "validated_request": validated,
@@ -67,15 +69,14 @@ def validate_patch_upstream_selection(request: PatchContinuationInputV1, selecti
         "preserved_plan_boundaries": deepcopy(admitted.implementation_plan.get("side_effect_boundaries", []))}
 
 
-def _validate_worker_failure_binding(admitted, receipt, arguments):
+def _validate_worker_failure_binding(admitted, receipt, arguments, *, request, artifact_store):
     context = admitted.repair_context
     recorded = receipt.get("repair_context") or {}
     if (recorded.get("context_sha256") != _canonical_sha256(context)
             or recorded.get("failure_report_sha256") != _canonical_sha256(context["failure_report"])
-            or recorded.get("previous_response_sha256") != hashlib.sha256(context["previous_response"].encode()).hexdigest()
-            or (receipt.get("patch_agent_loop") or {}).get("behavior_evaluations")):
+            or recorded.get("previous_response_sha256") != hashlib.sha256(context["previous_response"].encode()).hexdigest()):
         raise PatchContinuationError("PATCH_UPSTREAM_FAILURE_BINDING_REQUIRED", "upstream_admission",
-            "The worker must consume this exact C1/F1; a newer evaluated failure requires explicit rebinding.")
+            "The worker must originate from this exact bound C1/F1 before any newer failure is consumed.")
     turns = receipt.get("worker_turns") or []
     if not turns or turns[-1].get("status") != "responded":
         raise PatchContinuationError("PATCH_UPSTREAM_RESPONSE_MISMATCH", "upstream_admission", "No retained final worker response exists.")
@@ -83,7 +84,30 @@ def _validate_worker_failure_binding(admitted, receipt, arguments):
     calls = response.get("tool_calls") or []
     if len(calls) != 1 or calls[0].get("name") != PATCH_UPSTREAM_REQUEST_TOOL_NAME or calls[0].get("arguments") != arguments:
         raise PatchContinuationError("PATCH_UPSTREAM_RESPONSE_MISMATCH", "upstream_admission", "The retained model response does not request this owner and refs.")
-    return deepcopy(turns[-1]["response_ref"])
+    if (receipt.get("patch_agent_loop") or {}).get("behavior_evaluations"):
+        admitted = admit_active_worker_failure(request, receipt, artifact_store)
+        _validate_current_failure_feedback(admitted.repair_context, receipt)
+    return admitted, deepcopy(turns[-1]["response_ref"])
+
+
+def _validate_current_failure_feedback(context, receipt):
+    """An upstream request must consume F2, not merely coexist with its saved result."""
+    loop = receipt.get("patch_agent_loop") or {}
+    correction = loop.get("behavior_correction") or {}
+    execution = correction.get("execution") or {}
+    feedback = correction.get("validator") or {}
+    observations = deepcopy(context["failure_report"]["observations"])
+    for observation in observations:
+        if isinstance(observation, dict) and isinstance(observation.get("result_ref"), dict):
+            observation["result_ref"] = {"sha256": observation["result_ref"].get("sha256")}
+    if (execution.get("termination") != receipt.get("upstream_decision")
+            or execution.get("status") != "blocked" or correction.get("status") != "blocked"
+            or feedback.get("report_sha256") != context["failure_report_ref"]["sha256"]
+            or feedback.get("generated_changes_sha256") != context["generated_changes_sha256"]
+            or feedback.get("source_snapshot_sha256") != context["source_snapshot_sha256"]
+            or feedback.get("observations") != observations):
+        raise PatchContinuationError("PATCH_UPSTREAM_FAILURE_BINDING_REQUIRED", "upstream_admission",
+            "The upstream response is not from the revision segment that consumed this current failure.")
 
 
 def validate_active_worker_upstream(request, receipt, *, artifact_store):
@@ -96,9 +120,11 @@ def validate_active_worker_upstream(request, receipt, *, artifact_store):
     admitted, validated = validate_patch_upstream_selection(request, selection, artifact_store=artifact_store)
     if arguments != validated["validated_request"]:
         raise PatchContinuationError("PATCH_UPSTREAM_ATTEMPT_MISMATCH", "upstream_admission", "The live request's source identity differs.")
-    ref = _validate_worker_failure_binding(admitted, receipt,
-        {key: selection[key] for key in ("required_owner", "reason", "source_refs")})
+    admitted, ref = _validate_worker_failure_binding(admitted, receipt,
+        {key: selection[key] for key in ("required_owner", "reason", "source_refs")},
+        request=request, artifact_store=artifact_store)
     return admitted, {**validated, "origin": "model", "source_worker_response_ref": ref,
+        "failure_report_ref": deepcopy(admitted.repair_context["failure_report_ref"]),
         "source_attempt_id": request.attempt_id}
 
 

@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-09-06
+Last updated: 2026-09-07
 
 ## 1. Product
 
@@ -41,6 +41,15 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
+Latest implementation: the existing public entry now completes one bounded
+upstream cycle with current failed-code/report binding, optional Evidence and
+Planning providers, new-Plan worker assembly and the original Review/Dry-run.
+Offline synthetic acceptance passed; model/read/observation budgets remain shared,
+old reports and approvals are not inherited. See reconciliation 0.16.
+Independent 011 is prepared for the unchanged c760 case with updated general
+guidance and B0/version labels. Its fixed case verifier does not support arbitrary
+new Plans, so it does not claim real A4 acceptance. No new Mod success is recorded.
+The implementation descriptions below retain their historical checkpoint scope.
 Current implementation: Patch reuse `54dff43`, Graph upstream return `aa4e00f`/
 `b792c41`, optional qualified-model routing `7b82698`, Planning path display `2e746c7`.
 A4 human/model Graph return is tested through a new Plan, with explicit current

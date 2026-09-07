@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-09-06
+Last updated: 2026-09-07
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -24,7 +24,15 @@ execution instruction. The [short execution card](PATCH_ACCEPTANCE_SPRINT_CARD_2
 records the selected exact inputs and single Patch-attempt owner. User messages,
 not either document, authorize actions; new exact diffs still require new approval.
 
-Current follow-up boundary: the two-hour window delivered A4 Graph upstream return,
+Current execution: finish the fixed-version 011 acceptance of general failure
+guidance and B0/checked-code labels under unchanged c760, Qwen30B and the original
+behavior matrix. Public A4 provider assembly, current failure rebinding, new-Plan
+worker assembly and original Review/Dry-run have passed offline composition;
+this does not qualify a real model or adapt the c760-only verifier to arbitrary
+Plans. Do not replace the P0 Plan with the unaccepted Planning002/003/004 results.
+See reconciliation 0.16; the preceding two-hour window is historical below.
+
+Previous follow-up boundary: the two-hour window delivered A4 Graph upstream return,
 optional A7 evidence-qualified routing and current Fresh/API query projection.
 P0 remains unresolved: 009 completed but stayed 33/36; 010 produced no code before
 timeout. Planning002/003/004 are independent results; 004 fixed source/ID descriptions

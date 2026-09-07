@@ -132,6 +132,7 @@ class PatchContinuationInputV1:
     repair_source_attempt_ref: Mapping[str, str] | None = None
     repair_verification_ref: Mapping[str, str] | None = None
     qualified_model_routing_ref: Mapping[str, str] | None = None
+    patch_upstream_configuration_ref: Mapping[str, str] | None = None
 
     def __post_init__(self) -> None:
         if self.contract_version != PATCH_CONTINUATION_CONTRACT_VERSION:
@@ -219,6 +220,14 @@ class PatchContinuationInputV1:
         if self.worker_configuration_ref is not None:
             # Detach the caller's mutable mapping while preserving its exact values.
             object.__setattr__(self, "worker_configuration_ref", dict(self.worker_configuration_ref))
+        if self.patch_upstream_configuration_ref is not None:
+            ref = self.patch_upstream_configuration_ref
+            if (not isinstance(ref, Mapping) or set(ref) != {"path", "sha256"}
+                    or not isinstance(ref.get("path"), str) or not Path(ref["path"]).is_absolute()
+                    or not _is_sha256(ref.get("sha256"))):
+                raise PatchContinuationError("PATCH_UPSTREAM_CONFIGURATION_INVALID", "request", "Exact upstream configuration reference required.")
+            _read_hashed_repair_file(ref)
+            object.__setattr__(self, "patch_upstream_configuration_ref", dict(ref))
         if (self.repair_source_attempt_ref is None) != (self.repair_verification_ref is None):
             raise PatchContinuationError("PATCH_REPAIR_BINDING_INPUT_INVALID", "request",
                 "A repair source attempt and separate verification reference are required together.")
@@ -1208,6 +1217,8 @@ def preflight_patch_continuation(
         request.worker_profile_sha256, verify_bytes=True)
     if request.qualified_model_routing_ref is not None:
         _read_hashed_repair_file(request.qualified_model_routing_ref)
+    if request.patch_upstream_configuration_ref is not None:
+        _read_hashed_repair_file(request.patch_upstream_configuration_ref)
     try:
         artifact_root, workspace_root = _resolve_roots(request)  # type: ignore[arg-type]
     except PlanningContinuationError as exc:
@@ -1729,6 +1740,85 @@ def _source_tree_snapshot_sha256(
     return _canonical_sha256(
         [{"path": path, "sha256": sha256} for path, sha256 in snapshot]
     )
+
+
+def admit_active_worker_failure(request, receipt, artifact_store):
+    """Rebind the latest actually checked code, keeping its formal ancestors intact."""
+    from src.libs.llm import ChatResponse
+    from src.mod_agent.execution.patch_apply import materialize_exact_text_patch
+    from src.mod_agent.local_entry import (
+        _external_evidence_items,
+        _patch_generation_obligation_projection,
+    )
+    from src.mod_agent.proposal.code_generator import LLMExactPatchGenerator
+
+    admitted = preflight_patch_continuation(request, artifact_store=artifact_store)
+    context = admitted.repair_context
+    evaluations = (receipt.get("patch_agent_loop") or {}).get("behavior_evaluations") or []
+    if context is None or not evaluations:
+        return admitted
+    try:
+        latest = evaluations[-1]
+        if (latest.get("admission") != "accepted" or latest.get("execution_origin") != "executed"
+                or latest.get("status") not in {"behavior_failed", "needs_evidence"}):
+            raise ValueError("Upstream recovery requires an admitted, executed failing observation.")
+        report_ref = latest["report_ref"]
+        report = _repair_json(report_ref)
+        for key in ("status", "failure_owner", "owner_binding_ids", "observations",
+                    "source_snapshot_sha256", "generated_changes_sha256", "execution_origin"):
+            if latest.get(key) != report.get(key):
+                raise ValueError("The latest failure differs from its saved verification result.")
+        if report["source_snapshot_sha256"] != context["source_snapshot_sha256"]:
+            raise ValueError("The observed failure belongs to different source bytes.")
+        response_hash = latest.get("model_response_sha256") or report.get("model_response_sha256")
+        if "model_response_sha256" in report and report["model_response_sha256"] != response_hash:
+            raise ValueError("The persisted failure names a different model response.")
+        identities = [receipt.get("model_response"), *(receipt.get("model_responses") or []),
+                      ((receipt.get("patch_agent_loop") or {}).get("behavior_correction") or {}).get("response")]
+        identities = [item for item in identities if isinstance(item, Mapping)
+                      and item.get("output_sha256") == response_hash]
+        if not identities or not response_hash:
+            raise ValueError("No retained code response matches the latest checked output.")
+        response = identities[-1]
+        response_ref = {"path": response["path"], "sha256": response_hash}
+        raw = _read_hashed_repair_file(response_ref).decode("utf-8")
+        obligations = _patch_generation_obligation_projection(feature_spec=admitted.feature_spec,
+            implementation=admitted.implementation_plan,
+            planned_changes=list(admitted.implementation_plan["proposed_changes"]))
+        generator = LLMExactPatchGenerator(None)
+        prepared = generator.prepare_native_contract(user_request=admitted.feature_spec["user_request"],
+            evidence_items=_external_evidence_items(admitted.evidence_pack["items"]),
+            binding_registry=admitted.implementation_plan["binding_registry"],
+            constraints=obligations["side_effect_boundaries"], target_behavior=obligations["target_behavior"],
+            acceptance_criteria=obligations["acceptance_criteria"],
+            runtime_verification_plan=obligations["runtime_verification_plan"],
+            required_change_units=obligations["required_change_units"],
+            required_validation_by_binding={item["edit_binding_id"]: item["expected_validation"]
+                for item in obligations["required_change_units"]})
+        generated = generator.materialize_prepared_native(prepared, ChatResponse(content=raw, model=response["model"]))
+        if _canonical_sha256(generated.changes) != report["generated_changes_sha256"]:
+            raise ValueError("Failure observations were measured against different generated changes.")
+        materialized = materialize_exact_text_patch(workspace_root=request.workspace_root,
+            diff_intent=generated.changes, implementation_plan=admitted.implementation_plan)
+        code_identity = {"baseline_sha256": materialized.baseline_sha256,
+                         "code_sha256": materialized.code_sha256, "files": sorted(materialized.files)}
+        if latest.get("materialized_code_identity") != code_identity:
+            raise ValueError("Failure observations do not match the actual materialized code.")
+        if "verification_ref" in report:
+            _read_hashed_repair_file(report["verification_ref"])
+        for observation in report["observations"]:
+            if "result_ref" in observation:
+                _read_hashed_repair_file(observation["result_ref"])
+        current = {**context, "previous_response": raw, "failed_response_ref": response_ref,
+            "failed_diff_intent": list(generated.changes), "generated_changes_sha256": _canonical_sha256(generated.changes),
+            "failure_report_ref": dict(report_ref), "failure_report": report,
+            "previous_failure_binding": {"failed_response_ref": context["failed_response_ref"],
+                "failure_report_ref": context["failure_report_ref"],
+                "generated_changes_sha256": context["generated_changes_sha256"]},
+            "active_failure_evaluation_index": len(evaluations), "approval_inherited": False}
+        return replace(admitted, repair_context=current)
+    except (ValueError, TypeError, KeyError, OSError) as exc:
+        raise PatchContinuationError("PATCH_UPSTREAM_FAILURE_BINDING_REQUIRED", "upstream_admission", str(exc)) from exc
 
 
 class PatchContinuationAttemptJournal:
@@ -2580,7 +2670,7 @@ def _patch_execution_counts(
     return {
         "fresh_coverage": 0,
         "model": model_call_count,
-        "planning": 0,
+        "planning": _node_execution_count(state, "create_implementation_plan"),
         "patch": _node_execution_count(state, "generate_patch_proposal"),
         "review": _node_execution_count(state, "review_proposal"),
         "dry_run": _node_execution_count(state, "dry_run_apply"),
@@ -2654,6 +2744,8 @@ def _proposal_source_snippet_char_limit(admitted: _AdmittedPatchInputs) -> int:
 
 def _patch_attempt_identity(request: PatchContinuationInputV1, max_model_calls: int) -> str:
     identity_request = asdict(request)
+    if request.patch_upstream_configuration_ref is None:
+        identity_request.pop("patch_upstream_configuration_ref")
     if request.qualified_model_routing_ref is None:
         identity_request.pop("qualified_model_routing_ref")
     if request.worker_configuration_ref is None and request.worker_profile_sha256 is None:
@@ -2678,11 +2770,134 @@ def _attempt_receipt_projection(path: Path, document: Mapping[str, Any]) -> dict
     }
 
 
+class _PatchUpstreamExecution:
+    """Per-invocation adapters and budget; Graph edges still own every transition."""
+
+    def __init__(self, request, factory, configuration, journal, maximum):
+        from src.mod_agent.patch_upstream_configuration import PatchUpstreamConfiguration
+        if not isinstance(configuration, PatchUpstreamConfiguration) or configuration.reference != request.patch_upstream_configuration_ref:
+            raise PatchContinuationError("PATCH_UPSTREAM_CONFIGURATION_INVALID", "request", "The selected providers require their exact configuration reference.")
+        self.request, self.factory, self.configuration, self.journal = request, factory, configuration, journal
+        self.maximum, self.used, self.allocation = maximum, 0, maximum
+        self.roles: dict[str, int] = {}
+        self.segments: list[dict[str, Any]] = []
+        self.replan_count = 0
+        self.initial_selection = self.selection(request)
+        self.source_snippet_char_limit = _proposal_source_snippet_char_limit(preflight_patch_continuation(request))
+        self.providers = configuration.assemble(request, recorder=self.record, reserve_model_call=self.reserve_model_call)
+        self._attach(factory)
+
+    @staticmethod
+    def selection(request):
+        return {kind: _artifact_ref_dict(getattr(request, kind + "_ref"))
+                for kind in ("feature_spec", "evidence_pack", "implementation_plan")}
+
+    def reserve_model_call(self, role):
+        if self.used >= self.maximum:
+            raise PatchContinuationError("PATCH_CONTINUATION_MODEL_CALL_BUDGET_EXHAUSTED", "model_admission", "Patch and upstream providers have consumed the shared invocation budget.")
+        self.used += 1
+        self.roles[role] = self.roles.get(role, 0) + 1
+        self.record({"phase": "shared_model_call_reserved", "role": role})
+
+    def record(self, event):
+        current = dict(event)
+        current["model_call_count"] = self.used
+        current["shared_model_budget"] = {"maximum": self.maximum, "consumed": self.used,
+            "remaining": self.maximum - self.used, "by_role": dict(self.roles)}
+        if "factory_receipt" in current:
+            self.segments[-1]["factory_receipt"] = current["factory_receipt"]
+            current["patch_execution_segments"] = list(self.segments)
+        self.journal.record(current)
+
+    def _attach(self, factory):
+        self.segments.append({"segment_index": len(self.segments) + 1,
+            "selected_artifacts": self.selection(self.request),
+            "allocated_model_calls": self.allocation, "factory_receipt": None})
+        factory._shared_model_call_reserver = self.reserve_model_call
+        _bind_patch_attempt_recorder(factory, self.record)
+
+    def after_plan(self, state):
+        """Rebuild from new exact bindings, without inheriting an old approval or map."""
+        if state.get("blockers") or not state["runtime_summary"].get("patch_upstream_return"):
+            return state
+        from copy import deepcopy
+
+        from src.mod_agent.repair.upstream import prepare_replanned_patch_input
+        next_state = deepcopy(state)
+        # This invocation accepts one complete upstream cycle. Further recovery
+        # retains its own failed output rather than silently granting another run.
+        if self.replan_count or self.used >= self.maximum:
+            next_state["blockers"].append({"stage": "implementation_plan",
+                "code": "PATCH_UPSTREAM_CONTINUATION_BUDGET_EXHAUSTED",
+                "message": "No further upstream cycle or model call is available in this invocation."})
+            return next_state
+        previous_request = self.request
+        self.request = prepare_replanned_patch_input(prior_request=previous_request, state=state,
+            attempt_id="replanned_" + _canonical_sha256(self.initial_selection)[:24])
+        self.request = replace(self.request, worker_configuration_ref=previous_request.worker_configuration_ref,
+            worker_profile_sha256=previous_request.worker_profile_sha256,
+            patch_upstream_configuration_ref=previous_request.patch_upstream_configuration_ref)
+        newly_admitted = preflight_patch_continuation(self.request)
+        self.source_snippet_char_limit = _proposal_source_snippet_char_limit(newly_admitted)
+        self.allocation = self.maximum - self.used
+        previous = preflight_patch_continuation(previous_request)
+        context = admit_active_worker_failure(previous_request, self.factory.patch_attempt_receipt(),
+            previous.artifact_store).repair_context
+        repair_ref = {"feature_id": state["feature_id"], "artifact_type": "repair_plan",
+            "path": state["artifacts"]["repair_plan"], "artifact_hash": state["artifact_hashes"]["repair_plan"]}
+        old_policy = self.factory.patch_agent_loop_policy
+        consumed_reads, consumed_source_bytes = self.factory._recovery_observation_usage()
+        consumed_observation_bytes = consumed_source_bytes + self.factory._recovery_observation_bytes
+        remaining_reads = old_policy.max_tool_rounds - consumed_reads
+        remaining_bytes = old_policy.max_observation_bytes - consumed_observation_bytes
+        if min(remaining_reads, remaining_bytes) < 0 or (remaining_reads == 0 and old_policy.require_source_inspection):
+            raise PatchContinuationError("PATCH_UPSTREAM_CONTINUATION_BUDGET_EXHAUSTED", "model_admission",
+                "The original observation policy leaves no legal allowance for the next worker.")
+        self.factory = self.configuration.make_replanned_adapter(self.request, self.allocation)
+        self.factory.patch_agent_loop_policy = replace(self.factory.patch_agent_loop_policy,
+            max_tool_rounds=remaining_reads, max_observation_bytes=remaining_bytes)
+        observation_budget = {"maximum_reads": old_policy.max_tool_rounds,
+            "consumed_reads": consumed_reads, "remaining_reads": remaining_reads,
+            "maximum_bytes": old_policy.max_observation_bytes, "consumed_bytes": consumed_observation_bytes,
+            "source_bytes": consumed_source_bytes,
+            "feedback_bytes": consumed_observation_bytes - consumed_source_bytes,
+            "remaining_bytes": remaining_bytes}
+        self.factory._upstream_continuation_context = {
+            "failure_context_role": "diagnostic_history_not_current_plan_authority",
+            "prior_plan": _artifact_ref_dict(previous_request.implementation_plan_ref),
+            "repair_plan": repair_ref,
+            "previous_response": context["previous_response"],
+            "failure_report": context["failure_report"],
+            "failed_response_ref": context["failed_response_ref"],
+            "failure_report_ref": context["failure_report_ref"],
+            "approval_inherited": False}
+        self._attach(self.factory)
+        self.replan_count += 1
+        # Old RepairPlan was an assessment. Its edit subset cannot govern the new Plan.
+        for kind in ("patch_proposal", "proposal_review", "dry_run_result", "repair_plan"):
+            next_state["artifacts"].pop(kind, None)
+            next_state["artifact_hashes"].pop(kind, None)
+        next_state["approvals"] = {}
+        next_state["run_id"] = state["run_id"] + "_replanned"
+        next_state["runtime_summary"].pop("patch_upstream_return", None)
+        next_state["runtime_summary"]["replanned_patch_lineage"] = {
+            "repair_plan": repair_ref, "prior_plan": _artifact_ref_dict(previous_request.implementation_plan_ref),
+            "failed_response_ref": context["failed_response_ref"], "failure_report_ref": context["failure_report_ref"],
+            "approval_inherited": False}
+        self.record({"phase": "replanned_patch_prepared", "initial_selected_artifacts": self.initial_selection,
+            "selected_artifacts": self.selection(self.request), "replanned_patch_lineage": next_state["runtime_summary"]["replanned_patch_lineage"],
+            "effective_worker_model_allowance": self.allocation, "failure": None,
+            "shared_observation_budget": observation_budget,
+            "proposal_admitted": False})
+        return next_state
+
+
 def run_fresh_patch_continuation(
     request: PatchContinuationInputV1,
     *, patch_change_factory: PatchContinuationFactory,
     dry_run_factory: PatchContinuationDryRunFactory,
     max_model_calls: int = 1,
+    upstream_configuration: Any = None,
 ) -> PatchContinuationResultV1:
     """Run once, or read the same attempt's durable result without replaying tools.
 
@@ -2706,7 +2921,10 @@ def run_fresh_patch_continuation(
             if isinstance(cached, dict):
                 if document.get("terminal_result_sha256") != _canonical_sha256(cached):
                     raise PatchContinuationError("PATCH_CONTINUATION_RESUME_RESULT_INVALID", "resume_admission", "The saved continuation result hash is invalid.")
-                for name, kind in (("patch_proposal_artifact", "patch_proposal"),
+                for name, kind in (("feature_spec_artifact", "feature_spec"),
+                                   ("evidence_pack_artifact", "evidence_pack"),
+                                   ("implementation_plan_artifact", "implementation_plan"),
+                                   ("patch_proposal_artifact", "patch_proposal"),
                                    ("proposal_review_artifact", "proposal_review"),
                                    ("dry_run_artifact", "dry_run_result")):
                     if isinstance(cached.get(name), dict):
@@ -2733,7 +2951,7 @@ def run_fresh_patch_continuation(
     try:
         result = _run_fresh_patch_continuation_once(request,
             patch_change_factory=patch_change_factory, dry_run_factory=dry_run_factory,
-            max_model_calls=max_model_calls, run_id=run_id)
+            max_model_calls=max_model_calls, run_id=run_id, upstream_configuration=upstream_configuration)
     except PatchContinuationError as exc:
         return blocked_patch_continuation_result(code=exc.code, stage=exc.stage,
             duration_seconds=0.0,
@@ -2758,12 +2976,15 @@ def _run_fresh_patch_continuation_once(
     dry_run_factory: PatchContinuationDryRunFactory,
     max_model_calls: int = 1,
     run_id: str,
+    upstream_configuration: Any = None,
 ) -> PatchContinuationResultV1:
     """Run an exact Plan through Patch, Review, and no-write Dry-run once."""
 
     started = time.perf_counter()
     request_id = f"patch_request_{uuid4().hex}"
     feature_id = request.feature_spec_ref.feature_id
+    reported_refs = {kind: getattr(request, kind + "_ref")
+                     for kind in ("feature_spec", "evidence_pack", "implementation_plan")}
     if (
         isinstance(max_model_calls, bool)
         or not isinstance(max_model_calls, int)
@@ -2776,9 +2997,9 @@ def _run_fresh_patch_continuation_once(
             run_id=run_id,
             request_id=request_id,
             feature_id=feature_id,
-            feature_spec_ref=request.feature_spec_ref,
-            evidence_pack_ref=request.evidence_pack_ref,
-            implementation_plan_ref=request.implementation_plan_ref,
+            feature_spec_ref=reported_refs["feature_spec"],
+            evidence_pack_ref=reported_refs["evidence_pack"],
+            implementation_plan_ref=reported_refs["implementation_plan"],
         )
     try:
         admitted = preflight_patch_continuation(request)
@@ -2790,9 +3011,9 @@ def _run_fresh_patch_continuation_once(
             run_id=run_id,
             request_id=request_id,
             feature_id=feature_id,
-            feature_spec_ref=request.feature_spec_ref,
-            evidence_pack_ref=request.evidence_pack_ref,
-            implementation_plan_ref=request.implementation_plan_ref,
+            feature_spec_ref=reported_refs["feature_spec"],
+            evidence_pack_ref=reported_refs["evidence_pack"],
+            implementation_plan_ref=reported_refs["implementation_plan"],
         )
 
     journal = PatchContinuationAttemptJournal(
@@ -2803,8 +3024,15 @@ def _run_fresh_patch_continuation_once(
         admitted=admitted,
         max_model_calls=max_model_calls,
     )
+    upstream_execution = None
     try:
-        _bind_patch_attempt_recorder(patch_change_factory, journal.record)
+        if upstream_configuration is not None:
+            upstream_execution = _PatchUpstreamExecution(request, patch_change_factory,
+                upstream_configuration, journal, max_model_calls)
+        elif request.patch_upstream_configuration_ref is not None:
+            raise PatchContinuationError("PATCH_UPSTREAM_CONFIGURATION_INVALID", "request", "Configured upstream providers were not supplied.")
+        else:
+            _bind_patch_attempt_recorder(patch_change_factory, journal.record)
     except PatchContinuationError as exc:
         return blocked_patch_continuation_result(
             code=exc.code,
@@ -2813,9 +3041,9 @@ def _run_fresh_patch_continuation_once(
             run_id=run_id,
             request_id=request_id,
             feature_id=feature_id,
-            feature_spec_ref=request.feature_spec_ref,
-            evidence_pack_ref=request.evidence_pack_ref,
-            implementation_plan_ref=request.implementation_plan_ref,
+            feature_spec_ref=reported_refs["feature_spec"],
+            evidence_pack_ref=reported_refs["evidence_pack"],
+            implementation_plan_ref=reported_refs["implementation_plan"],
             source_validation={"status": "passed_before_patch", "before": admitted.source_validation},
             attempt_receipt=journal.projection(),
             source_modified_during_run=False,
@@ -2841,8 +3069,16 @@ def _run_fresh_patch_continuation_once(
             patch_continuation_mode=request,
             patch_continuation_max_model_calls=max_model_calls,
             patch_continuation_attempt_recorder=journal.record,
+            **({"enable_patch_upstream_replanning": True,
+                "patch_replanning_context": upstream_execution,
+                **upstream_execution.providers} if upstream_execution is not None else {}),
         )
         graph_result = graph.invoke(state)
+        reported_refs = {kind: _ref_from_patch_state(graph_result, kind, feature_id=feature_id) or ref
+                         for kind, ref in reported_refs.items()}
+        if upstream_execution is not None:
+            journal.record({"phase": "current_upstream_artifacts_observed",
+                "current_upstream_artifacts": {kind: _artifact_ref_dict(ref) for kind, ref in reported_refs.items()}})
     except Exception as exc:
         failed_node = getattr(exc, "_mod_agent_graph_node", None)
         failure_stage = str(
@@ -2875,6 +3111,15 @@ def _run_fresh_patch_continuation_once(
             failed_node if isinstance(failed_node, str) else None,
             model_call_count=int(receipt.get("model_call_count") or 0),
         )
+        failure_state = getattr(exc, "_mod_agent_graph_state", None)
+        if upstream_execution is not None and isinstance(failure_state, Mapping):
+            reported_refs = {kind: _ref_from_patch_state(failure_state, kind, feature_id=feature_id) or ref
+                             for kind, ref in reported_refs.items()}
+            counts = _patch_execution_counts(failure_state, model_call_count=int(receipt.get("model_call_count") or 0))
+            journal.record({"phase": "upstream_execution_failed", "execution_counts": counts,
+                "trace_events": failure_state.get("trace_events", []), "proposal_admitted": False,
+                "current_upstream_artifacts": {kind: _artifact_ref_dict(ref) for kind, ref in reported_refs.items()}})
+            receipt = journal.projection()
         patch_ref = journal.artifact_ref("patch_proposal")
         review_ref = journal.artifact_ref("proposal_review")
         return blocked_patch_continuation_result(
@@ -2885,9 +3130,9 @@ def _run_fresh_patch_continuation_once(
             run_id=run_id,
             request_id=request_id,
             feature_id=feature_id,
-            feature_spec_ref=request.feature_spec_ref,
-            evidence_pack_ref=request.evidence_pack_ref,
-            implementation_plan_ref=request.implementation_plan_ref,
+            feature_spec_ref=reported_refs["feature_spec"],
+            evidence_pack_ref=reported_refs["evidence_pack"],
+            implementation_plan_ref=reported_refs["implementation_plan"],
             patch_proposal_ref=patch_ref,
             proposal_review_ref=review_ref,
             source_validation={
@@ -2901,6 +3146,8 @@ def _run_fresh_patch_continuation_once(
             status="partial" if counts["model"] else "blocked",
         )
 
+    if upstream_execution is not None:
+        request = upstream_execution.request
     patch_ref = _ref_from_patch_state(
         graph_result,
         "patch_proposal",
@@ -2969,9 +3216,9 @@ def _run_fresh_patch_continuation_once(
             run_id=run_id,
             request_id=request_id,
             feature_id=feature_id,
-            feature_spec_ref=request.feature_spec_ref,
-            evidence_pack_ref=request.evidence_pack_ref,
-            implementation_plan_ref=request.implementation_plan_ref,
+            feature_spec_ref=reported_refs["feature_spec"],
+            evidence_pack_ref=reported_refs["evidence_pack"],
+            implementation_plan_ref=reported_refs["implementation_plan"],
             patch_proposal_ref=patch_ref,
             proposal_review_ref=review_ref,
             dry_run_ref=dry_run_ref,
@@ -3005,9 +3252,9 @@ def _run_fresh_patch_continuation_once(
             run_id=run_id,
             request_id=request_id,
             feature_id=feature_id,
-            feature_spec_ref=request.feature_spec_ref,
-            evidence_pack_ref=request.evidence_pack_ref,
-            implementation_plan_ref=request.implementation_plan_ref,
+            feature_spec_ref=reported_refs["feature_spec"],
+            evidence_pack_ref=reported_refs["evidence_pack"],
+            implementation_plan_ref=reported_refs["implementation_plan"],
             patch_proposal_ref=patch_ref,
             proposal_review_ref=review_ref,
             dry_run_ref=dry_run_ref,
@@ -3034,8 +3281,8 @@ def _run_fresh_patch_continuation_once(
     expected_counts = {
         "fresh_coverage": 0,
         "model": counts["model"],
-        "planning": 0,
-        "patch": 1,
+        "planning": upstream_execution.replan_count if upstream_execution is not None else 0,
+        "patch": 1 + (upstream_execution.replan_count if upstream_execution is not None else 0),
         "review": 1,
         "dry_run": 1,
         "apply": 0,
@@ -3078,9 +3325,9 @@ def _run_fresh_patch_continuation_once(
             run_id=run_id,
             request_id=request_id,
             feature_id=feature_id,
-            feature_spec_ref=request.feature_spec_ref,
-            evidence_pack_ref=request.evidence_pack_ref,
-            implementation_plan_ref=request.implementation_plan_ref,
+            feature_spec_ref=reported_refs["feature_spec"],
+            evidence_pack_ref=reported_refs["evidence_pack"],
+            implementation_plan_ref=reported_refs["implementation_plan"],
             patch_proposal_ref=patch_ref,
             proposal_review_ref=review_ref,
             dry_run_ref=dry_run_ref,
@@ -3102,11 +3349,9 @@ def _run_fresh_patch_continuation_once(
         run_id=run_id,
         request_id=request_id,
         feature_id=feature_id,
-        feature_spec_artifact=_artifact_ref_dict(request.feature_spec_ref),
-        evidence_pack_artifact=_artifact_ref_dict(request.evidence_pack_ref),
-        implementation_plan_artifact=_artifact_ref_dict(
-            request.implementation_plan_ref
-        ),
+        feature_spec_artifact=_artifact_ref_dict(reported_refs["feature_spec"]),
+        evidence_pack_artifact=_artifact_ref_dict(reported_refs["evidence_pack"]),
+        implementation_plan_artifact=_artifact_ref_dict(reported_refs["implementation_plan"]),
         patch_proposal_artifact=_artifact_ref_dict(patch_ref),
         proposal_review_artifact=_artifact_ref_dict(review_ref),
         dry_run_artifact=_artifact_ref_dict(dry_run_ref),

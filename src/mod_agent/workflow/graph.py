@@ -547,6 +547,7 @@ def build_graph(
     patch_continuation_mode: PatchContinuationInputV1 | None = None,
     patch_upstream_request: Mapping[str, Any] | None = None,
     enable_patch_upstream_replanning: bool = False,
+    patch_replanning_context: Any = None,
     patch_continuation_max_model_calls: int = 1,
     patch_continuation_attempt_recorder: (
         PatchContinuationAttemptRecorder | None
@@ -1070,7 +1071,7 @@ def build_graph(
         "create_implementation_plan",
         _make_real_graph_node(
             "create_implementation_plan",
-            lambda state: _run_create_implementation_plan(
+            lambda state: _finish_replanned_selection(_run_create_implementation_plan(
                 state,
                 artifact_store,
                 formal_requirement_coverage_required=(
@@ -1087,7 +1088,7 @@ def build_graph(
                 planning_target_selection_factory=(
                     planning_target_selection_factory
                 ),
-            ),
+            ), patch_replanning_context),
         ),
     )
     graph.add_node(
@@ -1097,17 +1098,19 @@ def build_graph(
             lambda state: _run_generate_patch_with_upstream(
                 state,
                 artifact_store,
-                enable_upstream_replanning=enable_patch_upstream_replanning,
+                enable_upstream_replanning=(enable_patch_upstream_replanning
+                    and (patch_replanning_context is None or patch_replanning_context.replan_count == 0)),
                 upstream_evidence_factory=evidence_pack_factory,
                 proposal_git_binding_factory=effective_proposal_git_binding_factory,
-                patch_change_factory=patch_change_factory,
-                source_snippet_char_limit=proposal_source_snippet_char_limit,
-                patch_continuation_mode=validated_patch_continuation_mode,
+                patch_change_factory=(patch_replanning_context.factory if patch_replanning_context is not None else patch_change_factory),
+                source_snippet_char_limit=(patch_replanning_context.source_snippet_char_limit
+                    if patch_replanning_context is not None else proposal_source_snippet_char_limit),
+                patch_continuation_mode=(patch_replanning_context.request if patch_replanning_context is not None else validated_patch_continuation_mode),
                 patch_continuation_attempt_recorder=(
-                    patch_continuation_attempt_recorder
+                    patch_replanning_context.record if patch_replanning_context is not None else patch_continuation_attempt_recorder
                 ),
                 patch_continuation_max_model_calls=(
-                    patch_continuation_max_model_calls
+                    patch_replanning_context.allocation if patch_replanning_context is not None else patch_continuation_max_model_calls
                 ),
             ),
         ),
@@ -1413,7 +1416,9 @@ def build_graph(
         "create_implementation_plan",
         route_after_implementation_plan,
         (
-            {"continue": END, "blocked": END}
+            {"continue": "generate_patch_proposal", "blocked": END}
+            if patch_replanning_context is not None
+            else {"continue": END, "blocked": END}
             if validated_planning_continuation_mode is not None or upstream_replanning
             else dict(registry["create_implementation_plan"])
         ),
@@ -1572,6 +1577,7 @@ def _make_real_graph_node(node_name: str, run: GraphNode) -> GraphNode:
             result = run(state_with_start)
         except Exception as exc:
             setattr(exc, "_mod_agent_graph_node", node_name)
+            setattr(exc, "_mod_agent_graph_state", state_with_start)
             raise
         finished = _trace_event(
             state=result,
@@ -1822,6 +1828,10 @@ def _run_retrieve_evidence(
     if not pack.can_generate_patch:
         next_state["blockers"].extend(pack.blockers)
     return next_state
+
+
+def _finish_replanned_selection(state, context):
+    return context.after_plan(state) if context is not None else state
 
 
 def _run_create_implementation_plan(
@@ -2421,6 +2431,10 @@ def _run_generate_patch_proposal(
             _artifact_ref_from_state(state, "implementation_plan"),
             _artifact_ref_from_state(state, "evidence_pack"),
         ]
+        lineage = state["runtime_summary"].get("replanned_patch_lineage")
+        if lineage is not None:
+            proposal = replace(proposal, context_pack={**proposal.context_pack,
+                "repair_lineage": copy.deepcopy(lineage)})
     artifact_ref = artifact_store.write(
         feature_id=proposal.feature_id,
         artifact_type="patch_proposal",
@@ -4389,14 +4403,14 @@ def _run_create_repair_plan(
         pending_upstream = state["runtime_summary"].get("patch_upstream_pending")
         if pending_upstream and patch_upstream_factory is not None:
             from src.mod_agent.repair.upstream import validate_active_worker_upstream
-            _, upstream = validate_active_worker_upstream(patch_continuation_mode,
+            admitted, upstream = validate_active_worker_upstream(patch_continuation_mode,
                 _patch_factory_attempt_receipt(patch_upstream_factory), artifact_store=artifact_store)
             plan = planner.from_patch_upstream_request(repair_context=admitted.repair_context,
                 upstream=upstream, feature_id=feature_id, target_behavior=str(feature_spec.get("target_behavior") or ""),
                 retry_count=admitted.repair_context["parent_retry_count"])
         elif patch_upstream_request is not None:
             from src.mod_agent.repair.upstream import validate_patch_upstream_selection
-            _, upstream = validate_patch_upstream_selection(patch_continuation_mode, patch_upstream_request,
+            admitted, upstream = validate_patch_upstream_selection(patch_continuation_mode, patch_upstream_request,
                 artifact_store=artifact_store)
             plan = planner.from_patch_upstream_request(repair_context=admitted.repair_context,
                 upstream=upstream, feature_id=feature_id, target_behavior=str(feature_spec.get("target_behavior") or ""),

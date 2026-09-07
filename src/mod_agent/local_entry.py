@@ -885,9 +885,9 @@ def _patch_agent_initial_messages(
             role="system",
             content=(
                 str(messages[0].content)
-                + " Use the Plan-binding source inspection tool to resolve "
-                "caller, callee, lifecycle, and state-flow uncertainty before "
-                "returning the final Patch."
+                + " Use permitted source inspection when it can resolve caller, callee, "
+                "lifecycle or state-flow uncertainty. When the supplied information is sufficient, "
+                "you may return the Patch without an extra read."
             ),
         ),
         AgentMessage(
@@ -958,6 +958,8 @@ class LocalOllamaInitialPatchAdapter:
             agent_turn_client_factory or self._default_agent_turn_client
         )
         self._attempt_recorder: Callable[[Mapping[str, Any]], None] | None = None
+        self._shared_model_call_reserver: Callable[[str], None] | None = None
+        self._upstream_continuation_context: dict[str, Any] | None = None
         self._invocation_count = 0
         self._response_sidecar_path: Path | None = None
         self._receipt: dict[str, Any] = {
@@ -1210,6 +1212,22 @@ class LocalOllamaInitialPatchAdapter:
                         self._model_failure_feedback(self._repair_context["failure_report"]),
                         message_type="patch_repair_context",
                     ))
+                if self._upstream_continuation_context is not None:
+                    history = self._upstream_continuation_context
+                    agent_messages = (*agent_messages,
+                        AgentMessage(role="assistant", content=history["previous_response"]),
+                        AgentMessage(role="user", content={
+                            "message_type": "patch_replanned_context",
+                            "prior_code_role": "previously_checked_code_under_prior_plan",
+                            "validator_feedback": self._model_failure_feedback(history["failure_report"]),
+                            "current_plan_sha256": state["artifact_hashes"]["implementation_plan"],
+                            "required_action": "The preceding code failed under the prior Plan. Use it and its observations "
+                                "as diagnostic history. The initial context contains the new current Plan and bindings. "
+                                "Old binding identifiers grant no current permission. Submit a complete replacement "
+                                "relative to the unchanged B0 using the current bindings, preserving every original "
+                                "requirement and the original verification expectations. Inspect only when useful."}))
+                    self._receipt["upstream_continuation_context"] = {
+                        key: value for key, value in history.items() if key not in {"previous_response", "failure_report"}}
                 initial_user_payload = json.loads(str(agent_messages[1].content))
                 input_encoding = initial_user_payload.get("patch_agent_context_encoding")
                 initial_message_payload = [
@@ -1485,6 +1503,8 @@ class LocalOllamaInitialPatchAdapter:
         policy = self.patch_agent_loop_policy
         if policy is None or self._receipt["model_call_count"] >= policy.max_total_model_turns:
             raise LocalEntryError("PATCH_AGENT_CORRECTION_BUDGET_EXHAUSTED")
+        if self._shared_model_call_reserver is not None:
+            self._shared_model_call_reserver("patch")
         self._receipt["model_call_count"] += 1
 
     def _recording_agent_client(self, client: AgentTurnClient, run_id: str) -> AgentTurnClient:
@@ -1884,7 +1904,11 @@ class LocalOllamaInitialPatchAdapter:
                     +
                     "F1 below contains the measured input, expected and observed results for C1. "
                     "Diagnostic owner labels and explanations are hypotheses unless supported by observations. "
-                    "Investigate using permitted read tools when useful, then return C2 as one complete "
+                    "Identify which original requirement the observations contradict and which implementation "
+                    "assumption they rule out. If information is sufficient, revise directly; otherwise choose "
+                    "a permitted read that helps distinguish the remaining explanations. Rechecking known source "
+                    "is allowed when useful. Do not repair environment or verifier faults by changing business code. "
+                    "Return C2 as one complete "
                     "replacement Patch relative to B0, not an extra diff applied on top of C1. "
                     "Retain ALL original Feature obligations, preservation requirements and user clarifications, "
                     "including behavior that already passed. Do not change tests or their applicability. "
@@ -1927,6 +1951,7 @@ class LocalOllamaInitialPatchAdapter:
             "model_response": dict(self._receipt["model_response"]),
             "source_snapshot_sha256": inspector.source_snapshot_sha256,
             "evaluation_index": len(evaluations) + 1,
+            "implementation_plan": deepcopy(self._implementation_plan),
         }
         if self.enable_recovery_loop:
             context.update(materialized_code_identity=code_identity, verification_identity=verification_identity)
@@ -2041,7 +2066,8 @@ class LocalOllamaInitialPatchAdapter:
             raise LocalEntryError("PATCH_BEHAVIOR_OBSERVATION_INVALID") from exc
         report.update(callback_invoked=True, execution_origin=origin,
                       materialized_code_identity=code_identity, verification_identity=verification_identity,
-                      code_revision=code_revision)
+                      code_revision=code_revision,
+                      model_response_sha256=context["model_response"]["output_sha256"])
         if report["status"] in {"behavior_failed", "needs_evidence"} and code_identity is not None:
             self._known_failed_code = deepcopy(code_identity)
             self._known_failed_report_ref = deepcopy(report["report_ref"])
