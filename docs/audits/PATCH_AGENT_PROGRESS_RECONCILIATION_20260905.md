@@ -6,6 +6,9 @@
 
 ## 0. 最新状态快照
 
+**近真实对照输入最新（0.24）：独立自有C#配置任务已准备，真实编译/磁盘/进程基线可运行。**
+15项检查中7项新增要求失败、8项保留行为通过；没有模型生成、Apply或完整一站式交付。
+
 **外部模型接缝最新（0.23）：外部千问可复用原Patch/Repair worker，解析失败前也保留原HTTP响应；尚未真实外发。**
 真实服务可用性与模型修订能力未证明。独立自有代码任务正在准备真实对照，不复用受限GTFO材料。
 
@@ -139,7 +142,8 @@ Qwen在工具预算反馈后由请求5处改选2处；修正执行ID记账后，
 | 已提交 `3122c26` | `requirement_coverage.py`与`requirement_coverage_provider.py`共享原合法编辑身份谓词，生产schema区分引用域与编辑提示域；新增原Actual离线回归 | 4项聚焦及115项checkpoint通过；其它并行WIP不在本节A5验收范围，不能将工作树整体写成“无WIP” |
 | 已提交 `9efcac9` | 原Patch查询到Langfuse历史元数据OTLP导出、查询与有限查回；评分核验代码/报告/矩阵身份，防止同数量异矩阵错绑 | 65项相关回归通过；没有真实服务发送，不增加产品成功、原始时序或跨任务资格声明，详0.21 |
 | 已提交 `fdb0fc7` | 固定3任务及真实C#行为判定器，准备器输出原公开CLI参数；复用原任务资格合同和Patch worker，不另造执行器 | 基线和输入准入已有，3任务模型成功率为空；人辅Evidence/Planning，不声明自主规划，详0.22 |
-| 本次外部接缝提交 | 从原Local adapter抽出3个provider hook，外部Qwen复用原worker；校验实际发送范围和模型身份，并在解析前保留HTTP响应 | 离线共享循环/兼容性与解析失败回归通过；0真实目录查询/生成请求，不声明强模型胜任，详0.23 |
+| 已提交 `5a6ca38` | 从原Local adapter抽出3个provider hook，外部Qwen复用原worker；校验实际发送范围和模型身份，并在解析前保留HTTP响应 | 离线共享循环/兼容性与解析失败回归通过；0真实目录查询/生成请求，不声明强模型胜任，详0.23 |
+| 本次自有任务提交 | 新编多文件JSON配置程序、独立真实进程判定器及原continuation输入，支持相同任务/标准作本地与外部对照 | 基线已验证，产品模型未运行；不是完整服务生命周期或模型资格通过，详0.24 |
 | 文档整理 | 本文顶部快照、历史标签、统一Attempt索引、剩余矩阵及短控制文档同步 | 不增加产品能力；文档提交单独记录 |
 | 用户原有WIP | ARCHITECTURE_OVERVIEW、ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT、SPEC_COVERAGE_MATRIX，以及3份未跟踪草案 | 六份文件hash与本轮开始完全一致；不混入本轮提交 |
 
@@ -989,6 +993,33 @@ python -B -m pytest tests/unit/test_external_patch.py tests/unit/test_agent_turn
 HTTP替身实际走过源码工具、合成验证失败、再次查证、修订及原Review/Dry-run；
 这证明生产机制组合，不证明真实千问生成过正确代码。
 本轮真实外部模型目录查询和生成调用均为0，披露批准仍需绑定具体任务与目的地。
+
+### 0.24 独立自有C#配置任务：近真实模型对照的可执行输入
+
+`tests/fixtures/patch_eval/owned_config_service`为新编MIT输入：3个C#源码文件、JSON磁盘存储、
+命令行入口，没有GTFO源码/API、历史Mod修订或正确参考实现。当前变更要求为`maxRetries`
+只接受JSON整数0–5，拒绝7类非法值并保持磁盘字节不变；保留合法值、未知键、服务名、重启读取
+和原JSON语法错误处理。它是一个初筛任务，不代表完整领域难度或3任务资格。
+
+准备器复用原FeatureSpec、RgLive、Coverage、ImplementationPlanner、ArtifactStore与
+continuation preflight，产出原`continuation-input.json`和`worker.json`。
+支持关系和单一Update编辑范围明确为人工编排；不声称自主Fresh/Planning。
+本地可用原`continue-fresh-patch`，外部可用原`run_external_patch_continuation`。
+没有第二个模型runner；每次真实执行仍需独立attempt/profile和适用授权。
+
+有效输入为[owned_config_service_005/task.json](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/owned_config_service_005/task.json)。
+固定.NET7 csc/reference/runtime编译成功，23次独立应用进程检查真实stdout与磁盘：
+7项新增校验要求按预期失败、8项保留行为通过。模型输入只含程序源码与需求，不含判定器或正确修订。
+判定器按原response路径隔离报告，编译错误、环境失败和行为失败分开记录。
+
+001/002保留NuGet环境失败；003/004为编译方式过渡准备。005已改用既有直接csc路径，
+不再恢复NuGet、读取用户配置或延伸A8环境建设。子进程环境使用明确白名单，但这仍不是完整OS沙箱声明。
+4项`tests/unit/test_owned_config_task.py`聚焦测试通过（7.11秒），最终005基线另真实运行通过（7.36秒）；
+Ruff通过。无模型调用、外发、产品Apply或游戏操作。
+
+source-disclosure-preview明确`approved=false`；MIT身份和源码清单不授予外发权限。
+后续真实对照保持同一源码、需求、Plan、检查集和共享worker，分别记录profile与预算。
+当前没有产生通过15项检查的模型修订，也没有验证审批退出/恢复、Apply、正式Build和交付查询全链。
 
 ## 1. 结论与范围
 
