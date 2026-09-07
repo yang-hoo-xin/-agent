@@ -41,6 +41,12 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
+Latest owned-task acceptance fixed `90cfc27`: Max used five real requests,
+repaired its compiler error, recovered a malformed revision in the same worker,
+then passed compilation and all original 15 checks. Proposal/Review/Dry-run exist;
+it stopped before exact approval. This is one operator-assisted Plan result,
+with no Apply/formal Build/GTFO Runtime or P0 success (reconciliation 0.29).
+The bounded run is closed; prior unproven statements below are historical.
 Subsequent owned-task model screening ran local 30B, external Plus and Max through
 the same worker. Their distinct compilation/action/format failures are recorded
 in reconciliation 0.26. No P0 repair or model qualification is implied. The next

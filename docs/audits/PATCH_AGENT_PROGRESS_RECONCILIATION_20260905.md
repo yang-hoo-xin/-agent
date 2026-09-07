@@ -6,6 +6,11 @@
 
 ## 0. 最新状态快照
 
+**真实验收最新（0.29）：冻结90cfc27，Max独立5次请求完成编译反馈修订与格式纠正；最终真实编译成功、原15项检查全过。**
+原Proposal/Review/Dry-run绑定通过检查的同一版字节，停止在exact diff审批前。
+这是OwnedConfigService、人辅Evidence/Plan下的一次成功；没有Apply、正式Build或游戏Runtime，
+AccurateCrosshair仍未修好，不推广为自主Planning或跨任务资格。旧节的“尚未验收”保留历史时点。
+
 **提交闭环最新（0.28）：同一Patch worker现在区分工具、合规提交、完整格式错误和不完整响应；首次及行为修订均可在原余额内纠正格式。**
 公开入口的两条五回合离线路径经过原Review/Dry-run；使用预设HTTP响应与合成marker检查，
 没有新模型请求、真实编译或原15项验收。请求正文与提交轨迹进入原账本/查询；保存请求不等于发送。
@@ -1219,6 +1224,55 @@ F1与原报告一致，Plus末轮明确提到这些错误；历史后续请求�
 **下一步边界：**固定本实现与显式Max profile，沿用原自有源码/Plan、原判定器和5次总预算，
 取得本次新增运行授权后才实发。是否编译、15项是否执行/通过、是否有效修订分别报告。
 尚未证明Max修后表现、任意provider全兼容、多任务资格、自主Planning或First Shot修复。
+
+### 0.29 修后Max独立真实验收：有效修订、原15项通过
+
+用户在当前任务明确授权这次最多新增5次Max请求，仅沿用原自有源码、服务地址和15项判定，
+不含GTFO、不Apply、不自动换模型。原prepared-inputs保持发送前状态；本次授权原文与准入记录
+另存frozen-inputs。执行HEAD固定`90cfc27ee1d6833de6c3631e5c69862038553e84`；运行中没有修改
+worker、prompt、预算、源码、Feature/Evidence/Plan或oracle，没有导入正确实现或手工提取非JSON回复。
+
+生产入口`run_external_patch_continuation`真实运行36.596秒，5请求/5次HTTP200响应，0旧响应重放；
+输入25,391 token、输出1,799 token（缓存输入9,472是输入子集）。现在已结束，没有自动续跑。
+
+| 回合 | 模型实际动作 | 程序实际结果 |
+|---|---|---|
+| 1 | 读取Program的已登记supporting位置 | 返回当前源码；未增加编辑权限 |
+| 2 | 读取Update的edit binding并附说明 | 返回JsonConfigStore全文；工具附带说明未当Patch解析 |
+| 3 | 提交完整JSON初稿 | 实际编译失败CS0246，ArgumentException未解析；行为检查未执行 |
+| 4 | 消费编译诊断，决定在原范围使用System.ArgumentException；回复说明加JSON | 保留完整原文，拒绝格式，按剩余预算回同worker；该回复未被手工摘取或物化 |
+| 5 | 返回合规JSON修订 | 代码实际改变；重新编译成功、原15项全过，形成原Proposal/Review/Dry-run |
+
+共2次隔离编译（1失败、1成功）及23次应用进程，23个不同PID。7项新增输入拒绝要求、8项保留行为
+均通过；检查顺序、输入/期望、验证器/环境身份与原任务一致。初稿的0项表示未执行，不是0/15失败。
+这是自有配置程序的检查，不是First Shot矩阵或正式Build/GTFO Runtime。
+
+两版代码相对同一B0物化后身份不同；最终Proposal/Dry-run字节与第二报告被测修订一致。
+原三份源码hash未变，历史失败报告未覆盖。Review为`approve_dry_run`，`semantic_assurance=unproven`；
+人工语义审查、exact approval和Apply未发生。
+
+这次真实证明：源码调查→生成→消费真实编译失败→实质修订→同worker预算内格式纠正→重新验证通过。
+失败后没有再读源码，不能描述为本轮触发了失败后调查；该分支可达性仍是0.28离线证据。
+5次请求均记录JSON object，但第4次仍为说明加JSON；不能把JSON mode当服务保证或独立成功条件。
+
+证据集中于本次独立目录：
+
+- [启动结果与原journal引用](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/owned_config_cloud_max_submission_001/launcher-result.json)
+- [请求/响应/代码与矩阵核验](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/owned_config_cloud_max_submission_001/acceptance-verification.json)
+- [原只读查询](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/owned_config_cloud_max_submission_001/execution-query.json)
+- [15项真实矩阵](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/owned_config_service_005/verification/model_outputs/bb3aa69f64fdb0ebfae3/evaluation_2/matrix.json)
+
+新journal为`9968c07d8f487a473f4c8714e492f0d1.json`；Proposal `7d3deba5…`、Review `1afa0c16…`、
+Dry-run `824cfd68…`，完整refs由以上查询定位。两份报告、矩阵、编译/进程日志和Artifact的hash及
+代码绑定经独立只读核验，没有重跑模型/编译/行为检查。生效请求中C1、精确编译F1、格式错原文和原义务可见。
+
+请求核验限制：保存的是规范化AgentTurnRequest及发送时wire hash/字节量，没有原wire正文。
+离线重新序列化的5个hash均未复现原wire hash，因此不声称独立重放逐字请求体；核验文件保留这一
+不一致，内容检查限于保存的生效请求。没有改写已完成运行或为此展开新平台建设。
+
+本次授权已执行完。此结果记为该任务/当前profile的一次通过样本；旧三组首筛仍为0/3，修后本次
+独立记1次通过，不覆盖旧失败。复杂任务、跨任务重复资格、自主Planning、First Shot仍未证明。
+下一步应消费这个真实样本选择后续独立任务，不重新扩建提交格式流程，也不自动外发GTFO或Apply。
 
 ## 1. 结论与范围
 

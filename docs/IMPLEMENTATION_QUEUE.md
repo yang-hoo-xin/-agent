@@ -49,9 +49,13 @@ offline checks and legacy identity compatibility (0.27). Do not extract JSON fro
 the old Max output or automatically run another model. A fixed new acceptance needs its selected
 budget. The same worker now supplies submission-format feedback in both initial
 and behavior-revision phases, with public-entry offline coverage, retained
-request content and separate provider-stop handling (0.28). Next is one newly
-authorized fixed Max acceptance on the unchanged owned task/oracle, not another
-profile or framework expansion. See reconciliation 0.26. Correct API semantic use, qualified models,
+request content and separate provider-stop handling (0.28). The authorized fixed Max
+acceptance completed on `90cfc27`: five real requests, compiler-error revision,
+format correction, successful compilation and original 15/15 checks, then original
+Review/Dry-run. It stopped before exact approval; this authorization queues no
+further model calls. Consume this one-task result for the next independent model
+qualification task; do not restart format infrastructure (0.29).
+Correct API semantic use, qualified models,
 Langfuse destination and DSH submission/approval/resume/delivery remain open.
 No new P0 repair or hosted CI was run.
 DSH owns UI, interaction sessions and plugin hosting only. The current Python

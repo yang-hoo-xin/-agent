@@ -7,6 +7,13 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
+Fixed `90cfc27` Max acceptance completed: five real requests, compiler-error revision
+plus format recovery, successful isolated compilation and 15/15 original owned-task
+checks (23 application processes). Proposal/Review/Dry-run bind the passing bytes;
+no exact approval, Apply, formal Build or GTFO Runtime. This proves one assisted-Plan
+task, not First Shot or model qualification. See reconciliation 0.29; the three
+preceding failed screenings remain historical facts.
+
 Real model screening now has three independent results on the same owned C# task:
 30B compiled neither of its identical revisions; cloud Plus failed compilation
 then requested Evidence; cloud Max stopped on prose preceding JSON, before any
