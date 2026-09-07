@@ -39,6 +39,12 @@ _SAFE_LABEL_VALUES = frozenset({
     "journal_claim_live_response_with_verified_ref", "journal_claim_replay_with_verified_response_refs",
     "requested_send_unconfirmed", "unknown_response_evidence_unavailable",
     "journal_claim_with_reference_checks_not_independent_send_proof",
+    "retained_request_identity_verified_not_send_proof", "unknown_no_verified_request_reference",
+    "matching_retained_content_hash", "unknown_no_verified_matching_content", "validator_correction",
+    "submission_format_and_schema_only_not_patch_or_behavior_success",
+    "journal_request_and_response_observations_not_independent_send_proof",
+    "deterministic_patch_validation", "malformed_structured_output", "patch_submission_schema_violation",
+    "provider_stopped", "contract_invalid", "length", "max_tokens", "max_output_tokens", "content_filter", "refusal",
     "explicit_journal_field_with_retained_report_not_new_execution",
     "PATCH_AGENT_UPSTREAM_REQUESTED", "PATCH_BEHAVIOR_CORRECTION_FAILED", "PATCH_CONTINUATION_MODEL_CALL_BUDGET_EXHAUSTED",
     "LocalEntryError", "PatchGenerationError", "PatchContinuationError", "ValueError", "TimeoutError",
@@ -260,12 +266,27 @@ def prepare_patch_import(artifact_store_root: str | Path, *, attempt_locator: st
     root_meta["failure"] = _metadata(row.get("failure") or {}, labels=("code", "failure_class", "stage"))
     add("attempt", 0, root_meta)
     for index, turn in enumerate(row["worker_turns"]):
-        data = _metadata(turn, labels=("status", "response_origin", "send_observation", "send_observation_basis"),
-                         numbers=("segment_index", "turn_index"), digests=("request_sha256",), refs=("response_ref", "original_response_ref"))
+        data = _metadata(turn, labels=("status", "response_origin", "send_observation", "send_observation_basis", "request_observation"),
+                         numbers=("segment_index", "turn_index"), digests=("request_sha256",),
+                         refs=("request_ref", "response_ref", "original_response_ref"))
         data["recorded_usage"] = _numbers(turn.get("usage"))
         data["provider_request_identity"] = _metadata(turn.get("provider_request_identity") or {},
             digests=("provider_body_sha256",), numbers=("provider_body_utf8_bytes",))
         add("model_turn_record", index, data)
+    for index, submission in enumerate(row.get("submission_trace", [])):
+        data = _metadata(submission,
+            labels=("phase", "status", "stop_reason", "response_binding", "claim_scope", "feedback_observation_basis"),
+            numbers=("segment_index", "turn_index", "code_validation_performed", "feedback_payload_bytes",
+                     "feedback_queued", "feedback_in_request", "followup_response_observed", "consumed_in_model_turn"),
+            digests=("response_sha256", "schema_sha256"))
+        data["diagnostics"] = _metadata(submission.get("diagnostics") or {},
+            labels=("failure_boundary", "failure_classification", "schema_constraint"),
+            numbers=("json_error_line", "json_error_column", "json_error_character_index"))
+        data["retained_response_matches"] = [_metadata(match,
+            numbers=("turn_index",), digests=("content_sha256",), refs=("ref",))
+            for match in submission.get("retained_response_matches", [])]
+        data.update(score_eligible=False, product_success_not_inferred=True, model_sends_not_inferred=True)
+        add("patch_submission_record", index, data)
     for index, call in enumerate(row["tool_execution"]):
         data = _metadata(call, labels=("phase", "status", "execution_observation", "observation_origin"),
                          numbers=("segment_index", "turn_index", "dispatch_started", "read_cost"), digests=("arguments_sha256",))

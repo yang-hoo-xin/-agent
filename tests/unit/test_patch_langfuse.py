@@ -1,6 +1,7 @@
 """Historical exporter uses real HTTP serialization with an isolated fake server."""
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -49,6 +50,122 @@ def _case(tmp_path):
 
 def _prepare(root, path):
     return prepare_patch_import(root, attempt_locator=str(path), imported_at=IMPORT_TIME)
+
+
+def _submission_case(tmp_path):
+    root, path, journal, _ = _case(tmp_path)
+    raw = "SECRET_PROSE_AND_SOURCE_BEFORE_JSON"
+    response = _retain(root / "cr" / "format.response.json", {"content": raw})
+    corrected_content = '{"changes":[]}'
+    corrected = _retain(root / "cr" / "corrected.response.json", {"content": corrected_content})
+    request = _retain(root / "cr" / "format.request.json", {"messages": [
+        {"role": "assistant", "content": raw},
+        {"role": "user", "content": {"message_type": "patch_submission_feedback", "error": "SECRET_FAILURE_TEXT"}}]})
+    factory = journal["factory_receipt"]
+    factory["worker_turns"].extend([
+        {"turn_index": 2, "status": "responded", "response_origin": "live_provider_response", "response_ref": response},
+        {"turn_index": 3, "status": "responded", "response_origin": "live_provider_response", "request_ref": request,
+         "response_ref": corrected}])
+    factory["patch_agent_loop"]["behavior_correction"] = {"execution": {"submission_trace": [{
+        "turn_index": 2, "response_sha256": hashlib.sha256(raw.encode()).hexdigest(), "schema_sha256": "e" * 64,
+        "status": "rejected", "code_validation_performed": False, "feedback_queued": True,
+        "feedback_in_request": True, "followup_response_observed": True, "consumed_in_model_turn": 3,
+        "feedback_payload_bytes": 200,
+        "diagnostics": {"failure_boundary": "deterministic_patch_validation", "failure_classification": "malformed_structured_output",
+            "json_error_line": 1, "json_error_column": 1, "json_error_character_index": 0,
+            "message": "SECRET_ERROR_TEXT", "field_path": ["SECRET_FIELD_NAME"]}},
+        {"turn_index": 3, "response_sha256": hashlib.sha256(corrected_content.encode()).hexdigest(), "schema_sha256": "e" * 64, "status": "accepted",
+         "code_validation_performed": False, "feedback_queued": False, "feedback_in_request": False,
+         "followup_response_observed": False}]}}
+    _retain(path, journal)
+    return root, path, journal, request, response
+
+
+def _event_metadata(batch, kind):
+    result = []
+    for span in batch.otlp["resourceSpans"][0]["scopeSpans"][0]["spans"]:
+        if span["name"] != "historical." + kind:
+            continue
+        row = {}
+        for attribute in span["attributes"]:
+            prefix = "langfuse.observation.metadata."
+            if not attribute["key"].startswith(prefix):
+                continue
+            value = next(iter(attribute["value"].values()))
+            if "intValue" in attribute["value"]:
+                value = int(value)
+            elif isinstance(value, str) and value.startswith(("{", "[")):
+                value = json.loads(value)
+            row[attribute["key"].removeprefix(prefix)] = value
+        result.append(row)
+    return result
+
+
+def test_submission_events_and_request_refs_preserve_feedback_without_exporting_code_or_adding_scores(tmp_path, monkeypatch):
+    root, path, _, _, _ = _submission_case(tmp_path)
+    client, backend = _transport(monkeypatch)
+    before = {str(file): file.read_bytes() for file in tmp_path.rglob("*.json")}
+    batch = _prepare(root, path)
+    records = _event_metadata(batch, "patch_submission_record")
+    assert [row["status"] for row in records] == ["rejected", "accepted"]
+    rejected = records[0]
+    assert rejected["phase"] == "behavior_correction" and rejected["consumed_in_model_turn"] == 3
+    assert rejected["feedback_queued"] and rejected["feedback_in_request"] and rejected["followup_response_observed"]
+    assert rejected["response_binding"] == "matching_retained_content_hash"
+    assert rejected["retained_response_matches"][0]["ref"]["integrity"] == "verified_bytes"
+    assert rejected["diagnostics"]["failure_classification"] == "malformed_structured_output"
+    assert all(row["score_eligible"] is False and row["model_sends_not_inferred"] for row in records)
+    turns = _event_metadata(batch, "model_turn_record")
+    assert turns[2]["request_ref"]["integrity"] == "verified_bytes"
+    assert turns[2]["request_observation"] == "retained_request_identity_verified_not_send_proof"
+    assert len(_event_metadata(batch, "tool_record")) == 2
+    assert len(_event_metadata(batch, "behavior_verification_record")) == len(batch.scores) == 1
+    assert batch.scores[0]["value"] == 0.5  # A later format acceptance cannot upgrade the failed behavior result.
+    serialized = json.dumps(batch.preview())
+    assert "SECRET" not in serialized and "DO_NOT_PROJECT" not in serialized and str(tmp_path) not in serialized
+    assert backend.calls == [] and {str(file): file.read_bytes() for file in tmp_path.rglob("*.json")} == before
+    assert client.import_history(batch)["status"] == "verified_remote_readback"
+    posts = [call for call in backend.calls if call[0] == "POST"]
+    assert client.import_history(batch)["status"] == "already_present"
+    assert [call for call in backend.calls if call[0] == "POST"] == posts
+
+
+@pytest.mark.parametrize("damage", ["missing_response", "corrupt_response", "corrupt_request"])
+def test_submission_corrupt_references_remain_unknown_not_execution_or_format_success(tmp_path, damage):
+    root, path, _, request, response = _submission_case(tmp_path)
+    if damage == "missing_response":
+        Path(response["path"]).unlink()
+    elif damage == "corrupt_response":
+        Path(response["path"]).write_text("{}", encoding="utf-8")
+    else:
+        Path(request["path"]).write_text("{}", encoding="utf-8")
+    batch = _prepare(root, path)
+    rejected = _event_metadata(batch, "patch_submission_record")[0]
+    if damage != "corrupt_request":
+        assert rejected["response_binding"] == "unknown_no_verified_matching_content"
+        assert rejected["retained_response_matches"] == []
+    else:
+        turn = _event_metadata(batch, "model_turn_record")[2]
+        assert turn["request_ref"]["integrity"] == "hash_mismatch"
+        assert turn["request_observation"] == "unknown_no_verified_request_reference"
+    assert rejected["score_eligible"] is False and len(batch.scores) == 1
+
+
+def test_submission_only_history_cannot_create_behavior_score_or_infer_followup_send(tmp_path):
+    root, path, journal, _, _ = _submission_case(tmp_path)
+    factory = journal["factory_receipt"]
+    factory["patch_agent_loop"]["behavior_evaluations"] = []
+    factory["worker_turns"][2].update(status="requested", response_origin="unknown")
+    rejected = factory["patch_agent_loop"]["behavior_correction"]["execution"]["submission_trace"][0]
+    rejected["followup_response_observed"] = False
+    rejected.pop("consumed_in_model_turn")
+    _retain(path, journal)
+    batch = _prepare(root, path)
+    assert batch.scores == ()
+    record = _event_metadata(batch, "patch_submission_record")[0]
+    assert record["feedback_in_request"] is True and record["followup_response_observed"] is False
+    assert "consumed_in_model_turn" not in record
+    assert _event_metadata(batch, "model_turn_record")[2]["send_observation"] == "requested_send_unconfirmed"
 
 
 class _Backend:
