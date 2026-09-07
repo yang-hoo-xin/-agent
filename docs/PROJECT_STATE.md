@@ -7,16 +7,19 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
-Parallel implementation is now explicitly active: Langfuse metadata transport,
-API evidence visibility, a fixed real-source Eval suite, and the DSH interface
-adapter. DSH is limited to UI, interaction sessions and plugin hosting; product
-state and authority stay in the existing backend. These are work-in-progress
-tracks, not completed Langfuse, Eval or deployment claims.
+Parallel checkpoint is committed: API input/schema alignment (`ceeb1b6`, `3122c26`),
+historical Langfuse transport (`9efcac9`), fixed three-task preparation (`fdb0fc7`),
+external shared-worker adapter (`5a6ca38`), owned process-test task (`68088bc`),
+and DSH read-only host/query/display (`c97ee16`). DSH queried retained 013 and
+displayed its unresolved state after restart. A5's one real Findings attempt
+failed; its schema defect is fixed offline, not its semantic quality. No external
+model, live Langfuse destination, new P0 Patch, or full service lifecycle was run.
+Full facts, tests and limits are recorded once in reconciliation 0.20–0.25.
 
 Latest tool-semantics pass is complete: the shared worker sees owner-specific
 execution effects, supplied by the Graph's actual configuration. Registered refs
 remain eligible for either reading or justified reassessment. Offline contract
-tests passed; no real run was added, so 013 remains the latest model evidence.
+tests passed; no P0 run was added, so 013 remains the latest P0 model evidence.
 See reconciliation 0.19; this is not proof of better repair decisions.
 
 2026-09-07: public upstream continuation, current C2/F2 binding and new-Plan

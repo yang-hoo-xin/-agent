@@ -41,6 +41,12 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
+Parallel checkpoints are now implemented: API input/schema fixes, historical
+Langfuse transport, three-task preparation, external shared-worker adapter,
+owned process-test input and DSH read-only host/query/display. A5's one real
+Findings trial failed; DSH displayed retained P0 013. No external generation,
+live Langfuse readback, new P0 repair or full service delivery is claimed.
+See reconciliation 0.20–0.25; these supporting results do not complete the Mod.
 Latest bounded change: source reading and upstream reassessment have distinct
 tool descriptions. The Graph declares each owner's actual continuation effect
 before the shared worker runs, including record-only and missing-provider modes.

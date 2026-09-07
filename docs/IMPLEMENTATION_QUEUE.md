@@ -36,10 +36,15 @@ Independent ten-day tracks remain selected: A6 real destination/history import
 and service readback; A7 fixed real multi-task evidence; A8 current-version CI and
 delivery verification. They do not wait for FirstShot to pass. Their service,
 disclosure and execution inputs must be selected rather than invented.
-The user has now explicitly requested parallel implementation. Current bounded
-writers are A6 Patch-journal-to-Langfuse transport/readback, A5 API source-authority
-visibility and semantic-consumption acceptance, A7 three distinct real-source
-task definitions with executable preflight, and DSH product-interface integration.
+The explicitly selected parallel implementation has a committed checkpoint:
+A6 historical metadata transport/readback code; A5 API identity visibility and
+schema-domain alignment after one failed real Findings call; A7 three distinct
+real-source inputs with executable preflight; an external shared-worker adapter
+and independent owned test task; DSH read-only host/query/display. Consume these
+implementations rather than recreating them. See reconciliation 0.20–0.25.
+Remaining acceptance includes real model comparison under its exact data/profile,
+correct API semantic use, a configured Langfuse destination, and DSH submission,
+approval/resume/delivery. No new P0 repair, external model call or hosted CI was run.
 DSH owns UI, interaction sessions and plugin hosting only. The current Python
 backend retains task state, recovery, Evidence/Plan/Binding, approvals and execution.
 DSH sessions are correlation metadata, not a replacement Artifact or state owner.
