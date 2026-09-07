@@ -6,6 +6,9 @@
 
 ## 0. 最新状态快照
 
+**A6最新（0.21）：原Patch查询已接上历史元数据OTLP导出与查回代码，评分必须绑定被测代码和精确矩阵。**
+65项相关回归通过；没有发送Langfuse请求，目标服务尚未配置，不能声称真实sink、完整时序或生产观测已交付。
+
 **A5最新（0.20）：API来源身份传播`ceeb1b6`已提交；第一次真实Findings调用返回后因API被列为编辑目标遭拒。**
 首失败是`REQUIREMENT_COVERAGE_EDIT_TARGET_IDENTITY_INVALID`，不是后续一次调用预算阻止修正callback的异常。
 原响应与请求保留；本次提交中的schema修复复用原校验条件区分“可引用API”和“合法target_source编辑提示”，
@@ -127,7 +130,8 @@ Qwen在工具预算反馈后由请求5处改选2处；修正执行ID记账后，
 | 已提交 `d6eda97` | 三方面整链适配：公开A4 provider装配、当前C2/F2绑定、新Plan共享worker与原Review/Dry-run、共享预算和分段查询 | 335项checkpoint通过；之后最终refs两例、查询一例定点通过。真实Mod尚未修复，详0.16 |
 | 已提交 `925790d` | 合并通用失败指导的重复说明；保留原需求/代码/失败、输出基线与动作选择自由 | 18项相关回归通过；首wire44,560字节。013真实模型选择了上游，但未产生代码，详0.17–0.18 |
 | 已提交 `ceeb1b6` | Findings/Planning实际输入保留API的source_authority、程序集hash、MVID、token和signature，并说明当前／参考来源及运行语义边界 | 来源信息传播已有；A5 Actual001一轮真实输出被编辑身份校验拒绝，不能称API语义成功，详0.20 |
-| 本次A5提交 | `requirement_coverage.py`与`requirement_coverage_provider.py`共享原合法编辑身份谓词，生产schema区分引用域与编辑提示域；新增原Actual离线回归 | 4项聚焦及115项checkpoint通过；其它并行WIP不在本节A5验收范围，不能将工作树整体写成“无WIP” |
+| 已提交 `3122c26` | `requirement_coverage.py`与`requirement_coverage_provider.py`共享原合法编辑身份谓词，生产schema区分引用域与编辑提示域；新增原Actual离线回归 | 4项聚焦及115项checkpoint通过；其它并行WIP不在本节A5验收范围，不能将工作树整体写成“无WIP” |
+| 本次A6提交 | 原Patch查询到Langfuse历史元数据OTLP导出、查询与有限查回；评分核验代码/报告/矩阵身份，防止同数量异矩阵错绑 | 65项相关回归通过；没有真实服务发送，不增加产品成功、原始时序或跨任务资格声明，详0.21 |
 | 文档整理 | 本文顶部快照、历史标签、统一Attempt索引、剩余矩阵及短控制文档同步 | 不增加产品能力；文档提交单独记录 |
 | 用户原有WIP | ARCHITECTURE_OVERVIEW、ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT、SPEC_COVERAGE_MATRIX，以及3份未跟踪草案 | 六份文件hash与本轮开始完全一致；不混入本轮提交 |
 
@@ -889,6 +893,33 @@ python -B -m pytest tests/unit/test_findings_edit_target_domain.py tests/unit/te
 Ruff及`git diff --check`通过。原Actual001、runner与冻结输入未写，原输入/响应hash回查一致；修复验证新增模型调用为0。
 关闭的是schema与身份校验不一致这一首失败，不是九项support的语义质量。API正确语义消费、自主API发现及下游
 Planning/Patch结果仍未证明；该A5工作没有新Mod代码、行为矩阵、Apply、Build或GTFO Runtime结果。
+
+### 0.21 A6：复用原查询的历史追踪导出与评分关联
+
+`src/observability/patch_langfuse.py`消费原`project_patch_executions`只读结果，
+不改旧Projection V2白名单，不运行Graph、Patch、Repair或行为检查。用既有httpx实现
+OTLP/HTTP JSON发送、分数发送和有界分页/延迟查回；不引入新SDK、状态数据库或控制面。
+
+导出内容限于运行状态、已有计数、hash、经过过滤的身份引用。没有源码、提示词、原模型正文、
+完整路径或自由文本诊断。历史导入明确使用导入快照时间，原事件时间未知；不能把它用于宣称
+原始generation时延、成本或完整因果时序。实际目标仍需单独配置并确认导出范围。
+
+独立审查发现并复现：另一份检查数量相同的矩阵可被错误挂在已核验报告后，产生错误分数。
+修复在原score生成owner核验报告对矩阵的精确path/hash引用、执行状态、被保留代码字节、
+源码身份及已声明共同身份/分母；缺失或不一致时`score_eligible=false`，追踪仍可导出。
+旧矩阵可经报告的精确引用绑定代码，不伪造其原本没有的字段。
+
+```powershell
+python -B -m pytest tests/unit/test_patch_langfuse.py tests/unit/test_patch_execution_index.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\lf-score-check"
+```
+
+65 passed，20.38秒；Ruff和diff检查通过。反例先证明评分错绑，再证明修复拒绝错绑；HTTP替身
+覆盖成功查回、重复准备、部分接收、超时及尚不可查回。真实009的零网络prepare仍返回21个历史
+观察和两个33/36局部检查分数；这次检查只输出到终端，没有虚构保存文件，也未重跑模型或矩阵。
+
+真实Langfuse Cloud/自托管服务的接收、持久化、页面显示和查回仍未验收。
+已实现的是导出消费代码与离线验证；不是实时全链追踪、模型资格或Mod修复。
+配置、接口与边界见[PATCH_LANGFUSE_IMPORT](../PATCH_LANGFUSE_IMPORT.md)。
 
 ## 1. 结论与范围
 
