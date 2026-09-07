@@ -6,9 +6,15 @@
 
 ## 0. 最新状态快照
 
+**A5最新（0.20）：API来源身份传播`ceeb1b6`已提交；第一次真实Findings调用返回后因API被列为编辑目标遭拒。**
+首失败是`REQUIREMENT_COVERAGE_EDIT_TARGET_IDENTITY_INVALID`，不是后续一次调用预算阻止修正callback的异常。
+原响应与请求保留；本次提交中的schema修复复用原校验条件区分“可引用API”和“合法target_source编辑提示”，
+115项相关checkpoint通过。没有第二次真实模型发送，九项全support不能据此认可，API正确语义消费仍未证明。
+这条A5支线没有Planning/Patch/Mod矩阵执行，不改变013作为最新P0真实记录的定位。
+
 **工具语义收敛已完成离线验收（0.19）：读取与重评用途分开，Graph按当前配置声明保存停止／重评到Plan／重评后继续／provider未配置。**
 同一已登记引用仍可因支持关系或覆盖问题请求Evidence重评，没有“已可读就禁止上游”的规则。
-本轮没有新增真实模型、preview或Mod修改，013仍是最新真实记录；动作选择质量和有效修订仍未证明。
+该工具语义收敛轮没有新增真实模型、preview或Mod修改；013仍是最新P0真实记录，A5 Findings另见0.20；动作选择质量和有效修订仍未证明。
 
 **2026-09-07最新：整链适配`d6eda97`与指导去重`925790d`已提交。013真实2次调用后主动请求Evidence上游，没有生成代码或运行矩阵。**
 首轮5次读取为3新窗口＋2复用，内容进入第二实际请求；模型随后选择`request_patch_upstream`。
@@ -120,7 +126,8 @@ Qwen在工具预算反馈后由请求5处改选2处；修正执行ID记账后，
 | 已提交 `2e746c7` | Planning可编辑选项内联其已有完整source_path并校验共享表一致，保持原ID/源码/范围/选择自由 | 32项相关检查通过；仅表示改进，不能凭测试称模型语义质量改善 |
 | 已提交 `d6eda97` | 三方面整链适配：公开A4 provider装配、当前C2/F2绑定、新Plan共享worker与原Review/Dry-run、共享预算和分段查询 | 335项checkpoint通过；之后最终refs两例、查询一例定点通过。真实Mod尚未修复，详0.16 |
 | 已提交 `925790d` | 合并通用失败指导的重复说明；保留原需求/代码/失败、输出基线与动作选择自由 | 18项相关回归通过；首wire44,560字节。013真实模型选择了上游，但未产生代码，详0.17–0.18 |
-| 本轮生产代码WIP | 无；以上生产变更均已提交 | 文档状态不能代替Actual成功 |
+| 已提交 `ceeb1b6` | Findings/Planning实际输入保留API的source_authority、程序集hash、MVID、token和signature，并说明当前／参考来源及运行语义边界 | 来源信息传播已有；A5 Actual001一轮真实输出被编辑身份校验拒绝，不能称API语义成功，详0.20 |
+| 本次A5提交 | `requirement_coverage.py`与`requirement_coverage_provider.py`共享原合法编辑身份谓词，生产schema区分引用域与编辑提示域；新增原Actual离线回归 | 4项聚焦及115项checkpoint通过；其它并行WIP不在本节A5验收范围，不能将工作树整体写成“无WIP” |
 | 文档整理 | 本文顶部快照、历史标签、统一Attempt索引、剩余矩阵及短控制文档同步 | 不增加产品能力；文档提交单独记录 |
 | 用户原有WIP | ARCHITECTURE_OVERVIEW、ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT、SPEC_COVERAGE_MATRIX，以及3份未跟踪草案 | 六份文件hash与本轮开始完全一致；不混入本轮提交 |
 
@@ -832,6 +839,56 @@ python -B -m pytest tests/unit/test_patch_tool_effects.py tests/unit/test_patch_
 
 本次工具语义工作到此收口，不继续对FirstShot做连续提示微调。真实动作选择与任务结果仍需独立模型试验，
 Langfuse真实出口、固定多任务Eval与部署交付按各自条件推进，不以该case成功为前置。
+
+### 0.20 A5：API来源传播、第一次真实失败与编辑提示域修复
+
+`ceeb1b6`将已有API身份传到原Findings/Planning输入：`source_authority`、`source_hash`、
+`module_mvid`、`metadata_token`和`signature_blob`保留原值；当前来源、参考来源与缺失信息不互相冒充。
+明确说明metadata或interop包装不能证明游戏Runtime，也不授予编辑权限。该提交是输入传播与接线，
+不是自主API发现、正确语义判断或Mod交付。
+
+**第一次真实运行：**人工选定来源与symbol，复用原Feature全部义务；输入只有4项API，没有Mod target_source。
+`current_and_reference`实际发送一次到本地`qwen3-coder:30b`并收到完整响应；
+`reference_only`与`no_api`仅做零网络预览，不构成三组真实消融结果。
+请求31,019字节，body SHA `0cfca41f48367bfb68f6b5c7ce5ee64471d16763328679cbf1a41f6d38936571`；
+记录8,521输入及668输出tokens。实际payload与预览一致，中文请求未出现Unicode替换字符。
+
+| 记录 | 核验事实 |
+|---|---|
+| [冻结输入](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/a5_api_semantic_001/frozen-inputs.json) | `maximum_model_calls=1`、`target_source_included=false`，无Planning/Patch执行 |
+| [实际请求引用](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/a5_api_semantic_001/actual/sent-request.json)与[冻结provider请求](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/a5_api_semantic_001/preview/current_and_reference/frozen-provider-request.json) | provider请求文件SHA `837335028ba244375291b27e79bc8160ab1df6a1c14a5474c9c1414ce58dddbf`；实际schema把4个API ID同时列进引用域和编辑提示域 |
+| [原模型输出](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/a5_api_semantic_001/actual/response.json)及[provider原响应](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/a5_api_semantic_001/actual/raw-provider-response.json) | 九项关系均仅引用`evidence_dc1dd1a02b199c2121cb32eb`并返回support，relation 1还将该API列入`edit_target_evidence_ids`；原文件未改 |
+| [最终运行记录](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/a5_api_semantic_001/actual/summary.json) | `findings_audit[0]`明确记录首失败`REQUIREMENT_COVERAGE_EDIT_TARGET_IDENTITY_INVALID`；随后内部修正callback被一次调用预算挡住，未发生第二次发送 |
+
+该ID指当前interop `Modules-ASM.dll`的`Dam_EnemyDamageBase.BulletDamage`，
+`source_authority=authoritative`、`source_type=decompiled_api`、`span=null`，token为`0x060023B4`，
+MVID为`85155e68-33a5-4fa5-a419-c563e7ea5e60`。它是当前程序集API身份和interop调用包装的证据，
+不是可修改的Mod源码；包装中的`il2cpp_runtime_invoke`也不证明真实踉跄分支、黄色X或音效行为。
+
+此次有两个并存的问题：模型违反已有target-source编辑提示规则；程序的response schema又把可引用域和
+可编辑域混在一起。确定性层正确拒绝了非法位置建议，没有发生越权写入。独立只读审查不能认可九项全support：
+修改位置、call timing及全部preservation义务不能由这一API单独证明。不能由身份拒绝反推每项语义都被自动判错，
+也不能因模型选择了当前来源的ID就宣称其理解了版本差别或完成正确API语义消费。
+
+**通用修复（本节记录时为WIP）：**从原Coverage validator抽出`is_exact_edit_target_evidence`供两处共用，
+原条件逐项保持：确定性来源、`target_source`、非空路径、合法整数span及已有source/file/doc hash。
+生产Findings对整个retrieved_pack计算编辑提示域，不按某一关系缩小全局合法目标；API继续保留在完整可引用域。
+API-only编辑数组使用`maxItems=0`，允许`[]`及missing判断。旧直接schema调用者保持可选参数兼容；
+所有生产Findings调用明确传入合法域。没有新增权限、修改模型预算、改变API来源等级或规定业务修法。
+
+[原Actual回归输入](C:/Users/10160/.codex/visualizations/2026/08/11/019ff15f-9eac-7b13-aad5-faffde4b36b7/rag_capability_mainline/tests/fixtures/evaluation/findings_api_only_actual_001.json)
+保留原schema、响应、API输入和来源引用；[专属回归](C:/Users/10160/.codex/visualizations/2026/08/11/019ff15f-9eac-7b13-aad5-faffde4b36b7/rag_capability_mainline/tests/unit/test_findings_edit_target_domain.py)
+先证明“原schema接受→原validator拒绝”，再检查API-only、混合源码、多关系完整目标池、missing与旧caller兼容。
+
+```powershell
+python -B -m pytest tests/unit/test_findings_edit_target_domain.py -q --tb=short --basetemp="$env:TEMP/a5dom-green-$PID" -o cache_dir="$env:TEMP/a5dom-gc-$PID"
+python -B -m pytest tests/unit/test_findings_edit_target_domain.py tests/unit/test_requirement_coverage.py tests/unit/test_api_semantic_consumption.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP/a5dom-cp-$PID" -o cache_dir="$env:TEMP/a5dom-cpc-$PID"
+```
+
+结果分别为4 passed（1.36秒）与115 passed（19.46秒，2个既有warning）；集合包含关系明确，不相加为119项。
+Ruff及`git diff --check`通过。原Actual001、runner与冻结输入未写，原输入/响应hash回查一致；修复验证新增模型调用为0。
+关闭的是schema与身份校验不一致这一首失败，不是九项support的语义质量。API正确语义消费、自主API发现及下游
+Planning/Patch结果仍未证明；该A5工作没有新Mod代码、行为矩阵、Apply、Build或GTFO Runtime结果。
 
 ## 1. 结论与范围
 

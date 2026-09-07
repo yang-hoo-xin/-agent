@@ -23,6 +23,7 @@ from .requirement_coverage import (
     REQUIREMENT_ROLES,
     RequirementCoverageProjectionError,
     default_feature_requirement_projection,
+    is_exact_edit_target_evidence,
     materialize_requirement_coverage_projection,
     requirement_input_obligation_model_view,
     resolve_requirement_coverage,
@@ -794,6 +795,8 @@ class StructuredModelRequirementCoverageProvider:
         schema = requirement_findings_response_schema(
             relation_indexes=relation_indexes,
             evidence_ids=evidence_ids,
+            edit_target_evidence_ids=[item.evidence_id for item in retrieved_pack.items
+                                      if is_exact_edit_target_evidence(item)],
             coverage_schema_version=str(
                 materialized_projection["schema_version"]
             ),
@@ -1815,6 +1818,7 @@ def requirement_findings_response_schema(
     relation_indexes: list[int],
     evidence_ids: list[str],
     coverage_schema_version: str = REQUIREMENT_COVERAGE_SCHEMA_VERSION,
+    edit_target_evidence_ids: list[str] | None = None,
 ) -> dict[str, object]:
     if coverage_schema_version not in {
         LEGACY_REQUIREMENT_COVERAGE_SCHEMA_VERSION,
@@ -1822,6 +1826,18 @@ def requirement_findings_response_schema(
         REQUIREMENT_COVERAGE_SCHEMA_VERSION,
     }:
         raise ValueError("REQUIREMENT_COVERAGE_SCHEMA_VERSION_INVALID")
+    # A direct legacy caller may provide only IDs, without source identity data.
+    # The production provider always supplies the domain derived by the same
+    # predicate used by coverage admission; semantic support remains model-owned.
+    if edit_target_evidence_ids is not None and (
+        not isinstance(edit_target_evidence_ids, list)
+        or any(not isinstance(value, str) for value in edit_target_evidence_ids)
+        or len(set(edit_target_evidence_ids)) != len(edit_target_evidence_ids)
+        or not set(edit_target_evidence_ids).issubset(evidence_ids)
+    ):
+        raise ValueError("REQUIREMENT_COVERAGE_EDIT_TARGET_SCHEMA_INVALID")
+    editable_ids = list(evidence_ids if edit_target_evidence_ids is None else edit_target_evidence_ids)
+    editable_items = {"type": "string", **({"enum": editable_ids} if editable_ids else {})}
     finding = {
         "type": "object",
         "properties": {
@@ -1843,7 +1859,8 @@ def requirement_findings_response_schema(
                     "edit_target_evidence_ids": {
                         "type": "array",
                         "uniqueItems": True,
-                        "items": {"type": "string", "enum": evidence_ids},
+                        "items": editable_items,
+                        **({"maxItems": 0} if not editable_ids else {}),
                     }
                 }
                 if coverage_schema_version

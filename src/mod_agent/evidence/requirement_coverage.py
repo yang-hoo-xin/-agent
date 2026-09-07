@@ -71,6 +71,22 @@ class RequirementCoverageProjectionError(ValueError):
         super().__init__(code)
 
 
+def is_exact_edit_target_evidence(item: EvidenceItem) -> bool:
+    """Existing physical identity condition for an edit hint, not write authority."""
+    span = item.span
+    return (
+        item.authority == DETERMINISTIC_EVIDENCE_AUTHORITY
+        and item.source_type == "target_source"
+        and bool(item.source_path)
+        and isinstance(span, dict)
+        and type(span.get("start_line")) is int
+        and type(span.get("end_line")) is int
+        and span["start_line"] >= 1
+        and span["end_line"] >= span["start_line"]
+        and bool(item.source_hash or item.file_hash or item.doc_hash)
+    )
+
+
 @dataclass(frozen=True)
 class RequirementCoverageView:
     """Stable consumer view over one strictly validated coverage receipt."""
@@ -623,18 +639,7 @@ def resolve_requirement_coverage(
     edit_target_evidence_ids: list[str] = []
     for evidence_id in sorted(selected_edit_target_ids):
         item = item_by_id[evidence_id]
-        span = item.span
-        exact_target_identity = (
-            item.authority == DETERMINISTIC_EVIDENCE_AUTHORITY
-            and item.source_type == "target_source"
-            and bool(item.source_path)
-            and isinstance(span, dict)
-            and type(span.get("start_line")) is int
-            and type(span.get("end_line")) is int
-            and span["start_line"] >= 1
-            and span["end_line"] >= span["start_line"]
-            and bool(item.source_hash or item.file_hash or item.doc_hash)
-        )
+        exact_target_identity = is_exact_edit_target_evidence(item)
         if explicit_edit_targets and not exact_target_identity:
             raise ValueError("REQUIREMENT_COVERAGE_EDIT_TARGET_IDENTITY_INVALID")
         if exact_target_identity:

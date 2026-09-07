@@ -1,0 +1,989 @@
+{
+  "materialized_projection": {
+    "feature_spec_identity": {
+      "feature_id": "feature_258e3fb80ea6",
+      "feature_spec_sha256": "a5472bcbc74c399b5fa0d23b30a111cefa678cfaede52c5ec1a62a2d97343738"
+    },
+    "input_dispositions": [],
+    "input_obligations": [
+      {
+        "allowed_dispositions": [],
+        "allowed_roles": [
+          "change",
+          "preservation"
+        ],
+        "input_obligation_id": "obligation_175b5a728e1abebbba5e",
+        "mandatory": true,
+        "origin": {
+          "field": "user_request",
+          "index": 0
+        },
+        "required_before_patch": true,
+        "text": "我想让模组在玩家用枪打到敌人并触发踉跄时，额外显示一个短暂的黄色 X，并播放一声简短提示音。"
+      },
+      {
+        "allowed_dispositions": [],
+        "allowed_roles": [
+          "change"
+        ],
+        "input_obligation_id": "obligation_7c4232e0a968fa003bcb",
+        "mandatory": true,
+        "origin": {
+          "field": "target_behavior",
+          "index": 0
+        },
+        "required_before_patch": true,
+        "text": "我想让模组在玩家用枪打到敌人并触发踉跄时，额外显示一个短暂的黄色 X，并播放一声简短提示音。"
+      },
+      {
+        "allowed_dispositions": [],
+        "allowed_roles": [
+          "pre_patch_evidence"
+        ],
+        "input_obligation_id": "obligation_3fa14a6e531045c26383",
+        "mandatory": true,
+        "origin": {
+          "field": "evidence_requirements",
+          "index": 1
+        },
+        "required_before_patch": true,
+        "text": "target source or API evidence"
+      },
+      {
+        "allowed_dispositions": [],
+        "allowed_roles": [
+          "pre_patch_evidence"
+        ],
+        "input_obligation_id": "obligation_8bddcbc3e2413d6e01f6",
+        "mandatory": true,
+        "origin": {
+          "field": "evidence_requirements",
+          "index": 2
+        },
+        "required_before_patch": true,
+        "text": "target method"
+      },
+      {
+        "allowed_dispositions": [],
+        "allowed_roles": [
+          "pre_patch_evidence"
+        ],
+        "input_obligation_id": "obligation_36678bf849ae70814bab",
+        "mandatory": true,
+        "origin": {
+          "field": "evidence_requirements",
+          "index": 3
+        },
+        "required_before_patch": true,
+        "text": "call timing"
+      },
+      {
+        "allowed_dispositions": [],
+        "allowed_roles": [
+          "pre_patch_evidence"
+        ],
+        "input_obligation_id": "obligation_787504cec1aa548a3347",
+        "mandatory": true,
+        "origin": {
+          "field": "evidence_requirements",
+          "index": 4
+        },
+        "required_before_patch": true,
+        "text": "side effect boundary"
+      },
+      {
+        "allowed_dispositions": [],
+        "allowed_roles": [
+          "pre_patch_evidence"
+        ],
+        "input_obligation_id": "obligation_47f4a9019be5f77736b4",
+        "mandatory": true,
+        "origin": {
+          "field": "evidence_requirements",
+          "index": 5
+        },
+        "required_before_patch": true,
+        "text": "concrete hook target method identity"
+      },
+      {
+        "allowed_dispositions": [
+          "scope_boundary"
+        ],
+        "allowed_roles": [
+          "preservation",
+          "pre_patch_evidence"
+        ],
+        "input_obligation_id": "obligation_d966d4a73ee81bf98692",
+        "mandatory": true,
+        "origin": {
+          "field": "non_goals",
+          "index": 1
+        },
+        "required_before_patch": true,
+        "text": "Do not perform unrelated refactors."
+      },
+      {
+        "allowed_dispositions": [
+          "scope_boundary"
+        ],
+        "allowed_roles": [
+          "preservation",
+          "pre_patch_evidence"
+        ],
+        "input_obligation_id": "obligation_ea04b38116e3956e5387",
+        "mandatory": true,
+        "origin": {
+          "field": "non_goals",
+          "index": 2
+        },
+        "required_before_patch": true,
+        "text": "Do not modify files outside evidence-supported scope."
+      },
+      {
+        "allowed_dispositions": [
+          "scope_boundary"
+        ],
+        "allowed_roles": [
+          "preservation",
+          "pre_patch_evidence"
+        ],
+        "input_obligation_id": "obligation_6db74bd8f507a380860d",
+        "mandatory": true,
+        "origin": {
+          "field": "non_goals",
+          "index": 3
+        },
+        "required_before_patch": true,
+        "text": "Do not claim runtime success without runtime evidence."
+      },
+      {
+        "allowed_dispositions": [
+          "post_change"
+        ],
+        "allowed_roles": [
+          "post_change_acceptance"
+        ],
+        "input_obligation_id": "obligation_f53c1debd410617da3f9",
+        "mandatory": true,
+        "origin": {
+          "field": "acceptance_criteria",
+          "index": 1
+        },
+        "required_before_patch": false,
+        "text": "Requested behavior is implemented: 我想让模组在玩家用枪打到敌人并触发踉跄时，额外显示一个短暂的黄色 X，并播放一声简短提示音。"
+      },
+      {
+        "allowed_dispositions": [
+          "post_change"
+        ],
+        "allowed_roles": [
+          "post_change_acceptance"
+        ],
+        "input_obligation_id": "obligation_c23576beb4d2a8d0954e",
+        "mandatory": true,
+        "origin": {
+          "field": "acceptance_criteria",
+          "index": 2
+        },
+        "required_before_patch": false,
+        "text": "Every proposed change is bound to evidence."
+      },
+      {
+        "allowed_dispositions": [
+          "post_change"
+        ],
+        "allowed_roles": [
+          "post_change_acceptance"
+        ],
+        "input_obligation_id": "obligation_6a0ae9d0b4b3a528ebf4",
+        "mandatory": true,
+        "origin": {
+          "field": "acceptance_criteria",
+          "index": 3
+        },
+        "required_before_patch": false,
+        "text": "Validation output is reported with real command or artifact evidence."
+      },
+      {
+        "allowed_dispositions": [
+          "post_change"
+        ],
+        "allowed_roles": [
+          "post_change_acceptance"
+        ],
+        "input_obligation_id": "obligation_9ebf70025626eb836709",
+        "mandatory": true,
+        "origin": {
+          "field": "runtime_verification_plan",
+          "index": 1
+        },
+        "required_before_patch": false,
+        "text": "compile or static validation"
+      },
+      {
+        "allowed_dispositions": [
+          "post_change"
+        ],
+        "allowed_roles": [
+          "post_change_acceptance"
+        ],
+        "input_obligation_id": "obligation_b4303e1db9573ae9c2e2",
+        "mandatory": true,
+        "origin": {
+          "field": "runtime_verification_plan",
+          "index": 2
+        },
+        "required_before_patch": false,
+        "text": "startup_loaded"
+      },
+      {
+        "allowed_dispositions": [
+          "post_change"
+        ],
+        "allowed_roles": [
+          "post_change_acceptance"
+        ],
+        "input_obligation_id": "obligation_8f94e929452411c7da91",
+        "mandatory": true,
+        "origin": {
+          "field": "runtime_verification_plan",
+          "index": 3
+        },
+        "required_before_patch": false,
+        "text": "target_path_executed"
+      },
+      {
+        "allowed_dispositions": [
+          "post_change"
+        ],
+        "allowed_roles": [
+          "post_change_acceptance"
+        ],
+        "input_obligation_id": "obligation_4deafdfacc1dc202a2c0",
+        "mandatory": true,
+        "origin": {
+          "field": "runtime_verification_plan",
+          "index": 4
+        },
+        "required_before_patch": false,
+        "text": "acceptance_evidence_observed"
+      },
+      {
+        "allowed_dispositions": [
+          "post_change"
+        ],
+        "allowed_roles": [
+          "post_change_acceptance"
+        ],
+        "input_obligation_id": "obligation_5d13ffe2d4ebee2d4db8",
+        "mandatory": true,
+        "origin": {
+          "field": "runtime_verification_plan",
+          "index": 5
+        },
+        "required_before_patch": false,
+        "text": "non_goals_preserved"
+      }
+    ],
+    "projection_identity": {
+      "projection_sha256": "e4a358288a828d88890df99fd8755d9c54247f195cbbeec7e2e28ed041bc91b4"
+    },
+    "queries": [
+      {
+        "query": "我想让模组在玩家用枪打到敌人并触发踉跄时，额外显示一个短暂的黄色 X，并播放一声简短提示音。",
+        "query_id": "query_f158bbdc63025a3e44b1",
+        "requirement_id": "requirement_fcb5dfd5c3f19840a8be"
+      },
+      {
+        "query": "target source or API evidence",
+        "query_id": "query_323aed7b63054fd37801",
+        "requirement_id": "requirement_e531b3e420c032f88605"
+      },
+      {
+        "query": "target method",
+        "query_id": "query_e7c3ca2fe1d9eca6db3a",
+        "requirement_id": "requirement_f87eed361f2a65752aa6"
+      },
+      {
+        "query": "call timing",
+        "query_id": "query_a6726b03727ff57fd2e4",
+        "requirement_id": "requirement_cfd4fc03afb7b4fefe06"
+      },
+      {
+        "query": "side effect boundary",
+        "query_id": "query_925b34b0c105414280d8",
+        "requirement_id": "requirement_0d23dc37144de73cb6e4"
+      },
+      {
+        "query": "concrete hook target method identity",
+        "query_id": "query_b2923213f0902c389737",
+        "requirement_id": "requirement_31b4d12d4cbc1337b951"
+      },
+      {
+        "query": "Do not perform unrelated refactors.",
+        "query_id": "query_095153ddb6a716020e8f",
+        "requirement_id": "requirement_33e42b2c4991f8f40eea"
+      },
+      {
+        "query": "Do not modify files outside evidence-supported scope.",
+        "query_id": "query_3b51926f2a5829a66344",
+        "requirement_id": "requirement_2abed578dbd94cdd9841"
+      },
+      {
+        "query": "Do not claim runtime success without runtime evidence.",
+        "query_id": "query_9d9f5dac8c8fe8f8a41e",
+        "requirement_id": "requirement_b795b011b78c33506289"
+      },
+      {
+        "query": "Requested behavior is implemented: 我想让模组在玩家用枪打到敌人并触发踉跄时，额外显示一个短暂的黄色 X，并播放一声简短提示音。",
+        "query_id": "query_8e3d0f6de5be6247aa4c",
+        "requirement_id": "requirement_b7ad1e0fd4133a849293"
+      }
+    ],
+    "relations": [
+      {
+        "meaning": "Evidence disposition for requirement 1.",
+        "parent_requirement_ids": [
+          "requirement_fcb5dfd5c3f19840a8be"
+        ],
+        "provenance": {
+          "relation_index": 1
+        },
+        "relation_id": "relation_13386959c2b46a27"
+      },
+      {
+        "meaning": "Evidence disposition for requirement 2.",
+        "parent_requirement_ids": [
+          "requirement_e531b3e420c032f88605"
+        ],
+        "provenance": {
+          "relation_index": 2
+        },
+        "relation_id": "relation_b8fe7cad4b7d1e1f"
+      },
+      {
+        "meaning": "Evidence disposition for requirement 3.",
+        "parent_requirement_ids": [
+          "requirement_f87eed361f2a65752aa6"
+        ],
+        "provenance": {
+          "relation_index": 3
+        },
+        "relation_id": "relation_1ed13d9827a12442"
+      },
+      {
+        "meaning": "Evidence disposition for requirement 4.",
+        "parent_requirement_ids": [
+          "requirement_cfd4fc03afb7b4fefe06"
+        ],
+        "provenance": {
+          "relation_index": 4
+        },
+        "relation_id": "relation_287174f23aa63222"
+      },
+      {
+        "meaning": "Evidence disposition for requirement 5.",
+        "parent_requirement_ids": [
+          "requirement_0d23dc37144de73cb6e4"
+        ],
+        "provenance": {
+          "relation_index": 5
+        },
+        "relation_id": "relation_9d9fd0064312ad64"
+      },
+      {
+        "meaning": "Evidence disposition for requirement 6.",
+        "parent_requirement_ids": [
+          "requirement_31b4d12d4cbc1337b951"
+        ],
+        "provenance": {
+          "relation_index": 6
+        },
+        "relation_id": "relation_7b0ed087aa2faf0d"
+      },
+      {
+        "meaning": "Evidence disposition for requirement 7.",
+        "parent_requirement_ids": [
+          "requirement_33e42b2c4991f8f40eea"
+        ],
+        "provenance": {
+          "relation_index": 7
+        },
+        "relation_id": "relation_438088a0b59faa2e"
+      },
+      {
+        "meaning": "Evidence disposition for requirement 8.",
+        "parent_requirement_ids": [
+          "requirement_2abed578dbd94cdd9841"
+        ],
+        "provenance": {
+          "relation_index": 8
+        },
+        "relation_id": "relation_89f9483f830d4fd6"
+      },
+      {
+        "meaning": "Evidence disposition for requirement 9.",
+        "parent_requirement_ids": [
+          "requirement_b795b011b78c33506289"
+        ],
+        "provenance": {
+          "relation_index": 9
+        },
+        "relation_id": "relation_741daa733d5a086e"
+      },
+      {
+        "meaning": "Evidence disposition for requirement 10.",
+        "parent_requirement_ids": [
+          "requirement_b7ad1e0fd4133a849293"
+        ],
+        "provenance": {
+          "relation_index": 10
+        },
+        "relation_id": "relation_3edb612b9a30e749"
+      }
+    ],
+    "request_identity": {
+      "request_sha256": "258e3fb80ea6484dfd7296d6d2657bae849749aac5fd10d35f5914b9aa709c7e"
+    },
+    "requirements": [
+      {
+        "input_obligation_ids": [
+          "obligation_175b5a728e1abebbba5e",
+          "obligation_7c4232e0a968fa003bcb"
+        ],
+        "query_ids": [
+          "query_f158bbdc63025a3e44b1"
+        ],
+        "query_leads": [
+          "我想让模组在玩家用枪打到敌人并触发踉跄时，额外显示一个短暂的黄色 X，并播放一声简短提示音。"
+        ],
+        "required_before_patch": true,
+        "requirement_id": "requirement_fcb5dfd5c3f19840a8be",
+        "role": "change",
+        "text": "我想让模组在玩家用枪打到敌人并触发踉跄时，额外显示一个短暂的黄色 X，并播放一声简短提示音。"
+      },
+      {
+        "input_obligation_ids": [
+          "obligation_3fa14a6e531045c26383"
+        ],
+        "query_ids": [
+          "query_323aed7b63054fd37801"
+        ],
+        "query_leads": [
+          "target source or API evidence"
+        ],
+        "required_before_patch": true,
+        "requirement_id": "requirement_e531b3e420c032f88605",
+        "role": "pre_patch_evidence",
+        "text": "target source or API evidence"
+      },
+      {
+        "input_obligation_ids": [
+          "obligation_8bddcbc3e2413d6e01f6"
+        ],
+        "query_ids": [
+          "query_e7c3ca2fe1d9eca6db3a"
+        ],
+        "query_leads": [
+          "target method"
+        ],
+        "required_before_patch": true,
+        "requirement_id": "requirement_f87eed361f2a65752aa6",
+        "role": "pre_patch_evidence",
+        "text": "target method"
+      },
+      {
+        "input_obligation_ids": [
+          "obligation_36678bf849ae70814bab"
+        ],
+        "query_ids": [
+          "query_a6726b03727ff57fd2e4"
+        ],
+        "query_leads": [
+          "call timing"
+        ],
+        "required_before_patch": true,
+        "requirement_id": "requirement_cfd4fc03afb7b4fefe06",
+        "role": "pre_patch_evidence",
+        "text": "call timing"
+      },
+      {
+        "input_obligation_ids": [
+          "obligation_787504cec1aa548a3347"
+        ],
+        "query_ids": [
+          "query_925b34b0c105414280d8"
+        ],
+        "query_leads": [
+          "side effect boundary"
+        ],
+        "required_before_patch": true,
+        "requirement_id": "requirement_0d23dc37144de73cb6e4",
+        "role": "pre_patch_evidence",
+        "text": "side effect boundary"
+      },
+      {
+        "input_obligation_ids": [
+          "obligation_47f4a9019be5f77736b4"
+        ],
+        "query_ids": [
+          "query_b2923213f0902c389737"
+        ],
+        "query_leads": [
+          "concrete hook target method identity"
+        ],
+        "required_before_patch": true,
+        "requirement_id": "requirement_31b4d12d4cbc1337b951",
+        "role": "pre_patch_evidence",
+        "text": "concrete hook target method identity"
+      },
+      {
+        "input_obligation_ids": [
+          "obligation_d966d4a73ee81bf98692"
+        ],
+        "query_ids": [
+          "query_095153ddb6a716020e8f"
+        ],
+        "query_leads": [
+          "Do not perform unrelated refactors."
+        ],
+        "required_before_patch": true,
+        "requirement_id": "requirement_33e42b2c4991f8f40eea",
+        "role": "preservation",
+        "text": "Do not perform unrelated refactors."
+      },
+      {
+        "input_obligation_ids": [
+          "obligation_ea04b38116e3956e5387"
+        ],
+        "query_ids": [
+          "query_3b51926f2a5829a66344"
+        ],
+        "query_leads": [
+          "Do not modify files outside evidence-supported scope."
+        ],
+        "required_before_patch": true,
+        "requirement_id": "requirement_2abed578dbd94cdd9841",
+        "role": "preservation",
+        "text": "Do not modify files outside evidence-supported scope."
+      },
+      {
+        "input_obligation_ids": [
+          "obligation_6db74bd8f507a380860d"
+        ],
+        "query_ids": [
+          "query_9d9f5dac8c8fe8f8a41e"
+        ],
+        "query_leads": [
+          "Do not claim runtime success without runtime evidence."
+        ],
+        "required_before_patch": true,
+        "requirement_id": "requirement_b795b011b78c33506289",
+        "role": "preservation",
+        "text": "Do not claim runtime success without runtime evidence."
+      },
+      {
+        "input_obligation_ids": [
+          "obligation_f53c1debd410617da3f9",
+          "obligation_c23576beb4d2a8d0954e",
+          "obligation_6a0ae9d0b4b3a528ebf4",
+          "obligation_9ebf70025626eb836709",
+          "obligation_b4303e1db9573ae9c2e2",
+          "obligation_8f94e929452411c7da91",
+          "obligation_4deafdfacc1dc202a2c0",
+          "obligation_5d13ffe2d4ebee2d4db8"
+        ],
+        "query_ids": [
+          "query_8e3d0f6de5be6247aa4c"
+        ],
+        "query_leads": [
+          "Requested behavior is implemented: 我想让模组在玩家用枪打到敌人并触发踉跄时，额外显示一个短暂的黄色 X，并播放一声简短提示音。"
+        ],
+        "required_before_patch": false,
+        "requirement_id": "requirement_b7ad1e0fd4133a849293",
+        "role": "post_change_acceptance",
+        "text": "Requested behavior is implemented: 我想让模组在玩家用枪打到敌人并触发踉跄时，额外显示一个短暂的黄色 X，并播放一声简短提示音。\nEvery proposed change is bound to evidence.\nValidation output is reported with real command or artifact evidence.\ncompile or static validation\nstartup_loaded\ntarget_path_executed\nacceptance_evidence_observed\nnon_goals_preserved"
+      }
+    ],
+    "schema_version": "evidence_requirement_coverage_v3"
+  },
+  "original_refs": [
+    {
+      "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\09\\05\\01a07014-bccb-7420-bbcd-38defc72fecb\\a5_api_semantic_001\\actual\\response.json",
+      "sha256": "592e68fdd98745057402f1a7a1b89551bd6400876ef78b33fb20c62fd6fb3567"
+    },
+    {
+      "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\09\\05\\01a07014-bccb-7420-bbcd-38defc72fecb\\a5_api_semantic_001\\preview\\current_and_reference\\findings-input.json",
+      "sha256": "08b2d7b4eaa2212a486485f58bb3313bb0bf6af29c66360d562e0fb884f095f4"
+    }
+  ],
+  "request": "我想让模组在玩家用枪打到敌人并触发踉跄时，额外显示一个短暂的黄色 X，并播放一声简短提示音。",
+  "retrieved_pack": {
+    "authoritative_for_patch": false,
+    "authority": "mod_agent_deterministic_evidence",
+    "blockers": [],
+    "budget_summary": {},
+    "can_generate_patch": false,
+    "disabled_modes": {},
+    "evidence_conclusions": [],
+    "excluded": [],
+    "gaps": [],
+    "identity_field_mapping": {
+      "chunk_id": "Stable chunk id generated from document_id, chunk_index, and chunk content_hash.",
+      "content_hash": "Context-dependent stored content hash: file_hash on Document metadata, chunk text hash on Chunk metadata.",
+      "doc_hash": "SHA256 of the document canonical_text.",
+      "document_id": "Stable loaded document id generated from source_id, relative_path, and file_hash.",
+      "file_hash": "SHA256 of the loaded source file bytes decoded as text for V1 loaders.",
+      "source_hash": "Backward-compatible V1 alias for file_hash on file-backed sources.",
+      "source_ref": "Chunk-to-document reference; for V1 chunks this must equal document_id."
+    },
+    "identity_schema_version": "identity_v1",
+    "input_audit": {},
+    "intelligence_transfer": {},
+    "items": [
+      {
+        "authority": "mod_agent_deterministic",
+        "chunk_id": null,
+        "claim_supported": "Hash-bound CLI metadata records token 0x060023B4, RVA 595676, and an exact IL body read.",
+        "declared_member_types": null,
+        "declared_members": null,
+        "declaring_type": "Dam_EnemyDamageBase",
+        "declaring_type_full_name": null,
+        "doc_hash": null,
+        "document_id": null,
+        "evidence_id": "evidence_dc1dd1a02b199c2121cb32eb",
+        "excerpt": "{\"module_mvid\":\"85155e68-33a5-4fa5-a419-c563e7ea5e60\",\"metadata_token\":\"0x060023B4\",\"attributes\":\"PrivateScope, Public, HideBySig\",\"impl_attributes\":\"IL\",\"signature_blob\":\"200A010C12B9DC11511151115102080C0C09\",\"rva\":595676,\"has_method_body\":true,\"il_bytes\":\"02280100000A261F0AE0FE1C08000001D9FE0FFE0E0100FE0C0100FE0A0100DFFE0C010017E0FE1C08000001D958FE090200280E00000ADFFE0C010018E0FE1C08000001D958FE0A0300DFFE0C010019E0FE1C08000001D958FE0A0400DFFE0C01001AE0FE1C08000001D958FE0A0500DFFE0C01001BE0FE1C08000001D958FE0A0600DFFE0C01001CE0FE1C08000001D958FE0A0700DFFE0C01001DE0FE1C08000001D958FE0A0800DFFE0C01001EE0FE1C08000001D958FE0A0900DFFE0C01001F09E0FE1C08000001D958FE0A0A00DF7E451A000AFE090000280100000AFE0C0100FE0D0000280300000AFE0E0200FE0C0000280400000A2A\",\"instructions\":[{\"offset\":\"IL_0000\",\"opcode\":\"ldarg.0\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0001\",\"opcode\":\"call\",\"operand\":\"0x0A000001\",\"resolved\":\"Il2CppInterop.Runtime.IL2CPP.Il2CppObjectBaseToPtrNotNull\"},{\"offset\":\"IL_0006\",\"opcode\":\"pop\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0007\",\"opcode\":\"ldc.i4.s\",\"operand\":10,\"resolved\":null},{\"offset\":\"IL_0009\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_000A\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_0010\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0011\",\"opcode\":\"localloc\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0013\",\"opcode\":\"stloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_0017\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_001B\",\"opcode\":\"ldarga\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_001F\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0020\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_0024\",\"opcode\":\"ldc.i4.1\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0025\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0026\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_002C\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_002D\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_002E\",\"opcode\":\"ldarg\",\"operand\":2,\"resolved\":null},{\"offset\":\"IL_0032\",\"opcode\":\"call\",\"operand\":\"0x0A00000E\",\"resolved\":\"Il2CppInterop.Runtime.IL2CPP.Il2CppObjectBaseToPtr\"},{\"offset\":\"IL_0037\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0038\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_003C\",\"opcode\":\"ldc.i4.2\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_003D\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_003E\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_0044\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0045\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0046\",\"opcode\":\"ldarga\",\"operand\":3,\"resolved\":null},{\"offset\":\"IL_004A\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_004B\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_004F\",\"opcode\":\"ldc.i4.3\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0050\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0051\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_0057\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0058\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0059\",\"opcode\":\"ldarga\",\"operand\":4,\"resolved\":null},{\"offset\":\"IL_005D\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_005E\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_0062\",\"opcode\":\"ldc.i4.4\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0063\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0064\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_006A\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_006B\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_006C\",\"opcode\":\"ldarga\",\"operand\":5,\"resolved\":null},{\"offset\":\"IL_0070\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0071\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_0075\",\"opcode\":\"ldc.i4.5\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0076\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0077\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_007D\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_007E\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_007F\",\"opcode\":\"ldarga\",\"operand\":6,\"resolved\":null},{\"offset\":\"IL_0083\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0084\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_0088\",\"opcode\":\"ldc.i4.6\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0089\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_008A\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_0090\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0091\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0092\",\"opcode\":\"ldarga\",\"operand\":7,\"resolved\":null},{\"offset\":\"IL_0096\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0097\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_009B\",\"opcode\":\"ldc.i4.7\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_009C\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_009D\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_00A3\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_00A4\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_00A5\",\"opcode\":\"ldarga\",\"operand\":8,\"resolved\":null},{\"offset\":\"IL_00A9\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_00AA\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_00AE\",\"opcode\":\"ldc.i4.8\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_00AF\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_00B0\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_00B6\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_00B7\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_00B8\",\"opcode\":\"ldarga\",\"operand\":9,\"resolved\":null},{\"offset\":\"IL_00BC\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_00BD\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_00C1\",\"opcode\":\"ldc.i4.s\",\"operand\":9,\"resolved\":null},{\"offset\":\"IL_00C3\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_00C4\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_00CA\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_00CB\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_00CC\",\"opcode\":\"ldarga\",\"operand\":10,\"resolved\":null},{\"offset\":\"IL_00D0\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_00D1\",\"opcode\":\"ldsfld\",\"operand\":\"0x0A001A45\",\"resolved\":\"Dam_EnemyDamageBase.NativeMethodInfoPtr_BulletDamage_Public_Void_Single_Agent_Vector3_Vector3_Vector3_Boolean_Int32_Single_Single_UInt32_0\"},{\"offset\":\"IL_00D6\",\"opcode\":\"ldarg\",\"operand\":0,\"resolved\":null},{\"offset\":\"IL_00DA\",\"opcode\":\"call\",\"operand\":\"0x0A000001\",\"resolved\":\"Il2CppInterop.Runtime.IL2CPP.Il2CppObjectBaseToPtrNotNull\"},{\"offset\":\"IL_00DF\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_00E3\",\"opcode\":\"ldloca\",\"operand\":0,\"resolved\":null},{\"offset\":\"IL_00E7\",\"opcode\":\"call\",\"operand\":\"0x0A000003\",\"resolved\":\"Il2CppInterop.Runtime.IL2CPP.il2cpp_runtime_invoke\"},{\"offset\":\"IL_00EC\",\"opcode\":\"stloc\",\"operand\":2,\"resolved\":null},{\"offset\":\"IL_00F0\",\"opcode\":\"ldloc\",\"operand\":0,\"resolved\":null},{\"offset\":\"IL_00F4\",\"opcode\":\"call\",\"operand\":\"0x0A000004\",\"resolved\":\"Il2CppInterop.Runtime.Il2CppException.RaiseExceptionIfNecessary\"},{\"offset\":\"IL_00F9\",\"opcode\":\"ret\",\"operand\":null,\"resolved\":null}],\"custom_attributes\":[{\"constructor\":\"Il2CppInterop.Common.Attributes.CallerCountAttribute..ctor\",\"value_blob\":\"0100000000000000\",\"printable_ascii_runs\":[]},{\"constructor\":\"Il2CppInterop.Common.Attributes.CachedScanResultsAttribute..ctor\",\"value_blob\":\"0100060053080D52656652616E676553746172740000000053080B52656652616E6765456E640000000053080E5872656652616E67655374617274F2B0090053080C5872656652616E6765456E6415B10900530A144D65746164617461496E6974546F6B656E527661FC458B0200000000530A134D65746164617461496E6974466C61675276617B18340300000000\",\"printable_ascii_runs\":[\"RefRangeStart\",\"RefRangeEnd\",\"XrefRangeStart\",\"XrefRangeEnd\",\"MetadataInitTokenRva\",\"MetadataInitFlagRva{\"]}],\"declaring_type_custom_attributes\":[]}",
+        "file_hash": "B0127EB1E9228A61B7ED04EA0152348E24DA693636711D03A248049618BB74BB",
+        "metadata_token": "0x060023B4",
+        "method_kind": null,
+        "method_name": "BulletDamage",
+        "module_mvid": "85155e68-33a5-4fa5-a419-c563e7ea5e60",
+        "parameter_types": null,
+        "retrieval_method": "operator_selected_cli_metadata_il_read",
+        "return_type": null,
+        "risk_notes": [
+          "CLI metadata inspection did not load or execute the target assembly."
+        ],
+        "score": 1.0,
+        "signature_blob": "200A010C12B9DC11511151115102080C0C09",
+        "source_authority": "authoritative",
+        "source_hash": "B0127EB1E9228A61B7ED04EA0152348E24DA693636711D03A248049618BB74BB",
+        "source_path": "Modules-ASM.dll",
+        "source_ref": "source://current-interop/Modules-ASM.dll",
+        "source_type": "decompiled_api",
+        "span": null,
+        "symbol": "Dam_EnemyDamageBase.BulletDamage",
+        "usage": "hook_evidence",
+        "verified_member_accesses": []
+      },
+      {
+        "authority": "mod_agent_deterministic",
+        "chunk_id": null,
+        "claim_supported": "Hash-bound CLI metadata records token 0x0600138A, RVA 332768, and an exact IL body read.",
+        "declared_member_types": null,
+        "declared_members": null,
+        "declaring_type": "ES_Hitreact",
+        "declaring_type_full_name": null,
+        "doc_hash": null,
+        "document_id": null,
+        "evidence_id": "evidence_862053a7ee36781a683a37f6",
+        "excerpt": "{\"module_mvid\":\"85155e68-33a5-4fa5-a419-c563e7ea5e60\",\"metadata_token\":\"0x0600138A\",\"attributes\":\"PrivateScope, Public, Virtual, HideBySig\",\"impl_attributes\":\"IL\",\"signature_blob\":\"200701081184301184340C0211511151\",\"rva\":332768,\"has_method_body\":true,\"il_bytes\":\"02280100000A261DE0FE1C08000001D9FE0FFE0E0100FE0C0100FE0A0100DFFE0C010017E0FE1C08000001D958FE0A0200DFFE0C010018E0FE1C08000001D958FE0A0300DFFE0C010019E0FE1C08000001D958FE0A0400DFFE0C01001AE0FE1C08000001D958FE0A0500DFFE0C01001BE0FE1C08000001D958FE0A0600DFFE0C01001CE0FE1C08000001D958FE0A0700DF02280E00000A7EA80E000A285A00000AFE090000280100000AFE0C0100FE0D0000280300000AFE0E0200FE0C0000280400000A2A\",\"instructions\":[{\"offset\":\"IL_0000\",\"opcode\":\"ldarg.0\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0001\",\"opcode\":\"call\",\"operand\":\"0x0A000001\",\"resolved\":\"Il2CppInterop.Runtime.IL2CPP.Il2CppObjectBaseToPtrNotNull\"},{\"offset\":\"IL_0006\",\"opcode\":\"pop\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0007\",\"opcode\":\"ldc.i4.7\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0008\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0009\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_000F\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0010\",\"opcode\":\"localloc\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0012\",\"opcode\":\"stloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_0016\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_001A\",\"opcode\":\"ldarga\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_001E\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_001F\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_0023\",\"opcode\":\"ldc.i4.1\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0024\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0025\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_002B\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_002C\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_002D\",\"opcode\":\"ldarga\",\"operand\":2,\"resolved\":null},{\"offset\":\"IL_0031\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0032\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_0036\",\"opcode\":\"ldc.i4.2\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0037\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0038\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_003E\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_003F\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0040\",\"opcode\":\"ldarga\",\"operand\":3,\"resolved\":null},{\"offset\":\"IL_0044\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0045\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_0049\",\"opcode\":\"ldc.i4.3\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_004A\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_004B\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_0051\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0052\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0053\",\"opcode\":\"ldarga\",\"operand\":4,\"resolved\":null},{\"offset\":\"IL_0057\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0058\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_005C\",\"opcode\":\"ldc.i4.4\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_005D\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_005E\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_0064\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0065\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0066\",\"opcode\":\"ldarga\",\"operand\":5,\"resolved\":null},{\"offset\":\"IL_006A\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_006B\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_006F\",\"opcode\":\"ldc.i4.5\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0070\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0071\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_0077\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0078\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0079\",\"opcode\":\"ldarga\",\"operand\":6,\"resolved\":null},{\"offset\":\"IL_007D\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_007E\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_0082\",\"opcode\":\"ldc.i4.6\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0083\",\"opcode\":\"conv.u\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0084\",\"opcode\":\"sizeof\",\"operand\":\"0x01000008\",\"resolved\":\"System.IntPtr\"},{\"offset\":\"IL_008A\",\"opcode\":\"mul.ovf.un\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_008B\",\"opcode\":\"add\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_008C\",\"opcode\":\"ldarga\",\"operand\":7,\"resolved\":null},{\"offset\":\"IL_0090\",\"opcode\":\"stind.i\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0091\",\"opcode\":\"ldarg.0\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0092\",\"opcode\":\"call\",\"operand\":\"0x0A00000E\",\"resolved\":\"Il2CppInterop.Runtime.IL2CPP.Il2CppObjectBaseToPtr\"},{\"offset\":\"IL_0097\",\"opcode\":\"ldsfld\",\"operand\":\"0x0A000EA8\",\"resolved\":\"ES_Hitreact.NativeMethodInfoPtr_DoHitReact_Protected_Virtual_Void_Int32_ES_HitreactType_ImpactDirection_Single_Boolean_Vector3_Vector3_0\"},{\"offset\":\"IL_009C\",\"opcode\":\"call\",\"operand\":\"0x0A00005A\",\"resolved\":\"Il2CppInterop.Runtime.IL2CPP.il2cpp_object_get_virtual_method\"},{\"offset\":\"IL_00A1\",\"opcode\":\"ldarg\",\"operand\":0,\"resolved\":null},{\"offset\":\"IL_00A5\",\"opcode\":\"call\",\"operand\":\"0x0A000001\",\"resolved\":\"Il2CppInterop.Runtime.IL2CPP.Il2CppObjectBaseToPtrNotNull\"},{\"offset\":\"IL_00AA\",\"opcode\":\"ldloc\",\"operand\":1,\"resolved\":null},{\"offset\":\"IL_00AE\",\"opcode\":\"ldloca\",\"operand\":0,\"resolved\":null},{\"offset\":\"IL_00B2\",\"opcode\":\"call\",\"operand\":\"0x0A000003\",\"resolved\":\"Il2CppInterop.Runtime.IL2CPP.il2cpp_runtime_invoke\"},{\"offset\":\"IL_00B7\",\"opcode\":\"stloc\",\"operand\":2,\"resolved\":null},{\"offset\":\"IL_00BB\",\"opcode\":\"ldloc\",\"operand\":0,\"resolved\":null},{\"offset\":\"IL_00BF\",\"opcode\":\"call\",\"operand\":\"0x0A000004\",\"resolved\":\"Il2CppInterop.Runtime.Il2CppException.RaiseExceptionIfNecessary\"},{\"offset\":\"IL_00C4\",\"opcode\":\"ret\",\"operand\":null,\"resolved\":null}],\"custom_attributes\":[{\"constructor\":\"Il2CppInterop.Common.Attributes.CallerCountAttribute..ctor\",\"value_blob\":\"0100000000000000\",\"printable_ascii_runs\":[]},{\"constructor\":\"Il2CppInterop.Common.Attributes.CachedScanResultsAttribute..ctor\",\"value_blob\":\"0100060053080D52656652616E676553746172740000000053080B52656652616E6765456E640000000053080E5872656652616E676553746172748279090053080C5872656652616E6765456E6490790900530A144D65746164617461496E6974546F6B656E52766168A7800200000000530A134D65746164617461496E6974466C61675276619F32340300000000\",\"printable_ascii_runs\":[\"RefRangeStart\",\"RefRangeEnd\",\"XrefRangeStart\",\"XrefRangeEnd\",\"MetadataInitTokenRvah\",\"MetadataInitFlagRva\"]}],\"declaring_type_custom_attributes\":[]}",
+        "file_hash": "B0127EB1E9228A61B7ED04EA0152348E24DA693636711D03A248049618BB74BB",
+        "metadata_token": "0x0600138A",
+        "method_kind": null,
+        "method_name": "DoHitReact",
+        "module_mvid": "85155e68-33a5-4fa5-a419-c563e7ea5e60",
+        "parameter_types": null,
+        "retrieval_method": "operator_selected_cli_metadata_il_read",
+        "return_type": null,
+        "risk_notes": [
+          "CLI metadata inspection did not load or execute the target assembly."
+        ],
+        "score": 1.0,
+        "signature_blob": "200701081184301184340C0211511151",
+        "source_authority": "authoritative",
+        "source_hash": "B0127EB1E9228A61B7ED04EA0152348E24DA693636711D03A248049618BB74BB",
+        "source_path": "Modules-ASM.dll",
+        "source_ref": "source://current-interop/Modules-ASM.dll",
+        "source_type": "decompiled_api",
+        "span": null,
+        "symbol": "ES_Hitreact.DoHitReact",
+        "usage": "hook_evidence",
+        "verified_member_accesses": []
+      },
+      {
+        "authority": "mod_agent_deterministic",
+        "chunk_id": null,
+        "claim_supported": "Hash-bound CLI metadata records token 0x060006AE, RVA 8282, and an exact IL body read.",
+        "declared_member_types": null,
+        "declared_members": null,
+        "declaring_type": "Dam_EnemyDamageBase",
+        "declaring_type_full_name": null,
+        "doc_hash": null,
+        "document_id": null,
+        "evidence_id": "evidence_2256e92d57569ca2378647d6",
+        "excerpt": "{\"module_mvid\":\"28e7d845-eb8b-48af-a5b2-9b1addb278ae\",\"metadata_token\":\"0x060006AE\",\"attributes\":\"PrivateScope, Public, HideBySig\",\"impl_attributes\":\"IL\",\"signature_blob\":\"200A010C12AF6C11311131113102080C0C09\",\"rva\":8282,\"has_method_body\":true,\"il_bytes\":\"002A\",\"instructions\":[{\"offset\":\"IL_0000\",\"opcode\":\"nop\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0001\",\"opcode\":\"ret\",\"operand\":null,\"resolved\":null}],\"custom_attributes\":[],\"declaring_type_custom_attributes\":[]}",
+        "file_hash": "DD0C57D5C527E78B40FAB798456EDD73413DA0F140995A63FCA3619C36C32698",
+        "metadata_token": "0x060006AE",
+        "method_kind": null,
+        "method_name": "BulletDamage",
+        "module_mvid": "28e7d845-eb8b-48af-a5b2-9b1addb278ae",
+        "parameter_types": null,
+        "retrieval_method": "operator_selected_cli_metadata_il_read",
+        "return_type": null,
+        "risk_notes": [
+          "CLI metadata inspection did not load or execute the target assembly."
+        ],
+        "score": 1.0,
+        "signature_blob": "200A010C12AF6C11311131113102080C0C09",
+        "source_authority": "supporting",
+        "source_hash": "DD0C57D5C527E78B40FAB798456EDD73413DA0F140995A63FCA3619C36C32698",
+        "source_path": "Modules-ASM.dll",
+        "source_ref": "source://r8-modules/Modules-ASM.dll",
+        "source_type": "decompiled_api",
+        "span": null,
+        "symbol": "Dam_EnemyDamageBase.BulletDamage",
+        "usage": "hook_evidence",
+        "verified_member_accesses": []
+      },
+      {
+        "authority": "mod_agent_deterministic",
+        "chunk_id": null,
+        "claim_supported": "Hash-bound CLI metadata records token 0x06000B30, RVA 8282, and an exact IL body read.",
+        "declared_member_types": null,
+        "declared_members": null,
+        "declaring_type": "ES_Hitreact",
+        "declaring_type_full_name": null,
+        "doc_hash": null,
+        "document_id": null,
+        "evidence_id": "evidence_55f9a3d89c48ec044750a32b",
+        "excerpt": "{\"module_mvid\":\"28e7d845-eb8b-48af-a5b2-9b1addb278ae\",\"metadata_token\":\"0x06000B30\",\"attributes\":\"PrivateScope, Family, Virtual, HideBySig\",\"impl_attributes\":\"IL\",\"signature_blob\":\"200701081184CC11893C0C0211311131\",\"rva\":8282,\"has_method_body\":true,\"il_bytes\":\"002A\",\"instructions\":[{\"offset\":\"IL_0000\",\"opcode\":\"nop\",\"operand\":null,\"resolved\":null},{\"offset\":\"IL_0001\",\"opcode\":\"ret\",\"operand\":null,\"resolved\":null}],\"custom_attributes\":[],\"declaring_type_custom_attributes\":[]}",
+        "file_hash": "DD0C57D5C527E78B40FAB798456EDD73413DA0F140995A63FCA3619C36C32698",
+        "metadata_token": "0x06000B30",
+        "method_kind": null,
+        "method_name": "DoHitReact",
+        "module_mvid": "28e7d845-eb8b-48af-a5b2-9b1addb278ae",
+        "parameter_types": null,
+        "retrieval_method": "operator_selected_cli_metadata_il_read",
+        "return_type": null,
+        "risk_notes": [
+          "CLI metadata inspection did not load or execute the target assembly."
+        ],
+        "score": 1.0,
+        "signature_blob": "200701081184CC11893C0C0211311131",
+        "source_authority": "supporting",
+        "source_hash": "DD0C57D5C527E78B40FAB798456EDD73413DA0F140995A63FCA3619C36C32698",
+        "source_path": "Modules-ASM.dll",
+        "source_ref": "source://r8-modules/Modules-ASM.dll",
+        "source_type": "decompiled_api",
+        "span": null,
+        "symbol": "ES_Hitreact.DoHitReact",
+        "usage": "hook_evidence",
+        "verified_member_accesses": []
+      }
+    ],
+    "message": "Evidence readiness is partial; 4 evidence items retrieved.",
+    "missing_capabilities": [],
+    "missing_evidence": [],
+    "model_action_trace": [],
+    "model_identity": {},
+    "node_name": "retrieve_evidence",
+    "observation_fact_catalog": [],
+    "observation_trace": [],
+    "prompt_contract": {},
+    "provenance_validation": {
+      "independent_inspection_refs": [
+        {
+          "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\09\\05\\01a07014-bccb-7420-bbcd-38defc72fecb\\a5_api_semantic_001\\current-interop.json",
+          "sha256": "e2cfe9e2f1cbeaeb720fe045626abab507fe7fb12177f6cd6c5e8dfe9a625b3f"
+        },
+        {
+          "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\09\\05\\01a07014-bccb-7420-bbcd-38defc72fecb\\a5_api_semantic_001\\r8-modules.json",
+          "sha256": "1a48641efbd4611bb55ba88d8dae0d1a4481f9cd4d0f9a503f3b2f79c9483fed"
+        }
+      ]
+    },
+    "query": "我想让模组在玩家用枪打到敌人并触发踉跄时，额外显示一个短暂的黄色 X，并播放一声简短提示音。",
+    "readiness": "partial",
+    "retrieval_methods_used": [
+      "operator_selected_cli_metadata_il_read"
+    ],
+    "run_status": null,
+    "stage": "evidence_retrieval",
+    "timing": {},
+    "tool_trace_summary": [],
+    "trace_refs": [],
+    "unresolved_questions": [],
+    "verified_findings": []
+  },
+  "saved_response": {
+    "findings": [
+      {
+        "edit_target_evidence_ids": [
+          "evidence_dc1dd1a02b199c2121cb32eb"
+        ],
+        "evidence_ids": [
+          "evidence_dc1dd1a02b199c2121cb32eb"
+        ],
+        "relation_index": 1,
+        "relationship": "support",
+        "unresolved_gaps": []
+      },
+      {
+        "edit_target_evidence_ids": [],
+        "evidence_ids": [
+          "evidence_dc1dd1a02b199c2121cb32eb"
+        ],
+        "relation_index": 2,
+        "relationship": "support",
+        "unresolved_gaps": []
+      },
+      {
+        "edit_target_evidence_ids": [],
+        "evidence_ids": [
+          "evidence_dc1dd1a02b199c2121cb32eb"
+        ],
+        "relation_index": 3,
+        "relationship": "support",
+        "unresolved_gaps": []
+      },
+      {
+        "edit_target_evidence_ids": [],
+        "evidence_ids": [
+          "evidence_dc1dd1a02b199c2121cb32eb"
+        ],
+        "relation_index": 4,
+        "relationship": "support",
+        "unresolved_gaps": []
+      },
+      {
+        "edit_target_evidence_ids": [],
+        "evidence_ids": [
+          "evidence_dc1dd1a02b199c2121cb32eb"
+        ],
+        "relation_index": 5,
+        "relationship": "support",
+        "unresolved_gaps": []
+      },
+      {
+        "edit_target_evidence_ids": [],
+        "evidence_ids": [
+          "evidence_dc1dd1a02b199c2121cb32eb"
+        ],
+        "relation_index": 6,
+        "relationship": "support",
+        "unresolved_gaps": []
+      },
+      {
+        "edit_target_evidence_ids": [],
+        "evidence_ids": [
+          "evidence_dc1dd1a02b199c2121cb32eb"
+        ],
+        "relation_index": 7,
+        "relationship": "support",
+        "unresolved_gaps": []
+      },
+      {
+        "edit_target_evidence_ids": [],
+        "evidence_ids": [
+          "evidence_dc1dd1a02b199c2121cb32eb"
+        ],
+        "relation_index": 8,
+        "relationship": "support",
+        "unresolved_gaps": []
+      },
+      {
+        "edit_target_evidence_ids": [],
+        "evidence_ids": [
+          "evidence_dc1dd1a02b199c2121cb32eb"
+        ],
+        "relation_index": 9,
+        "relationship": "support",
+        "unresolved_gaps": []
+      }
+    ]
+  },
+  "saved_response_schema": {
+    "additionalProperties": false,
+    "properties": {
+      "findings": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "edit_target_evidence_ids": {
+              "items": {
+                "enum": [
+                  "evidence_dc1dd1a02b199c2121cb32eb",
+                  "evidence_862053a7ee36781a683a37f6",
+                  "evidence_2256e92d57569ca2378647d6",
+                  "evidence_55f9a3d89c48ec044750a32b"
+                ],
+                "type": "string"
+              },
+              "type": "array",
+              "uniqueItems": true
+            },
+            "evidence_ids": {
+              "items": {
+                "enum": [
+                  "evidence_dc1dd1a02b199c2121cb32eb",
+                  "evidence_862053a7ee36781a683a37f6",
+                  "evidence_2256e92d57569ca2378647d6",
+                  "evidence_55f9a3d89c48ec044750a32b"
+                ],
+                "type": "string"
+              },
+              "type": "array",
+              "uniqueItems": true
+            },
+            "relation_index": {
+              "enum": [
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                7,
+                8,
+                9
+              ],
+              "type": "integer"
+            },
+            "relationship": {
+              "enum": [
+                "support",
+                "conflict",
+                "missing"
+              ],
+              "type": "string"
+            },
+            "unresolved_gaps": {
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "relation_index",
+            "relationship",
+            "evidence_ids",
+            "edit_target_evidence_ids",
+            "unresolved_gaps"
+          ],
+          "type": "object"
+        },
+        "maxItems": 9,
+        "minItems": 9,
+        "type": "array"
+      }
+    },
+    "required": [
+      "findings"
+    ],
+    "type": "object"
+  },
+  "scope": "offline_actual_input_and_response_reproduction_not_new_model_execution"
+}
