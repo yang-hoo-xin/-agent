@@ -5,12 +5,13 @@ import base64
 import hashlib
 import json
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
 import httpx
 import pytest
 
+from src.libs.llm.agent_turn import AgentMessage, AgentTurnRequest, QwenChatAgentAdapter
 from src.mod_agent.artifacts import ArtifactRef
 from src.mod_agent.external_patch import (
     PATCH_FEEDBACK_DATA_CLASSES,
@@ -19,9 +20,11 @@ from src.mod_agent.external_patch import (
     ExternalQwenPatchProfile,
     run_external_patch_continuation,
 )
-from src.mod_agent.local_entry import _restore_patch_agent_context
+from src.mod_agent.local_entry import _restore_patch_agent_context, _sha256_json
 from src.mod_agent.patch_worker_configuration import PatchWorkerConfiguration
 from src.mod_agent.product_executor import SOURCE_DISCLOSURE_DATA_CLASSES, _source_disclosure_record
+from src.mod_agent.proposal.patch_agent_loop import PatchAgentLoopPolicy
+from tests.unit.test_agent_turn_adapters import _format, _tool
 from tests.unit.test_fresh_planning_continuation import _patch_request, _source_hashes
 from tests.unit.test_patch_repair_cli import _message_jsons, _public_case
 from tests.unit.test_patch_upstream_cli import _UpstreamTransport
@@ -43,10 +46,11 @@ def _consent(profile, *, feedback=True):
 
 
 class _QwenTransport:
-    def __init__(self, *, direct=False, listed=True, wrong_model=False, missing_model=False, timeout=False):
+    def __init__(self, *, direct=False, listed=True, wrong_model=False, missing_model=False, timeout=False, prose=False):
         self.calls, self.wires, self.reads, self.outputs = [], [], [], []
         self.direct, self.listed, self.wrong_model, self.timeout = direct, listed, wrong_model, timeout
         self.missing_model = missing_model
+        self.prose = prose
 
     def __call__(self, request):
         assert request.url.scheme == "https" and request.url.host == "dashscope.example"
@@ -64,6 +68,8 @@ class _QwenTransport:
         payload = json.loads(request.content)
         assert payload["model"] == "qwen3.6-plus"
         assert payload["enable_thinking"] is False
+        assert payload["tool_choice"] == "auto"
+        assert "request_patch_upstream" in [row["function"]["name"] for row in payload["tools"]]
         number = len(self.wires)
         values = _message_jsons(payload)
         feedback = [row for _, row in values if row.get("message_type") == "patch_behavior_correction"]
@@ -84,6 +90,8 @@ class _QwenTransport:
             prompt = _restore_patch_agent_context(next(row for _, row in values if "required_change_units" in row))
             assert "PreserveFeedback must remain unchanged." in json.dumps(payload)
             output = json.dumps(_UpstreamTransport._patch(prompt, passed=self.direct or number == 4))
+            if self.prose:
+                output = "Explanation preceding the requested JSON.\n" + output
             self.outputs.append(output)
             message = {"role": "assistant", "content": output}
         result = {"id": f"qwen-external-{number}", "model": "wrong-model" if self.wrong_model else "qwen3.6-plus",
@@ -114,10 +122,21 @@ def _run(case, profile, consent, *, request=None, files=None):
         approved_source_files=_source_hashes(case.inputs.workspace) if files is None else files)
 
 
-def test_external_qwen_reuses_source_feedback_revision_and_original_review_without_ollama_identity(tmp_path, monkeypatch):
-    case = _public_case(tmp_path)
-    profile = _profile()
+@pytest.mark.parametrize("output_format_policy", ["follow_request", "json_when_patch_submission_allowed"])
+def test_external_qwen_reuses_source_feedback_revision_and_original_review_without_ollama_identity(tmp_path, monkeypatch, output_format_policy):
+    case = _public_case(tmp_path, selected_policy=asdict(PatchAgentLoopPolicy(
+        max_total_model_turns=5, max_tool_rounds=3,
+        finalize_after_first_observation=False, require_source_inspection=False,
+        enable_supporting_reads=True, allow_upstream_request=True, allow_batched_reads=True,
+    )))
+    profile = replace(_profile(), output_format_policy=output_format_policy)
     handler = _install(monkeypatch)
+    actual_requests = []
+    original_complete = QwenChatAgentAdapter.complete_turn
+    def capture_request(client, request):
+        actual_requests.append(request)
+        return original_complete(client, request)
+    monkeypatch.setattr(QwenChatAgentAdapter, "complete_turn", capture_request)
     before = _source_hashes(case.inputs.workspace)
     result = _run(case, profile, _consent(profile))
     assert result.status == "terminal", result.to_dict()
@@ -132,10 +151,24 @@ def test_external_qwen_reuses_source_feedback_revision_and_original_review_witho
     assert receipt["model_context_limit"] is None
     assert receipt["model_identity"]["availability"] == "catalogue_listing_not_generation_acceptance"
     assert receipt["profile"]["execution_locality"] == "external"
+    assert receipt["profile"].get("output_format_policy", "follow_request") == output_format_policy
     assert all(set(PATCH_FEEDBACK_DATA_CLASSES) <= set(row["requested_data_classes"]) for row in receipt["external_provider_requests"])
     assert receipt["model_admission"]["requested_data_classes"] == receipt["source_disclosure"]["requested_data_classes"]
-    for turn, wire in zip(receipt["worker_turns"], handler.wires, strict=True):
-        assert turn["provider_diagnostic"]["request_identity"]["provider_body_sha256"] == hashlib.sha256(wire).hexdigest()
+    for turn, request, wire, actual in zip(receipt["worker_turns"], receipt["external_provider_requests"], handler.wires, actual_requests, strict=True):
+        assert turn["request_sha256"] == _sha256_json(asdict(actual))
+        assert turn["provider_diagnostic"]["request_identity"] == request["request_identity"]
+        assert request["request_identity"]["provider_body_sha256"] == hashlib.sha256(wire).hexdigest()
+        assert request["request_identity"]["provider_body_utf8_bytes"] == len(wire)
+        expected_format = {"type": "json_object"} if actual.response_format is not None else None
+        expected_mode = "json_object" if expected_format else "provider_default"
+        assert request["requested_response_format"] == json.loads(wire).get("response_format") == expected_format
+        assert turn["provider_diagnostic"]["requested_output_mode"] == request["requested_output_mode"] == expected_mode
+        assert request["output_format_policy"] == output_format_policy
+    ordinary_output = json.loads(handler.wires[1])
+    assert {"inspect_plan_binding_source", "request_patch_upstream"} == {
+        row["function"]["name"] for row in ordinary_output["tools"]}
+    assert receipt["worker_turns"][1]["tool_action"] == "allowed_but_not_requested"
+    assert (actual_requests[1].response_format is not None) == (output_format_policy == "json_when_patch_submission_allowed")
     proposal = case.inputs.store.read(ArtifactRef(**result.patch_proposal_artifact))["data"]
     assert all(row["generation"]["provider"] == "qwen_chat" and row["generation"]["model_digest"] is None for row in proposal["diff_intent"])
     assert "unit-test-secret" not in json.dumps(journal)
@@ -149,7 +182,7 @@ def test_external_qwen_reuses_source_feedback_revision_and_original_review_witho
 
 def test_initial_external_patch_does_not_claim_unsent_feedback_classes(tmp_path, monkeypatch):
     case = _public_case(tmp_path)
-    profile = _profile()
+    profile = replace(_profile(), output_format_policy="json_when_patch_submission_allowed")
     handler = _install(monkeypatch, direct=True)
     request = replace(_patch_request(case.inputs), attempt_id="owned-initial-external")
     result = _run(case, profile, _consent(profile, feedback=False), request=request)
@@ -158,6 +191,119 @@ def test_initial_external_patch_does_not_claim_unsent_feedback_classes(tmp_path,
     receipt = json.loads(Path(result.attempt_receipt["path"]).read_text())["factory_receipt"]
     assert receipt["external_provider_requests"][0]["requested_data_classes"] == list(SOURCE_DISCLOSURE_DATA_CLASSES)
     assert receipt["source_disclosure"]["requested_data_classes"] == list(SOURCE_DISCLOSURE_DATA_CLASSES)
+    assert receipt["external_provider_requests"][0]["requested_response_format"] == {"type": "json_object"}
+
+
+def test_json_mode_does_not_extract_patch_from_prose_and_retains_exact_response(tmp_path, monkeypatch):
+    case = _public_case(tmp_path)
+    profile = replace(_profile(), output_format_policy="json_when_patch_submission_allowed")
+    handler = _install(monkeypatch, direct=True, prose=True)
+
+    result = _run(case, profile, _consent(profile))
+
+    assert result.status != "terminal" and len(handler.wires) == 1
+    assert result.first_failure["code"] == "PatchGenerationError"
+    assert result.execution_counts["review"] == result.execution_counts["dry_run"] == 0
+    assert result.execution_counts["build"] == result.execution_counts["runtime"] == 0
+    journal = json.loads(Path(result.attempt_receipt["path"]).read_text())
+    assert "not strict JSON" in journal["failure"]["message"]
+    receipt = journal["factory_receipt"]
+    request = receipt["external_provider_requests"][0]
+    assert request["requested_response_format"] == {"type": "json_object"}
+    assert Path(receipt["model_response"]["path"]).read_text(encoding="utf-8") == handler.outputs[0]
+    raw = Path(request["response_body_ref"]["path"]).read_bytes()
+    assert json.loads(raw)["choices"][0]["message"]["content"] == handler.outputs[0]
+    assert hashlib.sha256(raw).hexdigest() == request["response_body_sha256"]
+    assert not list(case.reports.glob("report-*.json"))
+
+
+def test_json_mode_bytes_are_admitted_before_send_without_mutating_caller_payload(tmp_path, monkeypatch):
+    case = _public_case(tmp_path)
+    request = AgentTurnRequest(messages=(AgentMessage(role="user", content="Return Patch JSON."),), tool_choice="none")
+    output_budget = 32
+    payloads = []
+    def capture_payload(_url, payload, _headers):
+        payloads.append(payload)
+        return {"model": "qwen3.6-plus", "choices": [{"message": {"content": "{}"}}]}
+    QwenChatAgentAdapter(api_key="unit-test-secret", base_url=_profile().base_url,
+        model=_profile().model, max_completion_tokens=output_budget,
+        request_sender=capture_payload).complete_turn(request)
+    profile = replace(_profile(), output_format_policy="json_when_patch_submission_allowed",
+        output_budget=output_budget, context_window=output_budget + len(
+            httpx.Request("POST", _profile().base_url + "/chat/completions", json=payloads[0]).content))
+    configuration = PatchWorkerConfiguration.load(case.config_path)
+    handler = _install(monkeypatch)
+    adapter = ExternalQwenPatchAdapter(profile=profile, artifact_store=case.inputs.store,
+        workspace_root=case.inputs.workspace, patch_agent_loop_policy=configuration.policy,
+        source_disclosure=_consent(profile), approved_source_files=_source_hashes(case.inputs.workspace))
+    recorded = []
+    adapter.bind_attempt_recorder(recorded.append)
+    evidence = case.inputs.store.read(case.request.evidence_pack_ref)["data"]
+    adapter._admit_model_identity({}, {}, evidence)
+
+    with pytest.raises(ExternalPatchError, match="EXTERNAL_PATCH_REQUEST_CONTEXT_PROXY_EXCEEDED"):
+        adapter._external_client(profile).complete_turn(adapter._request_for_output_policy(request))
+
+    assert request.response_format is None
+    assert "response_format" not in payloads[0]
+    assert handler.calls == [("GET", "/api/v1/models")] and not handler.wires
+    assert recorded and not adapter.patch_attempt_receipt().get("external_provider_requests")
+
+
+@pytest.mark.parametrize("policy,choice,declared,requested", [
+    ("follow_request", "required", False, False),
+    ("follow_request", "auto", False, False),
+    ("follow_request", "none", True, True),
+    ("json_when_patch_submission_allowed", "required", False, False),
+    ("json_when_patch_submission_allowed", "auto", False, True),
+    ("json_when_patch_submission_allowed", "none", False, True),
+    ("json_when_patch_submission_allowed", "required", True, True),
+    ("json_when_patch_submission_allowed", "auto", True, True),
+    ("json_when_patch_submission_allowed", "none", True, True),
+])
+def test_output_policy_preserves_declared_formats_and_pure_tool_turns(tmp_path, policy, choice, declared, requested):
+    case = _public_case(tmp_path)
+    profile = replace(_profile(), output_format_policy=policy)
+    configuration = PatchWorkerConfiguration.load(case.config_path)
+    adapter = ExternalQwenPatchAdapter(profile=profile, artifact_store=case.inputs.store,
+        workspace_root=case.inputs.workspace, patch_agent_loop_policy=configuration.policy)
+    original = AgentTurnRequest(messages=(AgentMessage(role="user", content="Return structured JSON or use the allowed tool."),),
+        tools=() if choice == "none" else (_tool(),), tool_choice=choice,
+        response_format=_format() if declared else None)
+
+    selected = adapter._request_for_output_policy(original)
+
+    if declared or policy == "follow_request" or choice == "required":
+        assert selected is original
+    if declared:
+        assert selected.response_format is original.response_format
+    else:
+        assert original.response_format is None
+    assert (selected.response_format is not None) == requested
+    assert replace(selected, response_format=original.response_format) == original
+    payloads = []
+    def capture(_url, payload, _headers):
+        payloads.append(payload)
+        return {"model": profile.model, "choices": [{"message": {"content": "{}"}}]}
+    QwenChatAgentAdapter(api_key="unused", base_url=profile.base_url, model=profile.model,
+        max_completion_tokens=profile.output_budget, request_sender=capture).complete_turn(selected)
+    assert payloads[0].get("response_format") == ({"type": "json_object"} if requested else None)
+    assert payloads[0]["tool_choice"] == choice
+    assert [row["function"]["name"] for row in payloads[0].get("tools", [])] == [tool.name for tool in original.tools]
+
+
+def test_output_policy_is_explicit_validated_and_changes_profile_identity():
+    original = _profile()
+    selected = replace(original, output_format_policy="json_when_patch_submission_allowed")
+    assert original.output_format_policy == "follow_request"
+    assert "output_format_policy" not in original.to_dict()
+    # This test profile's exact serialization at frozen b5b51d1.
+    assert _sha256_json(original.to_dict()) == "37e8535f676a640ea30249aa7aa4e00fd1b6116737976a86a8ce956e7e033d67"
+    assert selected.to_dict()["output_format_policy"] == "json_when_patch_submission_allowed"
+    assert _sha256_json(original.to_dict()) != _sha256_json(selected.to_dict())
+    for invalid in (None, [], "always_json", "FOLLOW_REQUEST"):
+        with pytest.raises(ExternalPatchError, match="EXTERNAL_PATCH_OUTPUT_FORMAT_POLICY_INVALID"):
+            replace(original, output_format_policy=invalid)
 
 
 @pytest.mark.parametrize("invalid", ["no_consent", "wrong_destination", "feedback_not_approved", "wrong_manifest"])

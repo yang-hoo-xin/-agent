@@ -7,13 +7,23 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
+Real model screening now has three independent results on the same owned C# task:
+30B compiled neither of its identical revisions; cloud Plus failed compilation
+then requested Evidence; cloud Max stopped on prose preceding JSON, before any
+compiler/check execution. P0 013 remains unchanged. Max ordinary-turn JSON mode
+was not requested; its dedicated profile now has an explicit phase-sensitive
+format policy with legacy identity preserved. Offline checks passed; no new Max
+acceptance or automatic in-worker format correction is claimed (0.27).
+See reconciliation 0.26; this is not a cross-model ranking or First Shot result.
+
 Parallel checkpoint is committed: API input/schema alignment (`ceeb1b6`, `3122c26`),
 historical Langfuse transport (`9efcac9`), fixed three-task preparation (`fdb0fc7`),
 external shared-worker adapter (`5a6ca38`), owned process-test task (`68088bc`),
 and DSH read-only host/query/display (`c97ee16`). DSH queried retained 013 and
 displayed its unresolved state after restart. A5's one real Findings attempt
-failed; its schema defect is fixed offline, not its semantic quality. No external
-model, live Langfuse destination, new P0 Patch, or full service lifecycle was run.
+failed; its schema defect is fixed offline, not its semantic quality. At that
+checkpoint no external model was run; subsequent owned-task trials are above.
+No live Langfuse destination, new P0 Patch or full service lifecycle was run.
 Full facts, tests and limits are recorded once in reconciliation 0.20–0.25.
 
 Latest tool-semantics pass is complete: the shared worker sees owner-specific

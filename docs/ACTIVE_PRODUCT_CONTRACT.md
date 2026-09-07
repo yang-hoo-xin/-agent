@@ -41,11 +41,18 @@ this chain. They are not independent product lines.
 ### 1.1 Current Development Selection
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
+Subsequent owned-task model screening ran local 30B, external Plus and Max through
+the same worker. Their distinct compilation/action/format failures are recorded
+in reconciliation 0.26. No P0 repair or model qualification is implied. The next
+bounded provider fix now offers an explicit Patch output-format policy, preserving
+pure tool turns, declared formats and legacy profile identity. It passed offline
+checks; a new Max acceptance and automatic format recovery remain unproven (0.27).
 Parallel checkpoints are now implemented: API input/schema fixes, historical
 Langfuse transport, three-task preparation, external shared-worker adapter,
 owned process-test input and DSH read-only host/query/display. A5's one real
-Findings trial failed; DSH displayed retained P0 013. No external generation,
-live Langfuse readback, new P0 repair or full service delivery is claimed.
+Findings trial failed; DSH displayed retained P0 013. External generation is now
+recorded separately above; no live Langfuse readback, new P0 repair or full service
+delivery is claimed.
 See reconciliation 0.20–0.25; these supporting results do not complete the Mod.
 Latest bounded change: source reading and upstream reassessment have distinct
 tool descriptions. The Graph declares each owner's actual continuation effect

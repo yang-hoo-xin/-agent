@@ -6,14 +6,22 @@
 
 ## 0. 最新状态快照
 
+**输出策略最新（0.27）：外部Patch入口改为显式profile策略；默认旧行为/哈希不变，发送层不再无条件强加JSON。**
+实际请求模式按每请求记录。纯工具回合与已有格式声明保留；严格Patch校验不放宽。
+离线组合验证已通过；尚无修后Max实际验收，也未实现格式失败自动回同worker。
+
+**模型首筛最新（0.26）：同一自有任务真实运行30B、云端3.6 Plus和3.8 Max，均未形成可交付结果，但失败层不同。**
+30B为编译失败后原样修订；Plus为编译失败后请求上游；Max为说明文字加JSON，在结构化解析前停止。
+三组都未执行15项行为矩阵，不合并成同一种失败率，不推导模型排名或First Shot根因。
+
 **DSH最新（0.25）：真实官方宿主已执行原后端查询，重启后页面显示013的未完成结果。**
 只读命令与原session记录已连通；没有模型调用或产品执行。任务提交、审批、执行恢复和交付仍未完成。
 
-**近真实对照输入最新（0.24）：独立自有C#配置任务已准备，真实编译/磁盘/进程基线可运行。**
-15项检查中7项新增要求失败、8项保留行为通过；没有模型生成、Apply或完整一站式交付。
+**近真实对照输入（0.24）：独立自有C#配置任务已准备，真实编译/磁盘/进程基线可运行。**
+原基线15项中7项新增要求失败、8项保留行为通过；后续3组模型实发见0.26，均未产生有效交付。
 
-**外部模型接缝最新（0.23）：外部千问可复用原Patch/Repair worker，解析失败前也保留原HTTP响应；尚未真实外发。**
-真实服务可用性与模型修订能力未证明。独立自有代码任务正在准备真实对照，不复用受限GTFO材料。
+**外部模型接缝（0.23）：外部千问复用原Patch/Repair worker，解析失败前也保留原HTTP响应。**
+后续Plus和Max均已在用户授权的自有源码范围实发并收到响应（0.26）；接口可调用，不等于修订质量合格。
 
 **A7最新（0.22）：3个不同Feature任务已冻结，当前代码下3/3输入准入通过；全部真实模型成绩仍为未运行。**
 两个新增任务的真实C#基线验证已执行，原P0保留36项检查；不把输入准入、基线缺陷或离线脚本响应计为模型成功。
@@ -1056,6 +1064,85 @@ node --test integrations/dsh-mod-agent/tests/*.test.mjs
 没有作为独立真实transport试验验收；不能扩大为所有DSH插件/任意输入都已隔离。
 任务提交、diff审批、任务取消、产品执行恢复、完整交付和界面易用性仍需后续真实验收。
 配置与兼容边界见[插件说明](../../integrations/dsh-mod-agent/README.md)。
+
+### 0.26 同一自有任务的真实部署组合首筛
+
+三次运行均消费`owned_config_service_005`原3份源码、1个Update编辑位置、相同Feature/Evidence/Plan、
+原15项判定与同一worker配置，冻结生产HEAD为`b5b51d1`。未将前一模型输出交给下一模型，
+未改应用源码、判定器或worker。初稿可直接通过，不强制制造失败。该任务仅为初筛，
+不是自主Evidence/Planning、共享状态复杂任务、GTFO或跨任务资格验收。
+
+| 运行 | 真实结果 | 原始记录 |
+|---|---|---|
+| 本地`qwen3-coder:30b` | 5请求/5响应，151.14秒；第3轮与第5轮代码字节完全相同；两次编译均因`CS0103`未解析Environment失败，行为检查未执行 | [local记录](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/owned_config_local_001/launcher-result.json)；journal `fc26256c9feb498441ea73f55784929c.json` |
+| 云端`qwen3.6-plus` | 5请求/5响应，22.80秒；第3轮代码因Console/Environment未解析编译失败；第5轮请求Evidence上游，没有修订输出，行为检查未执行 | [Plus记录](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/owned_config_cloud_001/launcher-result.json)；journal `b5f7cc371dec6fa38a7aafbb306910cb.json` |
+| 云端`qwen3.8-max` | 2请求/2响应，19.58秒；第2轮返回说明文字加JSON，strict parser在第1字符拒绝；没有编译或行为检查，不手工摘取末尾JSON | [Max记录](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/owned_config_cloud_max_001/launcher-result.json)；journal `c9bdeb2029e2b7a13fd1f3c9f31dc839.json` |
+
+journal均在自有任务的`store/cr`中，保存原响应、身份、预算和停止事实。
+终态分别为`PATCH_BEHAVIOR_CORRECTION_FAILED`、`PATCH_AGENT_UPSTREAM_REQUESTED`和
+`malformed_structured_output`。不能将第三个终态当代码编译失败，也不能将未执行矩阵写为0/15。
+源码未写回；没有新Proposal/Review/Dry-run/Apply、正式Build或游戏Runtime。
+前两组有隔离验证器的真实C#编译；这是正式Build阶段之外的检查。
+
+外部两次均由当前任务用户分别批准，预算各最多5次，目的地使用用户明确给出的北京workspace endpoint。
+只发送新编自有源码、需求/绑定及各自运行产生的代码/诊断，没有GTFO材料、判定器源码或API key值。
+服务目录查询真实返回可用型号；目录列出不等于生成或质量合格。每次使用独立attempt，未自动换第四款。
+
+**Plus动作审查：**原请求理由描述了现有错误处理关系，并称无需修改import，却未指出哪项
+Evidence关系失效或哪项事实不可由当前读取取得。因此请求必要性未证明；不因ref已可读就机械拒绝重评，
+也不把这次选择写成正确Replan。
+
+**Max协议核查：**冻结源码`patch_agent_loop.py`在普通回合保留两工具且`response_format=None`；
+`QwenChatAgentAdapter`仅对非空response_format发送json_object。真实第2轮仍具两工具、auto选择，
+所以该轮没有请求JSON mode。这来自冻结代码和轮次记录，不冒充独立wire正文抓包。
+旧`provider_output_mode=json_object_not_native_schema`标签对这些普通轮不准确，原记录保留。
+后续只在Patch专用外部provider修正实际JSON mode及其记录，不放宽parser、提取旧JSON或重建Repair。
+格式失败在本次已离开worker后被拒绝，没有在剩余额度内自动返回格式修订；不得宣称该分支已通过。
+
+**撤回编码故障假设：**原两次本地编译的6份报告按UTF-8读取，替换字符U+FFFD均为0；
+CS0103中文原文完整。查看时的显示异常不能归因为OwnedConfigOracle，也不解释模型失败。
+新增中文未定义标识符真实编译回归在旧实现即通过（1项，3.75秒），没有生产编码修复、
+修改factory或重写旧Artifact。原项目显式`ImplicitUsings=disable`，并非判定器漏掉已启用的隐式using。
+
+此轮支持的决策是：不能把当前profile当作必然交付的唯一主力；先补确证的协议接缝，
+然后接受同一代码判定。Local/Cloud对照同时改变模型与服务/适配路径，不能作纯权重因果实验。
+所有First Shot事实仍属于此前P0记录，未因这次自有任务改写。
+
+### 0.27 输出合同、profile策略与实际请求记录分层
+
+针对0.26的Max格式失败，首个WIP曾在`_send`无条件补JSON mode。它只经过离线测试，
+没有提交或真实执行；用户要求核对阶段与多种情况后，该草稿已替换为以下显式策略。
+不是把“所有模型、所有回合必须JSON”固化为通用规则。
+
+`ExternalQwenPatchProfile.output_format_policy`定义：
+
+- `follow_request`为默认值，遵循本次AgentTurnRequest已有声明；默认序列化省略新键，
+  与冻结b5b51d1原profile数据及hash保持一致。
+- `json_when_patch_submission_allowed`须显式选择：在当前Patch worker允许直接提交、
+  且请求尚无格式声明时补一个JSON object声明。`tool_choice=required`的纯工具回合不强加，
+  上层已有的response_format也不被覆盖。显式策略有独立profile哈希。
+
+策略在ExternalPatch角色包装进入原记录器之前应用，所以request hash对应生效后的请求。
+通用Qwen适配器仍按声明映射协议，`_send`只计量/发送并保存实际
+`requested_response_format`与`requested_output_mode`，不自行决定阶段或改payload。
+请求JSON不等于响应有效；实际内容仍经原严格JSON/schema、Binding、编译与行为检查。
+原错误标签和失败响应不改写，也不手工提取Max末尾的JSON。
+
+当前worker的非工具输出被视为Patch提交，因此新策略下多数混合回合仍可能请求JSON；
+它不限制工具调查顺序。如果以后允许单独的说明文字作为过程输出，则需要明确的非提交
+分类，不能用无tool_calls就判最终提交。该普通说明分支和预算内自动格式纠正都未由本次实现。
+本次不是通用Repair、Provider全兼容或模型质量通过。
+
+54项检查点通过（42.65秒）：
+
+```powershell
+python -B -m pytest tests/unit/test_external_patch.py tests/unit/test_agent_turn_adapters.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\ext-json-checkpoint-$PID"
+```
+
+随后默认序列化兼容与import整理经3项针对回归通过（7.34秒），15项先前聚焦结果不相加。
+验证覆盖默认策略、纯工具/混合/最终声明保留、原四回合工具与修订链、普通回合直接提交、
+非法说明文字仍拒绝/原文保存，以及最终wire hash/字节预算。Ruff/diff检查通过。
+测试响应替身只证明合同与装配；没有新外部请求、Model Actual、Mod代码或审批/执行行为。
 
 ## 1. 结论与范围
 

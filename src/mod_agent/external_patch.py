@@ -22,7 +22,11 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from src.libs.llm.agent_turn import AgentTurnProviderError, QwenChatAgentAdapter
+from src.libs.llm.agent_turn import (
+    AgentResponseFormat,
+    AgentTurnProviderError,
+    QwenChatAgentAdapter,
+)
 from src.mod_agent.fresh_planning_continuation import (
     _canonical_sha256,
     run_fresh_patch_continuation,
@@ -40,6 +44,7 @@ from src.mod_agent.product_executor import (
 
 EXTERNAL_PATCH_PROFILE_VERSION = "external_qwen_patch_profile_v1"
 PATCH_FEEDBACK_DATA_CLASSES = ("generated_patch", "verification_feedback")
+PATCH_OUTPUT_FORMAT_POLICIES = ("follow_request", "json_when_patch_submission_allowed")
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 
 
@@ -70,6 +75,7 @@ class ExternalQwenPatchProfile:
     timeout_seconds: float
     credential_env: str = "DASHSCOPE_API_KEY"
     profile_version: str = EXTERNAL_PATCH_PROFILE_VERSION
+    output_format_policy: str = "follow_request"
 
     def __post_init__(self):
         endpoint, catalog = _https_url(self.base_url), _https_url(self.model_catalog_url)
@@ -77,6 +83,8 @@ class ExternalQwenPatchProfile:
             raise ExternalPatchError("EXTERNAL_PATCH_CATALOG_ORIGIN_MISMATCH")
         if self.profile_version != EXTERNAL_PATCH_PROFILE_VERSION or not isinstance(self.model, str) or not self.model.strip():
             raise ExternalPatchError("EXTERNAL_PATCH_PROFILE_INVALID")
+        if not isinstance(self.output_format_policy, str) or self.output_format_policy not in PATCH_OUTPUT_FORMAT_POLICIES:
+            raise ExternalPatchError("EXTERNAL_PATCH_OUTPUT_FORMAT_POLICY_INVALID")
         if (type(self.context_window) is not int or type(self.output_budget) is not int
                 or not 0 < self.output_budget < self.context_window
                 or type(self.timeout_seconds) not in (int, float) or not math.isfinite(self.timeout_seconds)
@@ -84,13 +92,18 @@ class ExternalQwenPatchProfile:
             raise ExternalPatchError("EXTERNAL_PATCH_PROFILE_INVALID")
 
     def to_dict(self):
-        return {"profile_version": self.profile_version, "provider": "qwen_chat", "execution_locality": "external",
+        result = {"profile_version": self.profile_version, "provider": "qwen_chat", "execution_locality": "external",
                 "base_url": self.base_url, "model": self.model, "model_catalog_url": self.model_catalog_url,
                 "context_window": self.context_window, "context_limit_source": "operator_budget_not_provider_capacity",
                 "output_budget": self.output_budget, "timeout_seconds": float(self.timeout_seconds),
                 "credential_env": self.credential_env, "temperature": 0.0,
                 "native_json_schema": False, "local_schema_admission": True,
                 "automatic_provider_fallback": False, "automatic_retry": False}
+        # Existing profiles retain their serialized identity unless an operator
+        # explicitly selects a different Patch output-format policy.
+        if self.output_format_policy != "follow_request":
+            result["output_format_policy"] = self.output_format_policy
+        return result
 
 
 class ExternalQwenPatchAdapter(LocalOllamaInitialPatchAdapter):
@@ -286,6 +299,9 @@ class ExternalQwenPatchAdapter(LocalOllamaInitialPatchAdapter):
         self._receipt["model_admission"]["requested_data_classes"] = list(requested)
         self._receipt.setdefault("external_provider_requests", []).append({"request_identity": identity,
             "requested_data_classes": list(requested), "source_scope_sha256": _canonical_sha256(self._source_files),
+            "requested_response_format": deepcopy(payload.get("response_format")),
+            "requested_output_mode": "json_object" if payload.get("response_format") == {"type": "json_object"} else "provider_default",
+            "output_format_policy": self.profile.output_format_policy,
             "response_received": False})
         record = self._receipt["external_provider_requests"][-1]
         self._emit("external_patch_request_started")
@@ -352,14 +368,27 @@ class ExternalQwenPatchAdapter(LocalOllamaInitialPatchAdapter):
             return replace(response, provider_diagnostic={**dict(response.provider_diagnostic or {}),
                 "request_identity": deepcopy(self._last_wire_identity),
                 "response_body_ref": deepcopy(retained.get("response_body_ref")),
-                "local_schema_admission": True, "provider_output_mode": "json_object_not_native_schema"})
+                "local_schema_admission": True,
+                "requested_response_format": deepcopy(retained["requested_response_format"]),
+                "requested_output_mode": retained["requested_output_mode"]})
 
         return SimpleNamespace(provider=client.provider, model=client.model, complete_turn=complete_turn)
+
+    def _request_for_output_policy(self, request):
+        if (self.profile.output_format_policy == "follow_request"
+                or request.response_format is not None or request.tool_choice == "required"):
+            return request
+        # Patch can finish on an ordinary mixed-action turn. This profile asks
+        # for an object without replacing the worker's full final-output schema.
+        return replace(request, response_format=AgentResponseFormat(
+            name="patch_json_object", description="Request a JSON object when submitting Patch output; local Patch validation still applies.",
+            schema={"type": "object"}, strict=False))
 
     def _recording_agent_client(self, client, run_id):
         recorded = super()._recording_agent_client(client, run_id)
 
         def complete_turn(request):
+            request = self._request_for_output_policy(request)
             # Preserve the original response before rejecting identity drift;
             # no tool result may be disclosed to an unexpectedly reported model.
             response = recorded.complete_turn(request)

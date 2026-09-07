@@ -42,9 +42,14 @@ schema-domain alignment after one failed real Findings call; A7 three distinct
 real-source inputs with executable preflight; an external shared-worker adapter
 and independent owned test task; DSH read-only host/query/display. Consume these
 implementations rather than recreating them. See reconciliation 0.20–0.25.
-Remaining acceptance includes real model comparison under its exact data/profile,
-correct API semantic use, a configured Langfuse destination, and DSH submission,
-approval/resume/delivery. No new P0 repair, external model call or hosted CI was run.
+Owned-task model comparison has now run: local 30B and external Plus/Max have
+different retained failures, not completed quality claims. The observed output
+seam now has an explicit Patch profile policy and truthful request records, with
+offline checks and legacy identity compatibility (0.27). Do not extract JSON from
+the old Max output or automatically run another model. A fixed new acceptance needs its selected
+budget. See reconciliation 0.26. Correct API semantic use, qualified models,
+Langfuse destination and DSH submission/approval/resume/delivery remain open.
+No new P0 repair or hosted CI was run.
 DSH owns UI, interaction sessions and plugin hosting only. The current Python
 backend retains task state, recovery, Evidence/Plan/Binding, approvals and execution.
 DSH sessions are correlation metadata, not a replacement Artifact or state owner.

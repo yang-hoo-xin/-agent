@@ -84,3 +84,24 @@ def test_actual_compiler_diagnostic_is_distinct_from_unavailable_infrastructure(
     report = oracle._evaluate_files(tmp_path / "compiler-error", {"OwnedConfigService/JsonConfigStore.cs": b"this is deliberately invalid C sharp;"})
     assert report["status"] == "compiler_failed" and report["checks"] == []
     assert "error CS" in report["compiler_diagnostic"]
+
+
+def test_actual_compiler_preserves_non_ascii_diagnostic(task_module, tmp_path):
+    workspace = task_module.HERE / "source"
+    oracle = task_module.OwnedConfigOracle(workspace_root=workspace, output_root=tmp_path / "compiler")
+    relative = "OwnedConfigService/JsonConfigStore.cs"
+    source = (workspace / relative).read_text(encoding="utf-8")
+    original = "configuration[key] = value.Clone();"
+    assert source.count(original) == 1
+    invalid = source.replace(original, "configuration[key] = 缺失的配置值;").encode("utf-8")
+
+    report = oracle._evaluate_files(tmp_path / "unicode-compiler-error", {relative: invalid})
+
+    assert report["status"] == "compiler_failed" and report["checks"] == []
+    assert "error CS0103" in report["compiler_diagnostic"]
+    assert "缺失的配置值" in report["compiler_diagnostic"]
+    assert "\ufffd" not in report["compiler_diagnostic"]
+    commands = json.loads(Path(report["build_commands_ref"]["path"]).read_text(encoding="utf-8"))
+    actual_output = commands[0]["stdout"] + commands[0]["stderr"]
+    assert "缺失的配置值" in actual_output
+    assert "\ufffd" not in actual_output
