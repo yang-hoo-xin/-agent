@@ -35,6 +35,24 @@ const event = (seq, type, data) => ({ seq, type, data, time: '2026-09-07T00:00:0
 const run = event(1, 'command/run', { commandId: 'query-one', name: 'mod-status', args: 'run-013', source: { kind: 'user' } });
 const done = event(2, 'command/done', { commandId: 'query-one', kind: 'success', text: '{\n  "status": "blocked"\n}' });
 
+test('submission result activates the existing conversation without a fake model message', () => {
+  const plugin = loadBundle(clientPath);
+  const captured = capture(plugin);
+  const definition = captured.events[0];
+  const submitted = event(1, 'command/run', { commandId: 'submit-one', name: 'mod-submit',
+    args: 'Validate configuration values.', source: { kind: 'user' } });
+  assert.equal(definition.match(submitted).role, 'start');
+  const context = { key: 'submit-key', id: 'submit-one', start: { event: submitted } };
+  context.state = definition.start(context, { event: submitted });
+  const result = event(2, 'command/done', { commandId: 'submit-one', kind: 'success',
+    text: '{"stopped_before":"feature_spec"}' });
+  context.state = definition.update(context, { event: result });
+  const node = definition.buildViewNode(context);
+  assert.equal(node.data.hasResult, true);
+  assert.equal(captured.views[0].create().apply({ upserts: [node] }), true);
+  assert.equal(result.data.text, '{"stopped_before":"feature_spec"}');
+});
+
 test('plugin contributes activity only and preserves ordinary renderer ownership', () => {
   const plugin = loadBundle(clientPath);
   const captured = capture(plugin);

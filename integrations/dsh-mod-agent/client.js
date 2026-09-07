@@ -3,7 +3,7 @@ window.__ModuleLoader__.load({
   id: '@local/dsh-mod-agent',
   factory: () => {
     const target = 'controlled-mod-command-activity';
-    const names = new Set(['mod-runs', 'mod-status']);
+    const names = new Set(['mod-runs', 'mod-status', 'mod-submit']);
 
     function createView() {
       const results = new Map();

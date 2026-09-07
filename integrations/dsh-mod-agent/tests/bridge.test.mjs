@@ -4,7 +4,8 @@ import { mkdtemp, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { apply, backendArguments, queryBackend, renderResult, validateConfig } from '../index.mjs';
+import { apply, backendArguments, queryBackend, renderResult, renderSubmission, submissionArguments,
+  submitRequest, validateConfig } from '../index.mjs';
 
 const python = process.env.MOD_AGENT_PYTHON;
 assert.ok(python, 'Set MOD_AGENT_PYTHON to the exact test Python executable.');
@@ -61,10 +62,62 @@ test('host registers human commands only and returns backend errors without mode
     on: (name, handler) => events.push({ name, handler }) }, config);
   assert.equal(events[0].name, 'agent/pre-step');
   assert.deepEqual(await events[0].handler({}, () => assert.fail('DSH must not enter model generation')), { kind: 'reject' });
-  assert.deepEqual(commands.map(command => command.name), ['mod-runs', 'mod-status']);
+  assert.deepEqual(commands.map(command => command.name), ['mod-runs', 'mod-status', 'mod-submit']);
   assert.equal((await commands[1].handler({ rawInput: '', signal: new AbortController().signal })).kind, 'error');
   const failed = await commands[0].handler({ rawInput: '', signal: new AbortController().signal });
   assert.deepEqual(failed, { kind: 'error', text: 'QUERY_BACKEND_FAILED' });
+});
+
+test('submission requires administrator-configured target and keeps request out of argv', async () => {
+  const config = await fixture('print("unused")');
+  assert.throws(() => submissionArguments(config), /SUBMIT_NOT_CONFIGURED/u);
+  assert.throws(() => validateConfig({ ...config, workspaceRoot: config.repositoryRoot }), /SUBMIT_CONFIG_INCOMPLETE/u);
+  const configured = validateConfig({ ...config, workspaceRoot: config.repositoryRoot, targetMod: 'OwnedConfigService' });
+  assert.deepEqual(submissionArguments(configured), ['-B', '-m', 'scripts.dsh_prepare_request',
+    `--workspace-root=${configured.workspaceRoot}`, `--artifact-store-root=${configured.artifactStoreRoot}`,
+    '--target-mod=OwnedConfigService']);
+  await assert.rejects(submitRequest(configured, { description: 'x'.repeat(32769) }), /SUBMIT_REQUEST_INVALID/u);
+});
+
+test('human submission reaches original Python planner and persists original Artifact types', async () => {
+  const repo = resolve(fileURLToPath(new URL('../../..', import.meta.url)));
+  const root = await mkdtemp(join(tmpdir(), 'dsh-submit-'));
+  await mkdir(join(root, 'store'));
+  await mkdir(join(root, 'source'));
+  const source = join(root, 'source', 'keep.cs');
+  await writeFile(source, '// unchanged\n');
+  const config = validateConfig({ pythonExecutable: python, repositoryRoot: repo,
+    artifactStoreRoot: join(root, 'store'), featureId: 'feature_query_only',
+    workspaceRoot: join(root, 'source'), targetMod: 'OwnedConfigService' });
+  const commands = [];
+  apply({ commands: { register: command => commands.push(command) }, on() {} }, config);
+  const submit = commands.find(command => command.name === 'mod-submit');
+  const description = 'Validate configuration maxRetries and preserve every unrelated JSON key.';
+  const response = await submit.handler({ rawInput: description, signal: new AbortController().signal });
+  assert.equal(response.kind, 'success', response.text);
+  const shown = JSON.parse(response.text);
+  assert.equal(shown.stopped_before, 'feature_spec');
+  assert.equal(shown.model_calls_performed, 0);
+  assert.equal(shown.implementation_plan_generated, false);
+  assert.equal(shown.product_execution_started, false);
+  assert.equal(shown.artifacts.request_planning_report.artifact_type, 'request_planning_report');
+  const report = JSON.parse(await readFile(shown.artifacts.request_planning_report.path, 'utf8'));
+  const brief = JSON.parse(await readFile(shown.artifacts.mod_planning_brief.path, 'utf8'));
+  assert.equal(report.data.user_request, description);
+  assert.equal(brief.inputs.upstream_artifacts[0].artifact_hash, report.artifact_hash);
+  const repeated = await submit.handler({ rawInput: description, signal: new AbortController().signal });
+  assert.equal(repeated.text, response.text);
+  assert.equal(await readFile(source, 'utf8'), '// unchanged\n');
+});
+
+test('submission display preserves clarification rather than pretending execution started', () => {
+  const shown = JSON.parse(renderSubmission({ status: 'needs_clarification', feature_id: 'feature_new',
+    target_mod: 'OwnedConfigService', stopped_before: 'feature_spec', artifacts: {},
+    request_planning_report: { uncertainties: [{ question: 'What behavior should change?' }] },
+    mod_planning_brief: { next_action: 'clarify request', blockers: [{ code: 'AMBIGUOUS' }] } }));
+  assert.equal(shown.uncertainties[0].question, 'What behavior should change?');
+  assert.equal(shown.blockers[0].code, 'AMBIGUOUS');
+  assert.equal(shown.product_execution_started, false);
 });
 
 test('display keeps a failed or unresolved task separate from query success', () => {

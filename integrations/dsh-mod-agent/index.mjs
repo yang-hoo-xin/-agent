@@ -13,13 +13,20 @@ function requiredText(value, label, max = 300) {
 }
 
 export function validateConfig(config) {
-  const keys = ['pythonExecutable', 'repositoryRoot', 'artifactStoreRoot', 'featureId', 'timeoutMs', 'maxOutputBytes'];
+  const keys = ['pythonExecutable', 'repositoryRoot', 'artifactStoreRoot', 'featureId', 'timeoutMs', 'maxOutputBytes',
+    'workspaceRoot', 'targetMod'];
   if (!config || Object.keys(config).some(key => !keys.includes(key))) throw new Error('INVALID_CONFIG');
   for (const key of keys.slice(0, 3)) {
     requiredText(config[key], key, 4096);
     if (!isAbsolute(config[key])) throw new Error(`ABSOLUTE_${key}_REQUIRED`);
   }
   requiredText(config.featureId, 'FEATURE_ID');
+  if ((config.workspaceRoot === undefined) !== (config.targetMod === undefined)) throw new Error('SUBMIT_CONFIG_INCOMPLETE');
+  if (config.workspaceRoot !== undefined) {
+    requiredText(config.workspaceRoot, 'WORKSPACE_ROOT', 4096);
+    if (!isAbsolute(config.workspaceRoot)) throw new Error('ABSOLUTE_WORKSPACE_ROOT_REQUIRED');
+    requiredText(config.targetMod, 'TARGET_MOD');
+  }
   const result = { timeoutMs: 30000, maxOutputBytes: 2 * 1024 * 1024, ...config };
   if (!Number.isInteger(result.timeoutMs) || result.timeoutMs < 1 || result.timeoutMs > 120000
       || !Number.isInteger(result.maxOutputBytes) || result.maxOutputBytes < 1024 || result.maxOutputBytes > 8 * 1024 * 1024) {
@@ -36,43 +43,92 @@ export function backendArguments(config, runId) {
   return argv;
 }
 
-export async function queryBackend(config, { runId, signal } = {}) {
-  if (signal?.aborted) throw new Error('QUERY_CANCELLED');
-  await stat(join(config.repositoryRoot, 'scripts', 'engineering_cognition.py'));
-  if (!(await stat(config.artifactStoreRoot)).isDirectory()) throw new Error('STORE_UNAVAILABLE');
-  const raw = await new Promise((resolve, reject) => {
-    const child = spawn(config.pythonExecutable, backendArguments(config, runId), {
+async function runBackend(config, argv, { signal, input, operation = 'QUERY' } = {}) {
+  if (signal?.aborted) throw new Error(`${operation}_CANCELLED`);
+  return new Promise((resolve, reject) => {
+    const child = spawn(config.pythonExecutable, argv, {
       cwd: config.repositoryRoot, shell: false, windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     });
     let size = 0;
     const chunks = [];
     let failure;
     const stop = code => { failure ??= new Error(code); child.kill(); };
-    const abort = () => stop('QUERY_CANCELLED');
-    const timer = setTimeout(() => stop('QUERY_TIMEOUT'), config.timeoutMs);
+    const abort = () => stop(`${operation}_CANCELLED`);
+    const timer = setTimeout(() => stop(`${operation}_TIMEOUT`), config.timeoutMs);
     signal?.addEventListener('abort', abort, { once: true });
     const cleanup = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); };
     child.stdout.on('data', chunk => {
       size += chunk.length;
-      if (size > config.maxOutputBytes) stop('QUERY_OUTPUT_LIMIT');
+      if (size > config.maxOutputBytes) stop(`${operation}_OUTPUT_LIMIT`);
       else chunks.push(chunk);
     });
     child.stderr.on('data', () => {}); // Diagnostics may contain local paths; do not put them in the session.
-    child.on('error', () => { cleanup(); reject(new Error('QUERY_START_FAILED')); });
+    child.on('error', () => { cleanup(); reject(new Error(`${operation}_START_FAILED`)); });
     child.on('close', code => {
       cleanup();
-      if (failure || code !== 0) reject(failure ?? new Error('QUERY_BACKEND_FAILED'));
+      if (failure || code !== 0) reject(failure ?? new Error(`${operation}_BACKEND_FAILED`));
       else resolve(Buffer.concat(chunks).toString('utf8'));
     });
+    if (input !== undefined) {
+      child.stdin.on('error', () => {}); // Process failure is reported by close/error above.
+      child.stdin.end(input, 'utf8');
+    }
     if (signal?.aborted) abort();
   });
+}
+
+export async function queryBackend(config, { runId, signal } = {}) {
+  await stat(join(config.repositoryRoot, 'scripts', 'engineering_cognition.py'));
+  if (!(await stat(config.artifactStoreRoot)).isDirectory()) throw new Error('STORE_UNAVAILABLE');
+  const raw = await runBackend(config, backendArguments(config, runId), { signal });
   const value = JSON.parse(raw);
   const data = value?.data;
   if (data?.read_only !== true || data?.model_calls_performed !== 0
       || data?.verifier_executions_performed !== 0 || data?.product_source_writes_performed !== false
       || !Array.isArray(data.attempts)) throw new Error('QUERY_CONTRACT_INVALID');
   return data;
+}
+
+export function submissionArguments(config) {
+  if (config.workspaceRoot === undefined || config.targetMod === undefined) throw new Error('SUBMIT_NOT_CONFIGURED');
+  return ['-B', '-m', 'scripts.dsh_prepare_request', `--workspace-root=${config.workspaceRoot}`,
+    `--artifact-store-root=${config.artifactStoreRoot}`, `--target-mod=${config.targetMod}`];
+}
+
+export async function submitRequest(config, { description, signal }) {
+  if (typeof description !== 'string' || !description.trim() || description.includes('\0')
+      || Buffer.byteLength(description, 'utf8') > 32768) throw new Error('SUBMIT_REQUEST_INVALID');
+  const argv = submissionArguments(config);
+  await stat(join(config.repositoryRoot, 'scripts', 'dsh_prepare_request.py'));
+  const raw = await runBackend(config, argv, { signal, input: description, operation: 'SUBMIT' });
+  const result = JSON.parse(raw);
+  if (result?.entry !== 'plan-request' || result?.stopped_before !== 'feature_spec'
+      || typeof result?.feature_id !== 'string' || !result.feature_id
+      || result?.model_calls_performed !== 0 || result?.verifier_executions_performed !== 0
+      || result?.product_source_writes_performed !== false || result?.artifact_writes_performed !== true
+      || result?.implementation_plan_generated !== false || result?.product_execution_started !== false
+      || result?.feature_id !== result?.request_planning_report?.feature_id
+      || result?.feature_id !== result?.mod_planning_brief?.feature_id
+      || !result?.artifacts?.request_planning_report || !result?.artifacts?.mod_planning_brief) {
+    throw new Error('SUBMIT_CONTRACT_INVALID');
+  }
+  return result;
+}
+
+export function renderSubmission(result) {
+  return JSON.stringify({
+    display_notice: '需求已交给原后端并保存准备结果。尚未生成FeatureSpec、实施Plan或代码，也没有启动模型。',
+    status: result.status, feature_id: result.feature_id, target_mod: result.target_mod,
+    stopped_before: result.stopped_before,
+    next_action: result.mod_planning_brief.next_action,
+    uncertainties: result.request_planning_report.uncertainties,
+    blockers: result.mod_planning_brief.blockers,
+    artifacts: result.artifacts, artifact_writes_performed: true,
+    model_calls_performed: 0, product_source_writes_performed: false,
+    implementation_plan_generated: false, product_execution_started: false,
+  }, null, 2);
 }
 
 function summary(row) {
@@ -125,4 +181,17 @@ export function apply(ctx, configuration) {
       },
     });
   }
+  ctx.commands.register({ name: 'mod-submit',
+    description: '提交自然语言需求，保存原后端准备结果与澄清项；不调用模型、不执行修改。',
+    input: { hint: '<需求正文>' },
+    async handler({ rawInput, signal }) {
+      try {
+        const result = await submitRequest(config, { description: rawInput, signal });
+        return { kind: 'success', text: renderSubmission(result) };
+      } catch (error) {
+        const code = /^[A-Z_]+$/u.test(error.message) ? error.message : 'SUBMIT_FAILED';
+        return { kind: 'error', text: `${code}：未确认准备完整完成；可重提相同需求核对原Artifact。未启动模型或产品执行。` };
+      }
+    },
+  });
 }
