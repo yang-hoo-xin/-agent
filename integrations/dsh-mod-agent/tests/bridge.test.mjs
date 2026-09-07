@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { apply, backendArguments, queryBackend, renderResult, renderSubmission, submissionArguments,
-  submitRequest, validateConfig } from '../index.mjs';
+  submitRequest, validateConfig, reviewArguments, reviewBackend, renderReview } from '../index.mjs';
 
 const python = process.env.MOD_AGENT_PYTHON;
 assert.ok(python, 'Set MOD_AGENT_PYTHON to the exact test Python executable.');
@@ -62,7 +62,7 @@ test('host registers human commands only and returns backend errors without mode
     on: (name, handler) => events.push({ name, handler }) }, config);
   assert.equal(events[0].name, 'agent/pre-step');
   assert.deepEqual(await events[0].handler({}, () => assert.fail('DSH must not enter model generation')), { kind: 'reject' });
-  assert.deepEqual(commands.map(command => command.name), ['mod-runs', 'mod-status', 'mod-submit']);
+  assert.deepEqual(commands.map(command => command.name), ['mod-runs', 'mod-status', 'mod-review', 'mod-submit']);
   assert.equal((await commands[1].handler({ rawInput: '', signal: new AbortController().signal })).kind, 'error');
   const failed = await commands[0].handler({ rawInput: '', signal: new AbortController().signal });
   assert.deepEqual(failed, { kind: 'error', text: 'QUERY_BACKEND_FAILED' });
@@ -148,4 +148,25 @@ test('real product query reads retained 013 without changing its journal', async
   assert.equal(displayed.records[0].stop_code, 'PATCH_AGENT_UPSTREAM_REQUESTED');
   assert.equal(displayed.records[0].proposal_admitted, false);
   assert.deepEqual(await readFile(journalPath), before);
+});
+
+test('review only accepts a run ID and administrator-configured workspace', async () => {
+  const config = await fixture('print("unused")');
+  assert.throws(() => reviewArguments(config, 'run-one'), /REVIEW_NOT_CONFIGURED/u);
+  const ready = validateConfig({ ...config, workspaceRoot: config.repositoryRoot, targetMod: 'OwnedConfigService' });
+  const argv = reviewArguments(ready, '--workspace-root=elsewhere');
+  assert.equal(argv[2], 'scripts.dsh_review_run');
+  assert.equal(argv.at(-1), '--run-id=--workspace-root=elsewhere');
+  assert.ok(argv.includes(`--workspace-root=${ready.workspaceRoot}`));
+  assert.throws(() => reviewArguments(ready, 'run\nApply'), /INVALID_RUN_ID/u);
+  await writeFile(join(config.repositoryRoot, 'scripts', 'dsh_review_run.py'), 'import json\nprint(json.dumps({"read_only":False}))');
+  await assert.rejects(reviewBackend(ready, { runId: 'run-one' }), /REVIEW_CONTRACT_INVALID/u);
+});
+
+test('review display separates original diff from current source drift and does not make approval', () => {
+  const shown = renderReview({ status: 'reviewable_diff', source_currentness: { status: 'source_changed' },
+    apply_allowed: false, unified_diff: '--- a/source.cs\n+++ b/source.cs\n+// ``` literal source fence\n' });
+  assert.ok(shown.includes('source_changed') && shown.includes('不批准、不执行'));
+  assert.ok(shown.includes('````diff\n--- a/source.cs'));
+  assert.ok(renderReview({ status: 'no_reviewable_diff', unified_diff: null }).includes('未借用旧 Proposal'));
 });

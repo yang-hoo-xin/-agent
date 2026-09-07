@@ -91,6 +91,41 @@ export async function queryBackend(config, { runId, signal } = {}) {
   return data;
 }
 
+export function reviewArguments(config, runId) {
+  if (config.workspaceRoot === undefined) throw new Error('REVIEW_NOT_CONFIGURED');
+  return ['-B', '-m', 'scripts.dsh_review_run', `--workspace-root=${config.workspaceRoot}`,
+    `--artifact-store-root=${config.artifactStoreRoot}`, `--feature-id=${config.featureId}`,
+    `--run-id=${requiredText(runId, 'RUN_ID')}`];
+}
+
+export async function reviewBackend(config, { runId, signal }) {
+  const argv = reviewArguments(config, runId);
+  await stat(join(config.repositoryRoot, 'scripts', 'dsh_review_run.py'));
+  const result = JSON.parse(await runBackend(config, argv, { signal, operation: 'REVIEW' }));
+  if (result?.entry !== 'review-run' || result?.read_only !== true || result?.run_id !== runId
+      || result?.feature_id !== config.featureId || result?.query_model_calls !== 0
+      || result?.query_verifier_executions !== 0 || result?.product_source_writes_performed !== false
+      || result?.artifact_writes_performed !== false || result?.approval_created !== false
+      || result?.apply_allowed !== false || result?.product_execution_started !== false
+      || !['reviewable_diff', 'no_reviewable_diff', 'review_unavailable'].includes(result?.status)
+      || (result.status === 'reviewable_diff' && typeof result.unified_diff !== 'string')) {
+    throw new Error('REVIEW_CONTRACT_INVALID');
+  }
+  return result;
+}
+
+export function renderReview(result) {
+  const { unified_diff: diff, ...metadata } = result;
+  const notice = result.status === 'no_reviewable_diff' ? '本次运行没有可审查的新 diff；未借用旧 Proposal。'
+    : result.status === 'review_unavailable' ? '本次运行的精确审查记录不完整或身份未通过核验。'
+      : '查看本次运行原始 diff：历史 Review 不等于当前可 Apply；本命令不批准、不执行、不重新验证行为。';
+  const summary = JSON.stringify({ display_notice: notice, ...metadata }, null, 2);
+  if (typeof diff !== 'string') return summary;
+  const longest = Math.max(0, ...Array.from(diff.matchAll(/`+/gu), match => match[0].length));
+  const fence = '`'.repeat(Math.max(3, longest + 1));
+  return `${summary}\n\n${fence}diff\n${diff}\n${fence}`;
+}
+
 export function submissionArguments(config) {
   if (config.workspaceRoot === undefined || config.targetMod === undefined) throw new Error('SUBMIT_NOT_CONFIGURED');
   return ['-B', '-m', 'scripts.dsh_prepare_request', `--workspace-root=${config.workspaceRoot}`,
@@ -181,6 +216,19 @@ export function apply(ctx, configuration) {
       },
     });
   }
+  ctx.commands.register({ name: 'mod-review',
+    description: '查看该run_id自己的待审diff、原验证和当前源码差异；不批准或执行。',
+    input: { hint: '<run_id>' },
+    async handler({ rawInput, signal }) {
+      try {
+        const runId = requiredText(rawInput.trim(), 'RUN_ID');
+        return { kind: 'success', text: renderReview(await reviewBackend(config, { runId, signal })) };
+      } catch (error) {
+        const code = /^[A-Z_]+$/u.test(error.message) ? error.message : 'REVIEW_FAILED';
+        return { kind: 'error', text: `${code}：未取得本次运行的可审查diff；未批准、未执行。` };
+      }
+    },
+  });
   ctx.commands.register({ name: 'mod-submit',
     description: '提交自然语言需求，保存原后端准备结果与澄清项；不调用模型、不执行修改。',
     input: { hint: '<需求正文>' },

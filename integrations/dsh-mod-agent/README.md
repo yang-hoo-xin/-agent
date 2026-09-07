@@ -16,6 +16,9 @@ Commands are human commands, not model tools:
 - `/mod-runs` lists up to 20 records for the configured Feature, with truncation
   reported. It does not claim this is chronological pagination.
 - `/mod-status <run_id>` selects exactly one recorded run.
+- `/mod-review <run_id>` displays that run's exact retained Proposal, Review and
+  Dry-run diff, its recorded verification summaries, and a current source check.
+  It grants no approval and does not invoke a verifier or apply code.
 - `/mod-submit <request text>` prepares a new request using the existing
   `plan-request` implementation, with its original ambiguity and evidence-gap
   decisions. It stops before `feature_spec`; no implementation Plan is generated.
@@ -33,6 +36,23 @@ target name). Keep `artifactStoreRoot` as the original backend Store. The
 configured `featureId` still selects query results; it does not override a new
 submission's Feature ID, which the original RequestPlanner derives from input.
 An unconfigured `/mod-submit` reports `SUBMIT_NOT_CONFIGURED`.
+
+Review also requires the configured `workspaceRoot`; without it `/mod-review`
+returns `REVIEW_NOT_CONFIGURED`. Its fixed `scripts.dsh_review_run` bridge uses
+the existing execution index and immutable Store reads. It selects only refs
+recorded by the requested run, verifies Proposal→Review→Dry-run lineage and
+original diff identity, and never substitutes the Feature's latest result or
+the run's parent Proposal. A failed run without a new Proposal explicitly has
+no reviewable diff. Missing or corrupt refs do not produce a reviewable result.
+
+The displayed diff is the original Dry-run diff. The view reports each changed
+file's expected original baseline hash, its current hash and the first mismatch.
+When those files still match, the original materializer reconstructs the output
+in memory and compares the resulting diff. This does not rerun Review, compile,
+execute behavior checks or prove freshness of every supporting file. Historical
+Review and behavior results remain separate from this source check. The command
+does not perform semantic review, create exact approval, Apply, Build or Runtime;
+those actions still need their existing independent product entry and authority.
 
 Submission uses the fixed `scripts.dsh_prepare_request` bridge with UTF-8 stdin,
 not shell interpolation or user-selected options. The bridge calls
