@@ -24,13 +24,15 @@ execution instruction. The [short execution card](PATCH_ACCEPTANCE_SPRINT_CARD_2
 records the selected exact inputs and single Patch-attempt owner. User messages,
 not either document, authorize actions; new exact diffs still require new approval.
 
-Current execution: finish the fixed-version 011 acceptance of general failure
+Current execution: finish the fixed-version 012 acceptance of general failure
 guidance and B0/checked-code labels under unchanged c760, Qwen30B and the original
 behavior matrix. Public A4 provider assembly, current failure rebinding, new-Plan
 worker assembly and original Review/Dry-run have passed offline composition;
 this does not qualify a real model or adapt the c760-only verifier to arbitrary
 Plans. Do not replace the P0 Plan with the unaccepted Planning002/003/004 results.
 See reconciliation 0.16; the preceding two-hour window is historical below.
+011 is retained as a zero-model preview failure; 0.17 records the exact body
+overflow and instruction-only consolidation before this independent acceptance.
 
 Previous follow-up boundary: the two-hour window delivered A4 Graph upstream return,
 optional A7 evidence-qualified routing and current Fresh/API query projection.

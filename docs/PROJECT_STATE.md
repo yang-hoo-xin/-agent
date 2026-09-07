@@ -10,7 +10,8 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 2026-09-07: public upstream continuation, current C2/F2 binding and new-Plan
 worker/Review/Dry-run composition passed offline acceptance. Shared budgets,
 unchanged verification requirements and separate per-segment records are retained.
-011 is prepared but not yet a live result; the c760-specific verifier excludes
+011 stopped during zero-network context admission; no real model ran. Repeated
+guidance is consolidated and independent 012 is prepared; the c760-specific verifier excludes
 real A4 claims. Reconciliation 0.16 is the current detailed evidence location.
 The checkpoints below are historical and do not override this snapshot.
 

@@ -46,7 +46,9 @@ upstream cycle with current failed-code/report binding, optional Evidence and
 Planning providers, new-Plan worker assembly and the original Review/Dry-run.
 Offline synthetic acceptance passed; model/read/observation budgets remain shared,
 old reports and approvals are not inherited. See reconciliation 0.16.
-Independent 011 is prepared for the unchanged c760 case with updated general
+011 stopped before any model send: added guidance exceeded the byte proxy by ten
+bytes. Redundant guidance is consolidated without changing semantic inputs or
+budgets; independent 012 is prepared for the unchanged c760 case with updated general
 guidance and B0/version labels. Its fixed case verifier does not support arbitrary
 new Plans, so it does not claim real A4 acceptance. No new Mod success is recorded.
 The implementation descriptions below retain their historical checkpoint scope.

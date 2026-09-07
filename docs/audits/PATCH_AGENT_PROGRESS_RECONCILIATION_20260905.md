@@ -6,11 +6,11 @@
 
 ## 0. 最新状态快照
 
-**2026-09-07整链适配：公开入口已通过合成项目的完整上游续接验收，真实Mod结果仍待独立011。**
+**2026-09-07整链适配：`d6eda97`已通过合成项目的完整上游续接验收；011仅零网络预览被阻断，真实Mod结果仍待独立012。**
 不同代码产生的新失败会绑定到实际被测版本；可选Evidence/Planning回流后，新Plan重新装配worker，
 经过原行为检查、Proposal、Review和Dry-run。模型、读取及观察字节不重置；原报告不覆盖，旧审批不继承。
 新增上游路径为一个有界周期，既有同Plan路径不强迫读取或重新规划。资格路由与A4配置组合仍未支持。
-当前case验证器固定c760，因此011仅检验通用失败指导和B0/被测版本的区分，不冒充真实A4验收。
+当前case验证器固定c760，因此012仅检验通用失败指导和B0/被测版本的区分，不冒充真实A4验收。
 本轮工程命令、兼容缺陷及限制见0.16；历史窗口中的“当前”不覆盖本快照。
 
 **更新时间：2026-09-06；Patch覆盖复用：`54dff43`；Graph回流：`aa4e00f`／`b792c41`；资格路由：`7b82698`。本节为当前读入口，旧章节保留当时事实。**
@@ -110,6 +110,7 @@ Qwen在工具预算反馈后由请求5处改选2处；修正执行ID记账后，
 | 已提交 `aa4e00f`／`b792c41` | 同Graph消费明确human/worker上游请求，回Repair→Evidence/全集Coverage或ModelPlanning→新Plan；独立invocation ID | 隔离282通过＋1换行fixture定点复验通过，主仓交叉44通过，run_id补充后19通过；CLI provider装配与新F1自动重绑未完成 |
 | 已提交 `7b82698`／`596dae5` | 既有公开Patch CLI可选qualified角色路由；真实执行/完整固定矩阵/原物化代码/当前worker指纹决定资格；CLI与API缓存重验 | 离线Repair正例与拒绝路径通过；主仓联合176通过，1旧schema测试补排除空新字段后定点通过。没有发布真实qualified profile |
 | 已提交 `2e746c7` | Planning可编辑选项内联其已有完整source_path并校验共享表一致，保持原ID/源码/范围/选择自由 | 32项相关检查通过；仅表示改进，不能凭测试称模型语义质量改善 |
+| 已提交 `d6eda97` | 三方面整链适配：公开A4 provider装配、当前C2/F2绑定、新Plan共享worker与原Review/Dry-run、共享预算和分段查询 | 335项checkpoint通过；之后最终refs两例、查询一例定点通过。真实Mod尚未修复，详0.16 |
 | 本轮生产代码WIP | 无；以上生产变更均已提交 | 文档状态不能代替Actual成功 |
 | 文档整理 | 本文顶部快照、历史标签、统一Attempt索引、剩余矩阵及短控制文档同步 | 不增加产品能力；文档提交单独记录 |
 | 用户原有WIP | ARCHITECTURE_OVERVIEW、ENGINEERING_RAG_EVIDENCE_INTELLIGENCE_TARGET_DRAFT、SPEC_COVERAGE_MATRIX，以及3份未跟踪草案 | 六份文件hash与本轮开始完全一致；不混入本轮提交 |
@@ -741,6 +742,19 @@ python -B -m pytest tests/unit/test_patch_upstream_cli.py tests/unit/test_patch_
 
 尚未证明：真实模型会在合适时自主请求上游；真实AccurateCrosshair使用新Plan的验证适配；多上游周期；
 qualified路由与A4的组合资格；跨任务稳定性。原c760仍为P0所选Plan，002/003/004未晋升为可用修订。
+
+### 0.17 011零网络预览与指导去重
+
+011固定`d6eda97`与181份文件，真实公开CLI预览在发送前停止：body45,066字节＋4,096输出预算
+=49,162，超过现有49,152代理准入线10字节。实发0、响应0、矩阵0；内部1表示客户端进入，不能记为模型执行。
+原预览和冻结文件均保留，没有中途修改后接续该attempt。
+
+与009首wire精确比较：原22,428字节核心语义输入和7,443字节C1逐字未变，三项F1、5个bindings及源码未变；
+增加的825字节来自通用指导、B0说明与工具描述。合并重复指导后，离线重新序列化为44,560字节，
+只改变`messages[3].content.required_action`，其他消息和该对象其他字段不变；没有提高预算。
+
+相关验证：`python -B -m pytest tests/unit/test_patch_visible_revision_context.py tests/unit/test_patch_recovery_worker.py -q --tb=short -o cache_dir="$env:TEMP/upguide-cache" --basetemp="$env:TEMP/upguide-$PID"`，18 passed，12.51秒。
+这个测量不是模型已接收；独立012将通过同公开CLI预览核验最终wire后才发送，输入/模型/原矩阵保持。
 
 ## 1. 结论与范围
 

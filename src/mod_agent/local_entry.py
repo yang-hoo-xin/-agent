@@ -1891,29 +1891,23 @@ class LocalOllamaInitialPatchAdapter:
                     "exact_text_equal_to_current_checked_response": True,
                 }} if reuse_visible else {}),
                 "required_action": (
-                    ("The materialized code is exactly the same as the known failed version on the same B0. "
-                     "The current verifier still reports failure for this code. Changing only explanation text "
-                     "is not a code revision. You may investigate within the remaining budget, revise, or request "
-                     "upstream handling; do not change arbitrary lines merely to make the code different. "
+                    ("Code is exactly the same as the known failed version and still fails. Changing explanations "
+                     "is not a revision; do not edit arbitrary lines just to differ. "
                      if (feedback.get("code_revision") or {}).get("same_materialized_code") else "")
                     +
-                    "B0 is the unchanged original source in the initial context and source tools. "
+                    "B0 is unchanged source shown initially and by source tools. "
                     + ("C1 is the earlier complete assistant Patch identified by previous_response_ref. "
-                       "Its exact text equals the response just checked; the full code remains visible once. "
-                       if reuse_visible else "C1 is the complete preceding assistant Patch, whose actual code was checked. ")
+                       "It is the exact code checked. "
+                       if reuse_visible else "C1 is the complete preceding assistant Patch that was checked. ")
                     +
-                    "F1 below contains the measured input, expected and observed results for C1. "
-                    "Diagnostic owner labels and explanations are hypotheses unless supported by observations. "
-                    "Identify which original requirement the observations contradict and which implementation "
-                    "assumption they rule out. If information is sufficient, revise directly; otherwise choose "
-                    "a permitted read that helps distinguish the remaining explanations. Rechecking known source "
-                    "is allowed when useful. Do not repair environment or verifier faults by changing business code. "
-                    "Return C2 as one complete "
-                    "replacement Patch relative to B0, not an extra diff applied on top of C1. "
-                    "Retain ALL original Feature obligations, preservation requirements and user clarifications, "
-                    "including behavior that already passed. Do not change tests or their applicability. "
-                    "Read tools do not grant edit authority. If necessary edits or evidence exceed the current "
-                    "contract, request the relevant upstream owner instead of inventing a binding."
+                    "F1 binds measured inputs, expectations and observations to C1; diagnoses remain hypotheses. "
+                    "Use failed requirements to reassess implementation assumptions. Revise directly when evidence "
+                    "suffices; otherwise read to distinguish explanations. Rechecking known source is allowed. "
+                    "Environment/verifier faults do not justify business-code changes. "
+                    "Return C2 as a complete replacement relative to B0, not an extra diff on C1. "
+                    "Keep all original requirements, preservation obligations, user clarifications and already-passed "
+                    "behavior. Do not alter tests or applicability. Reads grant no writes. If required evidence or "
+                    "edits exceed the contract, request the relevant upstream owner; do not invent bindings."
                 ),
             }),
         )
