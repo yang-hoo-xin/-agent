@@ -117,7 +117,7 @@ class PatchSourceObservation:
     truncated: bool
     payload_sha256: str
     model_payload_bytes: int
-    registered_evidence_identity: Mapping[str, str] | None = None
+    registered_evidence_identity: Mapping[str, Any] | None = None
     source_identity_sha256: str | None = None
 
     def model_view(self) -> dict[str, object]:
@@ -135,7 +135,7 @@ class PatchSourceObservation:
             "truncated": self.truncated,
             "observation_sha256": self.payload_sha256,
             **({"source_identity_sha256": self.source_identity_sha256} if self.source_identity_sha256 else {}),
-            **(dict(self.registered_evidence_identity) if self.registered_evidence_identity is not None else {}),
+            **(deepcopy(dict(self.registered_evidence_identity)) if self.registered_evidence_identity is not None else {}),
         }
 
 
@@ -349,6 +349,9 @@ class _RegisteredApiEvidence:
     evidence_id: str
     evidence_item_sha256: str
     excerpt_sha256: str
+    source_authority: str
+    evidence_source_ref: str
+    risk_notes: tuple[str, ...] | None
 
 
 class PlanBoundSourceInspector:
@@ -494,16 +497,28 @@ class PlanBoundSourceInspector:
                     binding_id = raw_support.get("binding_id")
                     source_hash = item.get("source_hash")
                     excerpt = item.get("excerpt")
+                    source_authority = item.get("source_authority")
+                    evidence_source_ref = item.get("source_ref")
+                    risk_notes = item.get("risk_notes")
                     if (type(binding_id) is not str or not binding_id or binding_id in read_binding_order
                         or type(source_hash) is not str or re.fullmatch(r"[0-9a-fA-F]{64}", source_hash) is None
                         or type(excerpt) is not str or not excerpt
                         or (item.get("file_hash") is not None and item["file_hash"] != source_hash)):
                         raise PatchAgentLoopError("PATCH_AGENT_REGISTERED_API_EVIDENCE_INVALID", stage="source_admission",
                             reason="Registered API content requires an exact source identity and nonempty excerpt.")
+                    if (any(value is not None and (type(value) is not str or not value)
+                            for value in (source_authority, evidence_source_ref))
+                        or (risk_notes is not None and (not isinstance(risk_notes, (list, tuple))
+                            or any(type(note) is not str for note in risk_notes)))):
+                        raise PatchAgentLoopError("PATCH_AGENT_REGISTERED_API_EVIDENCE_INVALID", stage="source_admission",
+                            reason="Optional registered API provenance must retain its source strings and risk-note list.")
                     registered_api[binding_id] = _RegisteredApiEvidence(binding_id=binding_id,
                         source_hash=source_hash, excerpt=excerpt, evidence_id=item["evidence_id"],
                         evidence_item_sha256=_canonical_sha256(item),
-                        excerpt_sha256=hashlib.sha256(excerpt.encode("utf-8")).hexdigest())
+                        excerpt_sha256=hashlib.sha256(excerpt.encode("utf-8")).hexdigest(),
+                        source_authority=source_authority if source_authority is not None else "unknown",
+                        evidence_source_ref=evidence_source_ref if evidence_source_ref is not None else "unknown",
+                        risk_notes=tuple(risk_notes) if risk_notes is not None else None)
                     read_binding_order.append(binding_id)
                     continue
                 binding = self._admit_binding(root, {
@@ -643,6 +658,11 @@ class PlanBoundSourceInspector:
             "evidence_id": item.evidence_id,
             "evidence_item_sha256": item.evidence_item_sha256,
             "excerpt_sha256": item.excerpt_sha256,
+            # source_ref identifies this tool binding; the registered origin is
+            # kept separately without promoting it into current live Evidence.
+            "source_authority": item.source_authority,
+            "evidence_source_ref": item.evidence_source_ref,
+            "risk_notes": list(item.risk_notes) if item.risk_notes is not None else None,
         }
         base_payload = {
             "observation_id": observation_id, "binding_id": binding_id,
