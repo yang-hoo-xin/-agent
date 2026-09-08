@@ -6,7 +6,7 @@
 
 ## 0. 最新状态快照
 
-**首轮正式修码 SFT 已训练完成，A/B 正待执行（0.33）。** 6 个独立训练任务、3 epoch、18 optimizer steps，三个 LoRA checkpoint 已保存并验证重载；没有读取 val/holdout 答案或追加 DPO。训练 loss 不是修码收益。当前模型是否改善须由原 worker 的固定失败/给定 Plan 初始生成对照决定。
+**首轮正式修码 SFT 已训练完成，A/B 已进入原 worker（0.33）。** 6 个独立训练任务、3 epoch、18 optimizer steps，三个 LoRA checkpoint 已保存并验证重载。当前 Base 与 epoch1 的两个 validation 任务均为0/2，尚无修码收益或采用结论；holdout未访问、未追加DPO。完整已提交开发分支已同步GitHub（0.34），不含未提交工作或训练权重。
 
 **2026-09-08 完整验证与操作续接（0.32）：014 原模型代码的完整项目编译通过（10 个源文件全部进入编译），真实配置 13/13 通过；旧 First Shot 三项失败仍保留。**
 新增验证经原回调进入同一 worker 的修订分支已有离线验收。DSH 的精确 diff→明确批准→原 Graph/Applier 隔离写入→Build 前停止通过离线验收，尚未据此执行真实 Mod Apply。
@@ -1497,6 +1497,27 @@ DSH Apply owner 最初反向依赖非 authority 执行索引，被原架构守�
 **部署准备**：官方llama.cpp converter固定 `7d701b59296bc6f5ba504d5a4cddaf416c449a15`，独立CPU环境不改训练栈。Base F16 GGUF SHA `4274f0847160401e723713b1106843f8650bb197891a14940ef909c51b0fb23b`，Ollama独立tag `codex-patch-sft-base:20260908`，digest `9602214cc128ab657f4da67f6041ce3865eb0630cff59d8baedb5884dc82622d`。show确认tools/thinking/completion、ctx16384/predict4096、模板与HF/GGUF一致，原五模型未变。仅导入，没有chat。三个epoch将以同方法/精度部署；validation2选择后再一次holdout4，固定失败与给定Plan初始生成分开。不能命名为自然语言到Runtime已完成。
 
 训练入口13项聚焦覆盖真实tokenmask、拒绝截断、只读train、损失/梯度等价与tinyCPU真实Trainer保存重载；重载规则8项CPU正反例通过；注意力注册2项小GPU等价/梯度检查通过。SFT数据/训练与A/B脚本的准确调用及hash仍以本任务独立receipt为准，原全部失败和未运行项保留。
+
+**后续部署核验与首次验证集运行**：旧epoch导出先将整个HF模型转F16，额外舍入了两个应由官方converter保留为F32的norm值。旧导出与原记录保留，未用于A/B。修正导出统一矩阵F16、向量F32；BaseNorm-v2的310个保留张量与原Base数值/形状/类型逐字节一致，仅省去已证实重复的tied output。epoch1-v2的310个名称/形状/类型与BaseNorm相同，113个F32向量逐字节一致。部署收据在 `scratch/patch_sft_001/deployment/base-normalized-v2/deployment-receipt.json` 与 `sft004-e1-v2/deployment-receipt.json`；没有手动修改个别权重。实际对照tag分别为 `codex-patch-sft-base-norm:20260908` 与 `codex-patch-sft-e1-v2:20260908`。
+
+用户明确授权清单中8个可重建HF中间权重及修正GGUF核验后的同类HF清理。8个文件共13,764,740,384 bytes已清理，root逐项核对路径/hash/删除收据与文件不存在；证据 `deployment/intermediate-deletions-root-verification.json`。官方Base、LoRA checkpoint、GGUF、Ollama模型和记录继续保留。新增BaseNorm/e1-v2的同类HF中间也在各自GGUF核验后清理。剩余磁盘限制后两份部署，尚未扩展删除范围。
+
+A/B采用独立冻结工作树 `sft-ab-frozen` 的 `ebfb466`，避开另页整链开发；同一manifest、worker、权限、ctx16384/output4096、每attempt最多5次本地模型请求。`scratch/sft_ab004_val_001/validation-plan.json` 固定两个validation任务，按成功任务数最高、同分最早epoch选择；在训练模型首次验证前另记数学等价剪枝：最早达到2/2的epoch可停止后续验证，未运行项不能赋推测分数。当前尚未触发剪枝。
+
+| validation模型 | nested tags | nested properties | 实际模型调用 |
+|---|---|---|---:|
+| BaseNorm | 两次代码相同，两轮均4项中2项失败；编译通过，失败反馈已进入第二请求 | 返回不构成实际替换，生成校验停止；未执行行为检查 | 2+1 |
+| epoch1-v2 | 读取、生成原失败代码、行为2/4失败后请求上游，未完成修复 | 读取、生成、行为2/4失败后请求上游，未完成修复 | 3+3 |
+
+四项均按各自 `actual/summary.json` 与 `result.json` 记录任务未完成，不因请求上游而排除失败。现有 `project_patch_executions` 已从各绑定journal生成 `actual/execution-query.json`，可核对真实generation、工具结果、F1进入请求和后续未执行阶段。查询为只读投影，不授予路由或成功结论。本批仅本地追踪；携Cloud导出的首次命令被自动审批在进程创建前拒绝，随后相同prepared仅本地执行，未向Cloud发送本批数据。
+
+### 0.34 已提交开发分支同步 GitHub（2026-09-08）
+
+用户先确认仓库归属并授权四文件追踪分支推送，再明确授权完整开发历史及后续同范围代码同步。原四文件分支 `codex/publish-execution-trace-foundation` 为 `63b9fba022be9d5085e434e826c4fbe14d863768`，在远端基线checkout的37项测试通过；未创建PR。
+
+完整 `codex/rag-capability-mainline` 已成功推送到 `https://github.com/yang-hoo-xin/-agent.git`，并通过独立 `git ls-remote --heads` 查回 `a1a0edb6bcb1174d0aee8d8d5683bec2f0b176b4`，共比main多456提交。main保持 `914f16e9da82aa90e6433cbf80d12683d36ea67b`。这包含已提交源码、测试和工程记录，不包含工作树WIP、训练权重或凭据；尚无main合并、hosted CI或Release结论。原直连失败记录保留，最终使用本机已配置的代理完成正常Git推送。
+
+远端核对证据：本任务输出根 `git-sync-inspection-001/remote-sync-verified.json`。上传前2630个未发布reachable blobs的已知凭据模式扫描无匹配；该扫描不等于全面安全审查。后续同步沿用用户授权范围，不默认覆盖未提交工作或扩展外发数据。
 
 ## 1. 结论与范围
 
