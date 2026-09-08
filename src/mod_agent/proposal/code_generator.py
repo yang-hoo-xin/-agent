@@ -2699,6 +2699,16 @@ def _validate_bound_member_shadowing(
         r"[A-Za-z_]"
         r"(?:[A-Za-z0-9_.<>,?\[\]]*[A-Za-z0-9_>?\]])?"
     )
+    # A member use after a statement/operator keyword is not a declaration.
+    # Contextual words (var, dynamic, record, yield, await...) remain eligible
+    # identifiers/types, and escaped reserved identifiers remain eligible too.
+    non_type_keywords = (
+        "as", "base", "break", "case", "catch", "checked", "continue", "default", "do", "else",
+        "false", "finally", "fixed", "for", "foreach", "goto", "if", "in", "is", "lock", "new",
+        "null", "out", "ref", "return", "sizeof", "switch", "this", "throw", "true", "try",
+        "typeof", "unchecked", "using", "while",
+    )
+    declaration_type = rf"(?:@{csharp_type_token}|(?!(?:{'|'.join(non_type_keywords)})\b)(?:var|{csharp_type_token}))"
     for member_name, declared_type in declared_member_types.items():
         if not isinstance(member_name, str) or not isinstance(declared_type, str):
             continue
@@ -2707,7 +2717,7 @@ def _validate_bound_member_shadowing(
             continue
         escaped = re.escape(member_name)
         shadow_patterns = (
-            rf"\b(?:var|{csharp_type_token})\s+{escaped}\b",
+            rf"(?<![A-Za-z0-9_@]){declaration_type}\s+{escaped}\b",
             rf"\bout\s+var\s+{escaped}\b",
             rf"\bis\s+{csharp_type_token}\s+{escaped}\b",
             rf"\bforeach\s*\([^)]*\b{escaped}\s+in\b",

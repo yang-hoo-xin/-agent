@@ -1425,6 +1425,8 @@ SHA严格回到`8de69acdafa7eb3ce8cfcd06d5919d0daea7e1f2872730307bab60efd23886bd
 本轮承接 a4a2780，不重新建设历史导入或 Trace。新增字段 `response_complete/http_status` 保留传输与解析区别。
 六个原有文档 WIP 不计本轮修改，未动其字节。以下均不宣称 First Shot 修复或完整自然语言→Mod交付。
 
+本轮工程实现已提交 `d8db786`。之后独立修正 C# member-shadowing 检查把 `else`/`return` 语句误识别成类型声明的问题：新自有 SFT 任务中合法 C2 已通过真实编译，却在原生成验证器被拒；不改正确示范、不删除任务，排除不能作类型的保留语句关键字，继续拦截真实局部遮蔽并保留合法上下文类型与 `@return`。新红例7项先失败/真遮蔽7项仍通过；修后与原 generator 共105项通过（3.33s）。此修正属于训练数据准备暴露的执行器缺陷，不是模型训练收益。
+
 **完整编译与配置实际结果**
 
 - 新 `FullProjectCompilationChecker` 消费现有 materializer、GameFolder 绑定/副本、NuGet 隔离 profile 和 BuildAdapter。对完整源树副本编译，MSBuild `@(Compile)` 捕获清单须覆盖实际源文件及字节；不是仅检查修改范围身份。
