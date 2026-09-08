@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
 from src.mod_agent.artifacts import ArtifactStore
@@ -58,6 +59,16 @@ def _proposal_context_pack(target_file: str = "mods/BetterHitFeedback/Plugin.cs"
     }
 
 
+_REPAIR_SOURCE_BYTES = (
+    "public sealed class Plugin\n{\n"
+    + "\n" * 7
+    + "    public void Load()\n    {\n"
+    + "\n" * 6
+    + "    }\n}\n"
+).encode("utf-8")
+_REPAIR_SOURCE_SHA256 = sha256(_REPAIR_SOURCE_BYTES).hexdigest()
+
+
 def _implementation_plan_payload(target_file: str = "mods/BetterHitFeedback/Plugin.cs") -> dict[str, object]:
     return {
         "binding_registry": {
@@ -69,6 +80,7 @@ def _implementation_plan_payload(target_file: str = "mods/BetterHitFeedback/Plug
                     "evidence_id": "ev_001",
                     "canonical_target_path": target_file,
                     "source_type": "target_source",
+                    "source_hash": _REPAIR_SOURCE_SHA256,
                     "target_symbol": "Load",
                     "target_span": {"start_line": 10, "end_line": 18},
                 }
@@ -85,6 +97,7 @@ def _evidence_pack(target_file: str = "mods/BetterHitFeedback/Plugin.cs") -> dic
                 "evidence_id": "ev_001",
                 "source_type": "target_source",
                 "source_path": target_file,
+                "source_hash": _REPAIR_SOURCE_SHA256,
                 "symbol": "Load",
                 "span": {"start_line": 10, "end_line": 18},
             }

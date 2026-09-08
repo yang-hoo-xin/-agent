@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 import yaml
 
@@ -47,6 +48,33 @@ from src.mod_agent.intelligent_evidence_only import (
 )
 from src.mod_agent.local_entry import LocalEntryError
 from src.mod_agent.runtime import RuntimeEvidenceItem, build_real_runtime_evidence_payload
+
+
+@pytest.fixture()
+def injected_ollama_runtime(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Keep identity pre/postflight real while replacing only its HTTP boundary."""
+    calls: list[str] = []
+
+    def handle_request(_transport, request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert str(request.url).startswith("http://127.0.0.1:11434/api/")
+        calls.append(request.url.path)
+        if request.url.path == "/api/tags":
+            payload = {"models": [{
+                "name": "qwen3:4b-instruct",
+                "model": "qwen3:4b-instruct",
+                "digest": hashlib.sha256(b"injected-cli-model").hexdigest(),
+                "details": {"context_length": 40960},
+                "capabilities": ["completion", "tools"],
+            }]}
+        elif request.url.path == "/api/version":
+            payload = {"version": "injected-cli-test"}
+        else:
+            raise AssertionError(f"Unexpected HTTP request: {request.url.path}")
+        return httpx.Response(200, json=payload, request=request)
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", handle_request)
+    return calls
 
 
 def _human_semantic_approval_line(dry_run: dict[str, object]) -> str:
@@ -900,6 +928,7 @@ def test_cli_intelligent_evidence_request_persists_candidate_binding_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    injected_ollama_runtime: list[str],
 ) -> None:
     source_root = tmp_path / "source"
     source_root.mkdir()
@@ -1002,11 +1031,13 @@ def test_cli_intelligent_evidence_request_persists_candidate_binding_provenance(
     assert attempt["external_model_calls"] == 0
     assert attempt["accepted_model_actions"] == 3
     assert attempt["tool_calls_executed"] == 2
+    assert injected_ollama_runtime == ["/api/tags", "/api/version"] * 2
 
 
 def test_phase1_source_bound_no_write_run_persists_complete_lineage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    injected_ollama_runtime: list[str],
 ) -> None:
     source_root = tmp_path / "source"
     source_root.mkdir()
@@ -1132,6 +1163,7 @@ def test_phase1_source_bound_no_write_run_persists_complete_lineage(
     assert validation["lineage_passed"] is True
     assert validation["affects_runtime_route"] is False
     assert all(validation["lineage_checks"].values())
+    assert injected_ollama_runtime == ["/api/tags", "/api/version"] * 2
 
 
 def test_cli_unknown_external_tool_persists_invalid_attempt_without_execution_or_retry(
@@ -1288,6 +1320,7 @@ def test_cli_failed_attempt_persists_partial_execution_diagnostics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    injected_ollama_runtime: list[str],
 ) -> None:
     source_root = tmp_path / "source"
     source_root.mkdir()
@@ -1361,6 +1394,7 @@ def test_cli_failed_attempt_persists_partial_execution_diagnostics(
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 2
     assert payload["reason"] == "EVIDENCE_RUN_VALIDATION_ERROR"
+    assert injected_ollama_runtime == ["/api/tags", "/api/version"]
     diagnostic = payload["diagnostic"]
     assert diagnostic["accepted_model_actions"] == 2
     assert diagnostic["tool_calls_executed"] == 1

@@ -7,6 +7,7 @@ import shutil
 import stat
 import subprocess
 import threading
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -2417,7 +2418,7 @@ def test_runtime_repair_binding_revision_authorizes_current_live_span(
                 {
                     "binding_id": "edit_binding_001",
                     "canonical_target_path": "RetryLedger.cs",
-                    "source_hash": "original-hash",
+                    "source_hash": hashlib.sha256(target.read_bytes()).hexdigest(),
                     "target_span": {"start_line": 1, "end_line": 1},
                 }
             ],
@@ -2441,6 +2442,17 @@ def test_runtime_repair_binding_revision_authorizes_current_live_span(
     }
     review = {"allowed_next_stage": "dry_run_apply", "decision": "approve_dry_run"}
     applier = ExactTextPatchApplier()
+
+    stale_plan = deepcopy(original_plan)
+    stale_plan["binding_registry"]["edit_bindings"][0]["source_hash"] = "0" * 64
+    with pytest.raises(PatchApplyError, match="source_hash does not match"):
+        applier.run(
+            workspace_root=tmp_path,
+            proposal=proposal,
+            implementation_plan=stale_plan,
+            review=review,
+            allow_write=False,
+        )
 
     with pytest.raises(PatchApplyError, match="outside edit binding target_span"):
         applier.run(
@@ -2602,7 +2614,9 @@ def test_generated_build_cleanup_retries_winerror_145_once(
         nonlocal calls
         calls += 1
         if calls == 1:
-            raise OSError(41, "directory not empty", str(path), 145)
+            error = OSError(41, "directory not empty", str(path))
+            error.winerror = 145
+            raise error
         shutil.rmtree(path, onerror=onerror)
 
     result = _remove_generated_build_directory(
@@ -2627,7 +2641,9 @@ def test_generated_build_cleanup_stops_after_second_winerror_145(
     def remain_nonempty(path: Path, *, onerror):
         nonlocal calls
         calls += 1
-        raise OSError(41, "directory not empty", str(path), 145)
+        error = OSError(41, "directory not empty", str(path))
+        error.winerror = 145
+        raise error
 
     with pytest.raises(OSError) as captured:
         _remove_generated_build_directory(
