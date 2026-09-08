@@ -109,6 +109,7 @@ from src.mod_agent.product_executor import (
     PATCH_PROVIDER_PAYLOAD_DISCLOSURE_BINDINGS,
     SOURCE_DISCLOSURE_DATA_CLASSES,
     LocalEntryError,
+    ProductApprovalDeferred,
     ProductExecutionAdaptersV1,
     ProductExecutionPresentationError,
     _bind_owner_validated_runtime_evidence_factory,
@@ -1068,11 +1069,14 @@ class LocalOllamaInitialPatchAdapter:
             self._implementation_plan_ref = asdict(ref)
         self._current_run_id = state.get("run_id")
         if self._repair_context is not None:
-            failed_changes = self._repair_context.get("failed_diff_intent")
-            if failed_changes is None:
-                parent = self.artifact_store.read(ArtifactRef(**self._repair_context["parent_proposal"]))["data"]
-                failed_changes = parent["diff_intent"]
-            self._known_failed_code = self._materialized_identity(failed_changes)
+            if self._repair_context.get("base_relationship") != "revision_against_verified_applied_parent":
+                failed_changes = self._repair_context.get("failed_diff_intent")
+                if failed_changes is None:
+                    parent = self.artifact_store.read(ArtifactRef(**self._repair_context["parent_proposal"]))["data"]
+                    failed_changes = parent["diff_intent"]
+                self._known_failed_code = self._materialized_identity(failed_changes)
+            # An approved, applied parent is the current baseline. Its old
+            # B0-to-C1 response is diagnostic history, never reapplied to C1.
             self._known_failed_report_ref = deepcopy(self._repair_context["failure_report_ref"])
         if self.patch_agent_loop_policy is not None:
             self._receipt["model_call_budget"]["minimum_total_model_calls"] = (
@@ -1203,6 +1207,7 @@ class LocalOllamaInitialPatchAdapter:
                         self._repair_context["previous_response"],
                         self._model_failure_feedback(self._repair_context["failure_report"]),
                         message_type="patch_repair_context",
+                        base_relationship=self._repair_context.get("base_relationship"),
                     ))
                 if self._upstream_continuation_context is not None:
                     history = self._upstream_continuation_context
@@ -1896,7 +1901,11 @@ class LocalOllamaInitialPatchAdapter:
             "parent_proposal": admitted.get("parent_proposal"),
             "previous_response_sha256": hashlib.sha256(admitted["previous_response"].encode("utf-8")).hexdigest(),
             "failure_report_sha256": _sha256_json(admitted["failure_report"]),
-            "revision_semantics": "complete_replacement_relative_to_B0",
+            "revision_semantics": (
+                "complete_replacement_relative_to_current_applied_base"
+                if admitted.get("base_relationship") == "revision_against_verified_applied_parent"
+                else "complete_replacement_relative_to_B0"
+            ),
         }
 
     @staticmethod
@@ -1919,8 +1928,26 @@ class LocalOllamaInitialPatchAdapter:
     def _revision_messages(
         previous_response: str, feedback: Mapping[str, Any], *, message_type: str,
         visible_messages: tuple[AgentMessage, ...] = (),
+        base_relationship: str | None = None,
     ) -> tuple[AgentMessage, ...]:
-        """Expose actual C1 and executable F1 while retaining B0 as the output baseline."""
+        """Expose bound failure history and the current attempt's exact baseline."""
+        if base_relationship == "revision_against_verified_applied_parent":
+            return (
+                AgentMessage(role="assistant", content=previous_response),
+                AgentMessage(role="user", content={
+                    "message_type": message_type,
+                    "revision_semantics": "complete_replacement_relative_to_current_applied_base",
+                    "validator_feedback": deepcopy(dict(feedback)),
+                    "required_action": (
+                        "The current Plan and source tools describe the verified applied parent C1. "
+                        "It is this attempt's baseline. The preceding response created that parent "
+                        "from an older baseline and is diagnostic history only; do not reapply it. "
+                        "Use the actual failed Build observations to submit complete replacements "
+                        "against the current Plan and its exact source. Preserve the original "
+                        "requirements. The new diff requires new Review and human approval."
+                    ),
+                }),
+            )
         reuse_visible = any(message.role == "assistant" and message.content == previous_response
                             for message in visible_messages)
         prefix = () if reuse_visible else (AgentMessage(role="assistant", content=previous_response),)
@@ -3978,23 +4005,13 @@ def _run_nuget_isolated_verification_command(
         )
     environment = os.environ.copy()
     environment.update(profile.environment)
-    started = time.perf_counter()
-    completed = command_runner(
-        command,
-        cwd=profile.working_directory,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=profile.timeout_seconds,
-        check=False,
-        env=environment,
-    )
-    return BuildCommandResult(
-        exit_code=int(completed.returncode),
-        stdout=str(completed.stdout or ""),
-        stderr=str(completed.stderr or ""),
-        duration_ms=int((time.perf_counter() - started) * 1000),
+    from src.mod_agent.build.adapter import run_build_profile_command
+
+    return run_build_profile_command(
+        BuildProfile(profile_id=profile.profile_id, build_system="dotnet",
+                     working_directory=profile.working_directory, command=command,
+                     timeout_seconds=profile.timeout_seconds),
+        environment=environment, command_runner=command_runner,
     )
 
 
@@ -6361,6 +6378,12 @@ def run_local_request(
         Callable[[Mapping[str, Any], Any], Mapping[str, Any]] | None
     ) = None,
     planning_target_evidence_ids: tuple[str, ...] = (),
+    patch_worker_configuration: Any = None,
+    task_model_call_limit: int | None = None,
+    stage_model_call_limits: Mapping[str, int] | None = None,
+    execution_trace_configuration: Any = None,
+    external_patch_profile: Any = None,
+    defer_approval: bool = False,
     run_id: str | None = None,
     request_id: str | None = None,
 ) -> dict[str, Any]:
@@ -6458,6 +6481,11 @@ def run_local_request(
             "inspection profile."
         )
     settings = load_settings(settings_path)
+    external_assembly = None
+    if not local_ollama:
+        from src.mod_agent.external_patch import validate_run_request_external_profile
+        validate_run_request_external_profile(external_patch_profile, model=settings.llm.model,
+            base_url=os.environ.get(base_url_env) or settings.llm.base_url, credential_env=api_key_env)
     runtime_admission = _runtime_admission_record(
         settings,
         run_gtfo_runtime=run_gtfo_runtime,
@@ -6469,7 +6497,6 @@ def run_local_request(
     repair_local_model_identity: dict[str, Any] | None = None
     local_ollama_server_version: str | None = None
     repair_llm: Any | None = None
-    repair_model_context_limit: int | None = None
     identity_reader = ollama_model_identity_reader or _read_ollama_model_identity
     server_version_reader = (
         ollama_server_version_reader or _read_ollama_server_version
@@ -6552,7 +6579,7 @@ def run_local_request(
                 expected_base_url=llm_base_url,
                 expected_model=repair_ollama_model,
             )
-            repair_model_context_limit = _validate_ollama_context_window(
+            _validate_ollama_context_window(
                 repair_local_model_identity,
                 requested_context_window=ollama_context_window,
             )
@@ -6615,12 +6642,15 @@ def run_local_request(
         )
     started_at = datetime.now(timezone.utc).isoformat()
     if not local_ollama:
+        from src.mod_agent.external_patch import ExternalPatchError, RunRequestExternalAssembly
+        if llm.model != external_patch_profile.model or getattr(llm, "base_url", None) != external_patch_profile.base_url:
+            raise ExternalPatchError("EXTERNAL_PATCH_UPSTREAM_LLM_DESTINATION_MISMATCH")
         source_disclosure = _source_disclosure_record(
-            provider=settings.llm.provider,
+            provider=external_patch_profile.to_dict()["provider"],
             model=settings.llm.model,
             base_url=llm_base_url,
             approved_at=started_at,
-            approval_id=source_disclosure_approval_id,
+            approval_id=source_disclosure_approval_id or "source_disclosure_" + uuid4().hex,
             provider_adapter=f"{type(llm).__module__}.{type(llm).__qualname__}",
             destination_url=(
                 f"{str(getattr(llm, 'base_url')).rstrip('/')}/chat/completions"
@@ -6629,13 +6659,17 @@ def run_local_request(
             ),
         )
         model_admission = _external_model_admission_record(source_disclosure)
+        external_assembly = RunRequestExternalAssembly(profile=external_patch_profile,
+            source_disclosure=source_disclosure)
 
     ollama_patch_generation_profile = (
         {
             "stream": False,
             "think": False,
-            "tools_sent": False,
-            "native_json_schema_required": True,
+            "execution_core": "shared_patch_worker",
+            "tools_sent": None,
+            "native_json_schema_required": None,
+            "request_mode_scope": "per_turn_worker_receipt",
             "output_budget": ollama_max_output_tokens,
             "context_window": ollama_context_window,
             "model_context_limit": local_model_context_limit,
@@ -7060,7 +7094,6 @@ def run_local_request(
                 "verification_tool_build": verification_tool_build,
             },
         )
-    generator = LLMExactPatchGenerator(llm)
     applier = ExactTextPatchApplier()
     evidence_provider = RgLiveEvidenceProvider(run_root)
     member_access_resolver = None
@@ -7086,14 +7119,56 @@ def run_local_request(
     build_stdout = run_root / "build.stdout.log"
     build_stderr = run_root / "build.stderr.log"
     pending_dry_run: dict[str, Any] | None = None
-    runtime_repair_bindings: tuple[dict[str, Any], ...] | None = None
-    runtime_repair_evidence: tuple[dict[str, Any], ...] | None = None
     external_model_input_audit: dict[str, Any] | None = None
     local_model_input_audit: dict[str, Any] | None = None
     model_call_count = 0
-    initial_patch_model_call_count = 0
-    repair_model_call_count = 0
     requirement_coverage_model_audits: list[dict[str, Any]] = []
+    from src.mod_agent.patch_worker_configuration import PatchWorkerConfiguration
+    from src.mod_agent.planning.model_selection import ModelPlanningTargetSelector
+    from src.mod_agent.request_patch_execution import RequestPatchExecution
+
+    if patch_worker_configuration is not None and not isinstance(
+        patch_worker_configuration, PatchWorkerConfiguration
+    ):
+        raise LocalEntryError("RUN_REQUEST_WORKER_CONFIGURATION_INVALID")
+    worker_policy = (
+        patch_worker_configuration.policy if patch_worker_configuration is not None
+        else PatchAgentLoopPolicy(
+            max_total_model_turns=_INITIAL_PATCH_GENERATION_CALL_BUDGET,
+            require_source_inspection=False, finalize_after_first_observation=False,
+            enable_supporting_reads=True, allow_upstream_request=True,
+            allow_batched_reads=True, deduplicate_source_excerpts=True,
+            reuse_covered_source_observations=True,
+        )
+    )
+    limits = dict(stage_model_call_limits or {
+        "requirement_projection": 2, "requirement_findings": 2, "planning": 1,
+        "initial_patch": worker_policy.max_total_model_turns,
+        "repair": (_REPAIR_PATCH_GENERATION_CALL_BUDGET
+                   if patch_worker_configuration is None else worker_policy.max_total_model_turns),
+    })
+    expected_roles = {"requirement_projection", "requirement_findings", "planning", "initial_patch", "repair"}
+    if set(limits) != expected_roles or any(type(value) is not int or value < 1 for value in limits.values()):
+        raise LocalEntryError("RUN_REQUEST_STAGE_MODEL_LIMITS_INVALID")
+    task_limit = sum(limits.values()) if task_model_call_limit is None else task_model_call_limit
+    if type(task_limit) is not int or task_limit < 1:
+        raise LocalEntryError("RUN_REQUEST_TASK_MODEL_LIMIT_INVALID")
+    stage_consumed = {role: 0 for role in limits}
+
+    def model_budget_snapshot():
+        return {"maximum": task_limit, "consumed": model_call_count,
+                "remaining": task_limit - model_call_count,
+                "count_basis": "reserved_provider_invocations_not_transport_proof",
+                "by_stage": {role: {"maximum": maximum, "consumed": stage_consumed[role],
+                                   "remaining": maximum - stage_consumed[role]}
+                             for role, maximum in limits.items()}}
+
+    def reserve_model_call(role):
+        nonlocal model_call_count
+        if role not in limits or model_call_count >= task_limit or stage_consumed[role] >= limits[role]:
+            raise LocalEntryError("PRODUCT_MODEL_CALL_BUDGET_EXHAUSTED")
+        stage_consumed[role] += 1
+        model_call_count += 1
 
     def complete_requirement_coverage_json(
         role: str,
@@ -7135,11 +7210,18 @@ def run_local_request(
             )
         exact_payload = dict(payload)
         _assert_no_absolute_local_paths(exact_payload)
+        stage_role = {
+            "requirement_projection": "requirement_projection",
+            "requirement_projection_correction": "requirement_projection",
+            "requirement_findings": "requirement_findings",
+            "requirement_findings_correction": "requirement_findings",
+        }[role]
+        reserve_model_call(stage_role)
         response, provider_request = request_requirement_coverage_model(
             llm=llm,
             payload=exact_payload,
             schema=schema,
-            max_output_tokens=ollama_max_output_tokens,
+            max_output_tokens=(ollama_max_output_tokens if local_ollama else external_patch_profile.output_budget),
             capture_provider_request=local_ollama,
         )
         if local_ollama:
@@ -7174,7 +7256,6 @@ def run_local_request(
             "api_key_in_payload": False,
         }
         requirement_coverage_model_audits.append(audit)
-        model_call_count += 1
         audit_path = run_root / (
             f"requirement_coverage_model_input_audit_{model_call_count}.json"
         )
@@ -7252,697 +7333,64 @@ def run_local_request(
                 ),
             )
 
-    def patch_change_factory(
-        state: dict[str, Any],
-        implementation: dict[str, Any],
-        evidence_pack: dict[str, Any],
-    ) -> tuple[dict[str, Any], ...]:
-        nonlocal external_model_input_audit, local_model_input_audit, model_call_count
-        nonlocal runtime_repair_bindings, runtime_repair_evidence
-        if local_ollama:
-            if local_model_identity is None or ollama_model is None:
-                raise LocalEntryError("Local Ollama model identity is missing.")
-            current_identity = identity_reader(llm_base_url, ollama_model)
-            _validate_ollama_model_identity(
-                current_identity,
-                expected_base_url=llm_base_url,
-                expected_model=ollama_model,
-            )
-            _assert_ollama_model_identity_stable(
-                expected=local_model_identity,
-                observed=current_identity,
-            )
-            _validate_ollama_context_window(
-                current_identity,
-                requested_context_window=ollama_context_window,
-            )
-        external_evidence = _external_evidence_items(
-            list(evidence_pack.get("items") or [])
-        )
-        generation_binding_registry = dict(
-            implementation.get("binding_registry") or {}
-        )
-        planned_changes = [
-            dict(item)
-            for item in implementation.get("proposed_changes") or []
-            if isinstance(item, dict)
-        ]
-        feature_spec_ref_path = state.get("artifacts", {}).get("feature_spec")
-        feature_spec_ref_hash = state.get("artifact_hashes", {}).get(
-            "feature_spec"
-        )
-        if not isinstance(feature_spec_ref_path, str) or not isinstance(
-            feature_spec_ref_hash,
-            str,
-        ):
-            raise LocalEntryError(
-                "Patch generation requires the committed FeatureSpec."
-            )
-        feature_spec = artifact_store.read(
-            ArtifactRef(
-                feature_id=str(state.get("feature_id") or state["request_id"]),
-                artifact_type="feature_spec",
-                path=feature_spec_ref_path,
-                artifact_hash=feature_spec_ref_hash,
-            )
-        )["data"]
-        repair_plan: dict[str, Any] | None = None
-        repair_observation: dict[str, Any] | None = None
-        repair_history_constraints: tuple[str, ...] = ()
-        repair_spans: tuple[_RuntimeRepairSpan, ...] = ()
-        repair_ref_path = state.get("artifacts", {}).get("repair_plan")
-        repair_ref_hash = state.get("artifact_hashes", {}).get("repair_plan")
-        if isinstance(repair_ref_path, str) and isinstance(repair_ref_hash, str):
-            feature_id = str(state.get("feature_id") or state["request_id"])
-            repair_plan = artifact_store.read(
-                ArtifactRef(
-                    feature_id=feature_id,
-                    artifact_type="repair_plan",
-                    path=repair_ref_path,
-                    artifact_hash=repair_ref_hash,
-                )
-            )["data"]
-            build_ref_path = state.get("artifacts", {}).get("build_result")
-            build_ref_hash = state.get("artifact_hashes", {}).get("build_result")
-            if not isinstance(build_ref_path, str) or not isinstance(
-                build_ref_hash,
-                str,
-            ):
-                raise LocalEntryError(
-                    "Repair patch generation requires the committed BuildResult."
-                )
-            build_observation = artifact_store.read(
-                ArtifactRef(
-                    feature_id=feature_id,
-                    artifact_type="build_result",
-                    path=build_ref_path,
-                    artifact_hash=build_ref_hash,
-                )
-            )["data"]
-            source_proposal = repair_plan.get("source_proposal")
-            if not isinstance(source_proposal, Mapping):
-                raise LocalEntryError(
-                    "Repair patch generation requires its committed source proposal."
-                )
-            source_proposal_ref = source_proposal.get("ref")
-            source_proposal_hash = source_proposal.get("hash")
-            if not isinstance(source_proposal_ref, str) or not isinstance(
-                source_proposal_hash, str
-            ):
-                raise LocalEntryError(
-                    "Repair source proposal identity is incomplete."
-                )
-            source_proposal_data = artifact_store.read(
-                ArtifactRef(
-                    feature_id=feature_id,
-                    artifact_type="patch_proposal",
-                    path=source_proposal_ref,
-                    artifact_hash=source_proposal_hash,
-                )
-            )["data"]
-            repair_history_constraints = _repair_history_fact_constraints(
-                patch_proposal=source_proposal_data,
-                patch_proposal_hash=source_proposal_hash,
-                build_result=build_observation,
-                build_result_hash=build_ref_hash,
-                run_id=run_id,
-                request_id=str(state["request_id"]),
-            )
-            repair_diagnostics = _unique_repair_diagnostics(
-                [
-                    {
-                        key: item.get(key)
-                        for key in (
-                            "file",
-                            "line",
-                            "column",
-                            "code",
-                            "severity",
-                            "message",
-                            "error_class",
-                        )
-                    }
-                    for item in build_observation.get("diagnostics") or []
-                    if isinstance(item, dict)
-                ]
-            )
-            objective_failed = any(
-                item.get("code") == "IA0001" for item in repair_diagnostics
-            )
-            repair_observation = {
-                "failure_class": (
-                    "objective_test_failure"
-                    if objective_failed
-                    else repair_plan.get("failure_class")
-                ),
-                "hypothesis": (
-                    "The project compiled, but the bound objective executable returned "
-                    "a nonzero result after observing behavior that did not satisfy the "
-                    "request."
-                    if objective_failed
-                    else repair_plan.get("hypothesis")
-                ),
-                "diagnostics": repair_diagnostics,
-                "objective_verification": (
-                    {
-                        "command": list(objective_verification_command),
-                        "current_source_views": list(
-                            _objective_verification_source_views(target_copy)
-                        ),
-                    }
-                    if objective_failed
-                    and objective_verification_command is not None
-                    else None
-                ),
-            }
-            original_by_binding = {
-                str(item.get("edit_binding_id") or ""): item
-                for item in planned_changes
-                if item.get("edit_binding_id")
-            }
-            planned_changes = [
-                {
-                    **dict(
-                        original_by_binding.get(
-                            str(item.get("edit_binding_id") or ""),
-                            {},
-                        )
-                    ),
-                    **dict(item),
-                    "change_type": "modify_behavior",
-                }
-                for item in repair_plan.get("minimal_changes") or []
-                if isinstance(item, dict)
-            ]
-            allowed_repair_bindings = {
-                str(value)
-                for value in repair_plan.get("allowed_edit_binding_ids") or []
-            }
-            binding_items = [
-                dict(item)
-                for item in generation_binding_registry.get("edit_bindings") or []
-                if isinstance(item, dict)
-            ]
-            evidence_by_id = {
-                str(item.get("evidence_id") or ""): item
-                for item in external_evidence
-                if item.get("evidence_id")
-            }
-            repair_evidence: list[dict[str, Any]] = []
-            revised_bindings: list[dict[str, Any]] = []
-            for binding in binding_items:
-                binding_id = str(binding.get("binding_id") or "")
-                if binding_id not in allowed_repair_bindings:
-                    continue
-                relative_path = str(binding.get("canonical_target_path") or "")
-                live_path = (run_root / relative_path).resolve()
-                try:
-                    live_path.relative_to(run_root.resolve())
-                except ValueError as exc:
-                    raise LocalEntryError(
-                        "Repair edit binding escapes the isolated workspace."
-                    ) from exc
-                if not live_path.is_file():
-                    raise LocalEntryError(
-                        "Repair edit binding target is missing from the isolated workspace."
-                    )
-                live_text, live_hash = _read_utf8_source_snapshot(live_path)
-                if len(allowed_repair_bindings) == 1:
-                    diagnostics_for_spans: tuple[Mapping[str, Any], ...] | None = None
-                    if repair_observation is not None:
-                        current_diagnostics = repair_observation.get("diagnostics")
-                        if isinstance(current_diagnostics, list):
-                            diagnostics_for_spans = tuple(current_diagnostics)
-                        elif isinstance(current_diagnostics, tuple):
-                            diagnostics_for_spans = current_diagnostics
-                    repair_spans = _runtime_repair_spans(
-                        live_text,
-                        source_hash=live_hash,
-                        diagnostic_lines=_runtime_source_diagnostic_lines(
-                            diagnostics_for_spans,
-                            source_path=live_path,
-                            working_root=run_root,
-                        ),
-                    )
-                repair_evidence_id = f"repair_live_{live_hash[:16]}"
-                prior = evidence_by_id.get(str(binding.get("evidence_id") or ""), {})
-                repair_evidence.append(
-                    {
-                        **prior,
-                        "evidence_id": repair_evidence_id,
-                        "document_id": f"repair:{relative_path}",
-                        "chunk_id": f"repair:{relative_path}:1:{len(live_text.splitlines())}",
-                        "source_ref": f"source://isolated_repair/{relative_path}",
-                        "source_path": relative_path,
-                        "source_hash": live_hash,
-                        "file_hash": live_hash,
-                        "doc_hash": live_hash,
-                        "excerpt": live_text,
-                        "span": {
-                            "start_line": 1,
-                            "end_line": len(live_text.splitlines()),
-                        },
-                        "claim_supported": (
-                            "Current isolated source after the approved prior apply."
-                        ),
-                    }
-                )
-                revised_bindings.append(
-                    {
-                        **binding,
-                        "evidence_id": repair_evidence_id,
-                        "source_hash": live_hash,
-                        "target_span": {
-                            "start_line": 1,
-                            "end_line": len(live_text.splitlines()),
-                        },
-                    }
-                )
-            if len(revised_bindings) != len(allowed_repair_bindings):
-                raise LocalEntryError(
-                    "Repair generation could not resolve every allowed edit binding."
-                )
-            external_evidence = repair_evidence
-            generation_binding_registry = {
-                **generation_binding_registry,
-                "edit_bindings": revised_bindings,
-            }
-            runtime_repair_bindings = tuple(dict(item) for item in revised_bindings)
-            runtime_repair_evidence = tuple(dict(item) for item in repair_evidence)
-        obligation_projection = _patch_generation_obligation_projection(
-            feature_spec=feature_spec,
-            implementation=implementation,
-            planned_changes=planned_changes,
-        )
-        required_change_units = obligation_projection["required_change_units"]
-        side_effect_boundaries = obligation_projection["side_effect_boundaries"]
-        target_behavior = obligation_projection["target_behavior"]
-        acceptance_criteria = obligation_projection["acceptance_criteria"]
-        runtime_verification_plan = obligation_projection[
-            "runtime_verification_plan"
-        ]
-        if repair_observation is not None:
-            side_effect_boundaries = _repair_provider_constraints(
-                base_constraints=side_effect_boundaries,
-                diagnostics=repair_observation["diagnostics"],
-                history_constraints=repair_history_constraints,
-            )
-        model_input = {
-            "request": state["user_request"],
-            "evidence": external_evidence,
-            "binding_registry": generation_binding_registry,
-            "required_change_units": required_change_units,
-            "side_effect_boundaries": side_effect_boundaries,
-            "target_behavior": target_behavior,
-            "acceptance_criteria": acceptance_criteria,
-            "runtime_verification_plan": runtime_verification_plan,
-            "repair_observation": repair_observation,
-            "repair_span_inventory": [
-                span.model_view() for span in repair_spans
-            ],
-        }
-        patch_disclosure_data_classes = (
-            _patch_model_input_disclosure_data_classes(model_input)
-        )
-        if not local_ollama:
-            _verify_patch_model_input_disclosure(
-                source_disclosure,
-                model_input=model_input,
-            )
-        _assert_no_absolute_local_paths(model_input)
-        model_input_audit = {
-            "approval_id": source_disclosure.get("approval_id"),
-            "provider_adapter": model_admission.get("provider_adapter"),
-            "destination": model_admission.get("destination"),
-            "approved_data_classes": source_disclosure.get("approved_data_classes"),
-            "requested_data_classes": (
-                []
-                if local_ollama
-                else list(patch_disclosure_data_classes)
-            ),
-            "payload_sha256": _sha256_json(model_input),
-            "absolute_local_paths_present": False,
-            "api_key_in_payload": False,
-            "automatic_provider_fallback": False,
-            "automatic_external_retry": False,
-            "execution_locality": model_admission.get("execution_locality"),
-            "external_disclosure_occurred": not local_ollama,
-        }
-        selected_llm = (
-            repair_llm
-            if repair_observation is not None and repair_llm is not None
-            else llm
-        )
-        selected_model = (
-            repair_ollama_model
-            if repair_observation is not None and repair_ollama_model is not None
-            else ollama_model
-        )
-        selected_model_identity = (
-            repair_local_model_identity
-            if repair_observation is not None
-            and repair_local_model_identity is not None
-            else local_model_identity
-        )
-        selected_model_context_limit = (
-            repair_model_context_limit
-            if repair_observation is not None
-            and repair_model_context_limit is not None
-            else local_model_context_limit
-        )
-        if not local_ollama:
-            (run_root / "external_model_input_audit.json").write_text(
-                json.dumps(
-                    model_input_audit,
-                    ensure_ascii=False,
-                    indent=2,
-                    sort_keys=True,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-            external_model_input_audit = model_input_audit
-        def record_local_provider_request(provider_request: dict[str, Any]) -> None:
-            nonlocal initial_patch_model_call_count
-            nonlocal local_model_input_audit, model_call_count
-            nonlocal repair_model_call_count
-            if not local_ollama:
-                raise LocalEntryError(
-                    "Local provider request recorder cannot be used externally."
-                )
-            model_role = (
-                "repair" if repair_observation is not None else "initial_patch"
-            )
-            remaining_call_budget = _patch_generation_calls_remaining(
-                model_role,
-                initial_patch_call_count=initial_patch_model_call_count,
-                repair_call_count=repair_model_call_count,
-            )
-            if local_ollama_server_version is None or selected_model_identity is None:
-                raise LocalEntryError("Local Ollama environment binding is missing.")
-            attempt = {
-                **model_input_audit,
-                "status": "ready_for_provider_invocation",
-                "run_id": run_id,
-                "request_id": state["request_id"],
-                "model_call_count": model_call_count,
-                "remaining_call_budget": remaining_call_budget,
-                "output_budget": ollama_max_output_tokens,
-                "context_window": ollama_context_window,
-                "model_context_limit": selected_model_context_limit,
-                "ollama_server_version": local_ollama_server_version,
-                "model_identity": dict(selected_model_identity),
-                "model_role": model_role,
-                "source_revision_binding": dict(source_revision_binding or {}),
-                "source_snapshot_sha256": initial_source_snapshot_sha256,
-                "generation_input_binding": {
-                    "request_sha256": hashlib.sha256(
-                        str(model_input["request"]).encode("utf-8")
-                    ).hexdigest(),
-                    "evidence_pack_ref": state["artifacts"].get("evidence_pack"),
-                    "evidence_pack_hash": state["artifact_hashes"].get(
-                        "evidence_pack"
-                    ),
-                    "implementation_plan_ref": state["artifacts"].get(
-                        "implementation_plan"
-                    ),
-                    "implementation_plan_hash": state["artifact_hashes"].get(
-                        "implementation_plan"
-                    ),
-                    "repair_plan_ref": state["artifacts"].get("repair_plan"),
-                    "repair_plan_hash": state["artifact_hashes"].get("repair_plan"),
-                    "build_result_ref": state["artifacts"].get("build_result"),
-                    "build_result_hash": state["artifact_hashes"].get("build_result"),
-                    "editable_paths": [
-                        str(item) for item in implementation.get("target_files") or []
-                    ],
-                    "change_scope": [
-                        str(item)
-                        for item in implementation.get("side_effect_boundaries") or []
-                    ],
-                },
-                "provider_request": dict(provider_request),
-                "provider_request_profile": {
-                    "stream": False,
-                    "think": False,
-                    "tools_sent": False,
-                    "native_json_schema_requested": True,
-                    "timeout_seconds": provider_request.get("timeout_seconds"),
-                    "trust_environment": provider_request.get("trust_environment"),
-                    "follow_redirects": provider_request.get("follow_redirects"),
-                    "automatic_provider_fallback": False,
-                    "automatic_retry": False,
-                    "model_switching": False,
-                    "explicit_role_model_routing": repair_ollama_model is not None,
-                },
-            }
-            audit_path = run_root / f"local_model_input_audit_{model_call_count + 1}.json"
-            audit_path.write_text(
-                json.dumps(attempt, ensure_ascii=False, indent=2, sort_keys=True)
-                + "\n",
-                encoding="utf-8",
-            )
-            (run_root / "local_model_input_audit.json").write_text(
-                audit_path.read_text(encoding="utf-8"),
-                encoding="utf-8",
-            )
-            local_model_input_audit = attempt
-            model_call_count += 1
-            if model_role == "initial_patch":
-                initial_patch_model_call_count += 1
-            else:
-                repair_model_call_count += 1
+    worker_profile = LocalOllamaInitialPatchProfileV1(
+        profile_version=LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
+        base_url=llm_base_url, model=ollama_model, context_window=ollama_context_window,
+        output_budget=ollama_max_output_tokens, timeout_seconds=float(llm.timeout),
+    ) if local_ollama else external_patch_profile
+    repair_worker_profile = (
+        replace(worker_profile, model=repair_ollama_model,
+                timeout_seconds=float(repair_llm.timeout))
+        if repair_ollama_model is not None and repair_llm is not None else None
+    )
+    def admitted_worker_identity(base_url, model):
+        if external_assembly is not None:
+            return external_assembly.read_identity(base_url, model)
+        identities = {ollama_model: local_model_identity}
+        if repair_ollama_model is not None:
+            identities[repair_ollama_model] = repair_local_model_identity
+        expected = identities.get(model)
+        if expected is None:
+            raise LocalEntryError("PRODUCT_WORKER_MODEL_NOT_ADMITTED")
+        observed = identity_reader(base_url, model)
+        _validate_ollama_model_identity(observed, expected_base_url=base_url, expected_model=model)
+        _assert_ollama_model_identity_stable(expected=expected, observed=observed)
+        return observed
 
-        def enforce_post_response_model_binding(_: Any) -> None:
-            if selected_model_identity is None or selected_model is None:
-                raise LocalEntryError("Local Ollama model identity is missing.")
-            observed_identity = identity_reader(llm_base_url, selected_model)
-            _validate_ollama_model_identity(
-                observed_identity,
-                expected_base_url=llm_base_url,
-                expected_model=selected_model,
-            )
-            _assert_ollama_model_identity_stable(
-                expected=selected_model_identity,
-                observed=observed_identity,
-            )
-            _validate_ollama_context_window(
-                observed_identity,
-                requested_context_window=ollama_context_window,
-            )
+    patch_change_factory = RequestPatchExecution(
+        artifact_store=artifact_store, workspace_root=run_root, profile=worker_profile,
+        repair_profile=repair_worker_profile, identity_reader=admitted_worker_identity,
+        policy=worker_policy, reserve_model_call=reserve_model_call,
+        budget_snapshot=model_budget_snapshot,
+        behavior_evaluator=(patch_worker_configuration.behavior_evaluator()
+                            if patch_worker_configuration is not None else None),
+        worker_configuration_ref=(patch_worker_configuration.reference
+                                  if patch_worker_configuration is not None else None),
+        trace_configuration=execution_trace_configuration,
+        adapter_factory=(external_assembly.make_worker if external_assembly is not None else None),
+    )
+    class PlanningClient:
+        def __init__(self):
+            self.client = (external_assembly.planning_client() if external_assembly is not None
+                           else LocalOllamaInitialPatchAdapter._default_agent_turn_client(worker_profile))
+            self.provider = self.client.provider
+            self.model = self.client.model
 
-        required_validation_by_binding: dict[str, list[str]] = {}
-        generation_constraints = list(model_input["side_effect_boundaries"])
+        def complete_turn(self, request):
+            admitted_worker_identity(worker_profile.base_url, worker_profile.model)
+            reserve_model_call("planning")
+            response = self.client.complete_turn(request)
+            admitted_worker_identity(worker_profile.base_url, worker_profile.model)
+            return response
 
-        def generate_span_repair(selected_constraints: list[str]):
-            if len(required_change_units) != 1 or not repair_spans:
-                raise LocalEntryError(
-                    "Runtime span repair requires one change unit and one current-source "
-                    "span inventory."
-                )
-            schema = _repair_span_response_schema(repair_spans)
-            response = selected_llm.chat(
-                [
-                    Message(
-                        role="system",
-                        content=(
-                            "Repair the current live source using the objective failure "
-                            "observation. Select exactly one supplied runtime selection_id "
-                            "and return replacement_text for that complete displayed span. "
-                            "Do not return a path, hash, line range, before_text, edit "
-                            "binding, or historical source. replacement_text must change "
-                            "executable behavior and must not equal display_text. Return "
-                            "strict JSON only."
-                        ),
-                    ),
-                    Message(
-                        role="user",
-                        content=json.dumps(
-                            {
-                                "request": model_input["request"],
-                                "constraints": selected_constraints,
-                                "repair_observation": repair_observation,
-                                "runtime_spans": model_input[
-                                    "repair_span_inventory"
-                                ],
-                                "required_output_schema": schema,
-                            },
-                            ensure_ascii=False,
-                            sort_keys=True,
-                        ),
-                    ),
-                ],
-                temperature=0.0,
-                max_tokens=ollama_max_output_tokens,
-                response_format=schema,
-                provider_request_recorder=record_local_provider_request,
-            )
-            enforce_post_response_model_binding(response)
-            (run_root / f"repair_span_selection_{model_call_count}.json").write_text(
-                json.dumps(
-                    {
-                        "content": response.content,
-                        "model": response.model,
-                        "usage": response.usage,
-                    },
-                    ensure_ascii=False,
-                    indent=2,
-                    sort_keys=True,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-            required_change = required_change_units[0]
-            materialized_change = _materialize_repair_span_change(
-                response.content,
-                spans=repair_spans,
-                required_change=required_change,
-                expected_validation=tuple(
-                    required_change.get("expected_validation") or ()
-                ),
-            )
-            materialized_response = ChatResponse(
-                content=json.dumps(
-                    {"changes": [materialized_change]},
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ),
-                model=response.model,
-                usage=response.usage,
-                raw_response=response.raw_response,
-            )
-            return LLMExactPatchGenerator(
-                _MaterializedRepairPatchLLM(response=materialized_response)
-            ).generate(
-                user_request=str(model_input["request"]),
-                evidence_items=list(model_input["evidence"]),
-                binding_registry=dict(model_input["binding_registry"]),
-                constraints=selected_constraints,
-                target_behavior=str(model_input["target_behavior"]),
-                acceptance_criteria=list(model_input["acceptance_criteria"]),
-                runtime_verification_plan=list(
-                    model_input["runtime_verification_plan"]
-                ),
-                required_change_units=required_change_units,
-                required_validation_by_binding=required_validation_by_binding,
-                require_native_schema=False,
-            )
-
-        def generate_patch(selected_constraints: list[str]):
-            if repair_observation is not None and local_ollama:
-                return generate_span_repair(selected_constraints)
-            return generator.generate(
-                user_request=str(model_input["request"]),
-                evidence_items=list(model_input["evidence"]),
-                binding_registry=dict(model_input["binding_registry"]),
-                constraints=selected_constraints,
-                target_behavior=str(model_input["target_behavior"]),
-                acceptance_criteria=list(model_input["acceptance_criteria"]),
-                runtime_verification_plan=list(
-                    model_input["runtime_verification_plan"]
-                ),
-                required_change_units=required_change_units,
-                required_validation_by_binding=required_validation_by_binding,
-                require_native_schema=local_ollama,
-                provider_request_recorder=(
-                    record_local_provider_request if local_ollama else None
-                ),
-                post_response_admission=(
-                    enforce_post_response_model_binding if local_ollama else None
-                ),
-            )
-
-        try:
-            generated = generate_patch(generation_constraints)
-        except PatchGenerationError as exc:
-            model_role = (
-                "repair" if repair_observation is not None else "initial_patch"
-            )
-            correction_allowed = (
-                _local_patch_generation_correction_allowed(
-                    model_role,
-                    initial_patch_call_count=initial_patch_model_call_count,
-                )
-                if local_ollama
-                else True
-            )
-            failure_record = {
-                "failure_type": type(exc).__name__,
-                "failure_message": str(exc),
-                "diagnostic_content": getattr(exc, "diagnostic_content", None),
-                "diagnostics": dict(getattr(exc, "diagnostics", {}) or {}),
-                "model_call_count_after_failure": model_call_count,
-                "correction_allowed": correction_allowed,
-            }
-            failure_path = (
-                run_root
-                / f"patch_generation_failure_{model_call_count}.json"
-            )
-            failure_path.write_text(
-                json.dumps(
-                    failure_record,
-                    ensure_ascii=False,
-                    indent=2,
-                    sort_keys=True,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-            if not correction_allowed:
-                raise
-            correction_constraint = (
-                "The previous response failed deterministic patch validation: "
-                f"{exc}. Return one corrected response using the same schema, "
-                "required change units, evidence, and edit bindings. Do not "
-                "repeat the invalid patch."
-            )
-            generated = generate_patch(
-                [
-                    *generation_constraints,
-                    correction_constraint,
-                ]
-            )
-        if local_ollama and generated.model != selected_model:
-            raise LocalEntryError("OLLAMA_RESPONSE_MODEL_IDENTITY_MISMATCH")
-        overlaid_changes = _overlay_generated_patch_changes_on_plan(
-            planned_changes=planned_changes,
-            generated_changes=generated.changes,
+    planning_selector = (
+        (lambda _feature, _evidence: planning_target_evidence_ids)
+        if planning_target_evidence_ids else ModelPlanningTargetSelector(
+            client=PlanningClient(), workspace_root=run_root,
+            receipt_path=run_root / "planning_model_selection.json",
+            model_identity=(external_assembly.identity if external_assembly is not None else local_model_identity),
         )
-        changes: list[dict[str, Any]] = []
-        for overlaid_change in overlaid_changes:
-            changes.append(
-                {
-                    **overlaid_change,
-                    "generation": {
-                        "provider": settings.llm.provider,
-                        "model": generated.model,
-                        "model_digest": (
-                            selected_model_identity.get("digest")
-                            if selected_model_identity is not None
-                            else None
-                        ),
-                        "usage": generated.usage,
-                        "api_key_env": None if local_ollama else api_key_env,
-                    },
-                }
-            )
-        return tuple(changes)
-
-    def proposal_review_context_factory(
-        _state: dict[str, Any],
-        implementation: dict[str, Any],
-        evidence_pack: dict[str, Any],
-    ) -> tuple[dict[str, Any], dict[str, Any]]:
-        if runtime_repair_bindings is None or runtime_repair_evidence is None:
-            raise LocalEntryError(
-                "Repair review context is unavailable before Repair generation."
-            )
-        return _repair_review_context(
-            implementation,
-            evidence_pack,
-            runtime_bindings=runtime_repair_bindings,
-            runtime_evidence=runtime_repair_evidence,
-        )
+    )
 
     def dry_run_factory(
         proposal: dict[str, Any],
@@ -7950,18 +7398,10 @@ def run_local_request(
         review: dict[str, Any],
     ) -> dict[str, Any]:
         nonlocal pending_dry_run
-        execution_implementation = (
-            _implementation_with_runtime_repair_bindings(
-                implementation,
-                runtime_bindings=runtime_repair_bindings,
-            )
-            if runtime_repair_bindings is not None
-            else implementation
-        )
         pending_dry_run = applier.run(
             workspace_root=run_root,
             proposal=proposal,
-            implementation_plan=execution_implementation,
+            implementation_plan=implementation,
             review=review,
             allow_write=False,
         )
@@ -7974,14 +7414,6 @@ def run_local_request(
     ) -> dict[str, Any]:
         if pending_dry_run is None:
             raise LocalEntryError("Exact diff approval requested before dry-run completed.")
-        execution_implementation = (
-            _implementation_with_runtime_repair_bindings(
-                implementation,
-                runtime_bindings=runtime_repair_bindings,
-            )
-            if runtime_repair_bindings is not None
-            else implementation
-        )
         approved_diff_hash, human_semantic_decision = _read_exact_diff_approval(
             diff_approval_reader,
             pending_dry_run,
@@ -7989,7 +7421,7 @@ def run_local_request(
         return applier.run(
             workspace_root=run_root,
             proposal=proposal,
-            implementation_plan=execution_implementation,
+            implementation_plan=implementation,
             review=review,
             allow_write=True,
             approved_diff_hash=approved_diff_hash,
@@ -8284,11 +7716,7 @@ def run_local_request(
     )
     product_adapters = ProductExecutionAdaptersV1(
         evidence_pack_factory=evidence_factory,
-        planning_target_selection_factory=(
-            lambda _feature, _evidence: planning_target_evidence_ids
-        )
-        if planning_target_evidence_ids
-        else None,
+        planning_target_selection_factory=planning_selector,
         patch_change_factory=patch_change_factory,
         dry_run_factory=dry_run_factory,
         isolated_apply_factory=isolated_apply_factory,
@@ -8296,7 +7724,6 @@ def run_local_request(
         runtime_evidence_factory=runtime_evidence_factory,
         compiled_artifact_verifier=active_compiled_artifact_verifier,
         source_change_verifier=source_change_verifier,
-        proposal_review_context_factory=proposal_review_context_factory,
     )
     product_preflight = preflight_product_execution(
         product_request,
@@ -8316,7 +7743,28 @@ def run_local_request(
                 product_adapters,
                 artifact_store,
                 strict_git_admission=source_git_admission,
+                defer_approval=defer_approval,
             )
+        except ProductApprovalDeferred as pending:
+            waiting = pending.to_dict()
+            waiting.update(
+                current_stage="awaiting_approval", run_root=str(run_root),
+                model_call_count=model_call_count, model_call_budget=model_budget_snapshot(),
+                graph_invoked=True, patch_payload_parser_entered=True,
+                actual_write_performed=False,
+                artifacts={item.artifact_role: item.artifact_ref.path for item in pending.outputs},
+                source_revision_binding=dict(source_revision_binding or {}),
+                model_admission=model_admission,
+                canonical_source_unchanged=_source_snapshot(source) == initial_source_snapshot,
+            )
+            patch_change_factory.complete_deferred(pending)
+            waiting["patch_execution_receipts"] = [journal.projection() for journal in patch_change_factory.journals]
+            _persist_graph_terminal_result(
+                run_root=run_root, run_id=run_id, request_id=request_id, summary=waiting,
+                model_call_count=model_call_count, patch_payload_parser_entered=True,
+                actual_write_performed=False,
+            )
+            return waiting
         except ProductExecutionContractError:
             raise
         except Exception as exc:
@@ -8341,6 +7789,21 @@ def run_local_request(
                 f"Controlled product executor failed: {type(exc).__name__}: {exc}"
             ) from exc
 
+    patch_change_factory.complete_product(product_result)
+    if patch_change_factory.receipts:
+        current_patch_receipt = patch_change_factory.patch_attempt_receipt()
+        local_model_input_audit = {
+            **current_patch_receipt,
+            "model_role": "repair" if "repair_context" in current_patch_receipt else "initial_patch",
+            "provider_request": {
+                "timeout_seconds": current_patch_receipt["profile"]["timeout_seconds"],
+                "scope": "configured_agent_client_not_transport_send_proof",
+            },
+            "provider_request_profile": {
+                "timeout_seconds": current_patch_receipt["profile"]["timeout_seconds"],
+                "scope": "configured_agent_client",
+            },
+        }
     product_result_projection = product_result.to_dict()
     output_paths = {
         item.artifact_role: item.artifact_ref.path for item in product_result.outputs
@@ -8417,6 +7880,8 @@ def run_local_request(
         "external_model_input_audit": external_model_input_audit,
         "local_model_input_audit": local_model_input_audit,
         "model_call_count": model_call_count,
+        "model_call_budget": model_budget_snapshot(),
+        "patch_execution_receipts": [journal.projection() for journal in patch_change_factory.journals],
         "graph_invoked": True,
         "patch_payload_parser_entered": patch_payload_parser_entered,
         "actual_write_performed": actual_write_performed,

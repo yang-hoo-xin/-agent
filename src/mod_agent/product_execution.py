@@ -1134,6 +1134,8 @@ PRODUCT_EXECUTION_DECLARATION = ProductExecutionDeclarationV1(
         ("build", "build_result"),
         ("build", "workflow_checkpoint"),
         ("create_repair_plan", "repair_plan"),
+        ("create_repair_plan", "evidence_pack"),
+        ("create_repair_plan", "implementation_plan"),
         ("resolve_runtime_binding", "binding_resolution"),
         ("collect_runtime_evidence", "runtime_evidence"),
         ("evaluate", "eval_report"),
@@ -1460,7 +1462,8 @@ def _validate_repair_plan_lifecycle_predicates(
     attempts = facts.store_attempts
     grammar = PRODUCT_EXECUTION_DECLARATION.lifecycle_grammar
     for index, item in enumerate(attempts):
-        if item.node_name != "create_repair_plan" or item.store_result.outcome != "committed":
+        if (item.node_name != "create_repair_plan" or item.artifact_role != "repair_plan"
+                or item.store_result.outcome != "committed"):
             continue
         envelope = envelopes.get(item.sequence)
         if envelope is None:
@@ -1492,6 +1495,16 @@ def _validate_repair_plan_lifecycle_predicates(
         data = envelope.get("data")
         payload_terminal = envelope.get("status") == "blocked"
         terminal = later is not None and later.node_name == "blocked"
+        physical_source_blocked = False
+        if terminal and prior.node_name == "build":
+            blocked_envelope = envelopes.get(later.sequence, {})
+            physical_source_blocked = any(
+                isinstance(blocker, Mapping)
+                and blocker.get("code") == "PRODUCT_REPAIR_SOURCE_REANCHORING_REQUIRED"
+                and blocker.get("stage") == "repair_plan"
+                and blocker.get("required_next_owner") == "evidence"
+                for blocker in blocked_envelope.get("data", {}).get("blockers", [])
+            )
         if later is None and payload_terminal:
             terminal = facts.failure_stage == "blocked_execution"
         source_attempt = prior.repair_attempt
@@ -1518,8 +1531,9 @@ def _validate_repair_plan_lifecycle_predicates(
             in {"collect_runtime_evidence", "resolve_runtime_binding"}
             else {expected_exhausted}
         )
-        expected_status = "blocked" if terminal else "success"
-        expected_next_stage = None if terminal else "generate_patch_proposal"
+        semantic_terminal = terminal and not physical_source_blocked
+        expected_status = "blocked" if semantic_terminal else "success"
+        expected_next_stage = None if semantic_terminal else "generate_patch_proposal"
         if (
             not isinstance(data, Mapping)
             or envelope.get("status") != expected_status
@@ -1534,8 +1548,8 @@ def _validate_repair_plan_lifecycle_predicates(
             or data.get("retry_exhausted") not in allowed_exhausted
             or data.get("allowed_next_stage") != expected_next_stage
             or type(blockers) is not list
-            or (terminal and not blockers)
-            or (not terminal and blockers)
+            or (semantic_terminal and not blockers)
+            or (not semantic_terminal and blockers)
         ):
             raise ProductExecutionContractError(
                 "RepairPlan readback violates its declaration-owned lifecycle predicate.",

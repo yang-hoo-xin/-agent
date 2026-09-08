@@ -13,6 +13,7 @@ from src.mod_agent.domain.accurate_crosshair_eval import (
     CONFIG_CHECKS,
     AccurateCrosshairTaskOracle,
     BoundExistingMatrixOracle,
+    CurrentPlanTaskOracle,
 )
 from src.mod_agent.evaluation.patch_task_suite import reference, save_once
 
@@ -74,3 +75,91 @@ def test_existing_matrix_wrapper_preserves_originals_and_binds_current_code(tmp_
     with pytest.raises(ValueError, match="PATCH_EVAL_CODE_IDENTITY_MISMATCH"):
         oracle({**context, "materialized_code_identity": {**code, "code_sha256": "d" * 64}})
     assert reference(result["report_ref"]["path"]) == result["report_ref"]
+
+
+def _current_task_oracle(tmp_path, monkeypatch):
+    from src.mod_agent.domain import accurate_crosshair_eval as module
+    from tests.unit.test_crosshair_current_plan_matrix import _case
+    from tests.unit.test_fresh_planning_continuation import _source_hashes
+
+    inputs, context, _, _, _ = _case(tmp_path, monkeypatch)
+    # This exercises Plan/byte binding using a synthetic Mod and no compiler.
+    monkeypatch.setattr(module, "CONFIG_SOURCES", tuple(_source_hashes(inputs.workspace)))
+    monkeypatch.setattr(module, "_dotnet_identity", lambda: {"test_environment": "no_compiler"})
+    oracle = CurrentPlanTaskOracle(case_id=CONFIG_CASE, artifact_store_root=inputs.store.root,
+        workspace_root=inputs.workspace, output_root=tmp_path / "current-task",
+        expected_check_ids=CONFIG_CHECKS)
+    calls = []
+    def observe(sources):
+        calls.append(sources)
+        return {"checks": [{"check": name, "passed": True} for name in CONFIG_CHECKS],
+                "failures": [], "executions": 3}
+    monkeypatch.setattr(oracle, "_run_sources", observe)
+    return inputs, context, oracle, calls
+
+
+def test_task_oracle_consumes_current_plan_without_fixed_target_reference(tmp_path, monkeypatch):
+    from tests.unit.test_fresh_planning_continuation import _source_hashes
+
+    inputs, context, oracle, calls = _current_task_oracle(tmp_path, monkeypatch)
+    before = _source_hashes(inputs.workspace)
+    report = oracle(context)
+    assert report["status"] == "passed"
+    assert report["implementation_plan_ref"] == context["implementation_plan_ref"]
+    assert report["verification_summary"] == {"checks": 5, "failed_checks": 0, "executions": 3}
+    assert report["materialized_code_identity"] == context["materialized_code_identity"]
+    assert len(calls) == 1 and oracle.plan == {}
+    changed_path = context["implementation_plan"]["binding_registry"]["edit_bindings"][0]["canonical_target_path"]
+    assert calls[0][changed_path] != (inputs.workspace / changed_path).read_bytes()
+    assert _source_hashes(inputs.workspace) == before
+    assert reference(report["report_ref"]["path"]) == report["report_ref"]
+
+
+def test_task_oracle_preserves_product_plan_paths_with_an_explicit_source_prefix(tmp_path, monkeypatch):
+    from src.mod_agent.domain import accurate_crosshair_eval as module
+    from tests.unit.test_crosshair_current_plan_matrix import _case
+    from tests.unit.test_fresh_planning_continuation import _source_hashes
+
+    inputs, context, _, _, _ = _case(tmp_path, monkeypatch)
+    prefix = inputs.behavior.parent.relative_to(inputs.workspace)
+    sources = tuple(_source_hashes(inputs.workspace))
+    monkeypatch.setattr(module, "CONFIG_SOURCES", tuple(Path(name).relative_to(prefix).as_posix() for name in sources))
+    monkeypatch.setattr(module, "_dotnet_identity", lambda: {"test_environment": "no_compiler"})
+    oracle = CurrentPlanTaskOracle(case_id=CONFIG_CASE, artifact_store_root=inputs.store.root,
+        workspace_root=inputs.workspace, source_prefix=prefix.as_posix(), output_root=tmp_path / "current-task",
+        expected_check_ids=CONFIG_CHECKS)
+    seen = []
+
+    def observe(values):
+        seen.append(values)
+        return {"checks": [{"check": name, "passed": True} for name in CONFIG_CHECKS],
+                "failures": [], "executions": 3}
+
+    monkeypatch.setattr(oracle, "_run_sources", observe)
+    report = oracle(context)
+    assert set(seen[0]) == set(sources)
+    assert report["materialized_code_identity"] == context["materialized_code_identity"]
+    assert report["status"] == "passed"
+
+
+@pytest.mark.parametrize("drift", ["plan", "source", "change_hash", "response", "returned_text", "code"])
+def test_current_task_oracle_rejects_identity_drift_before_behavior(tmp_path, monkeypatch, drift):
+    from src.mod_agent.model_qualification import canonical_hash
+
+    _, context, oracle, calls = _current_task_oracle(tmp_path, monkeypatch)
+    if drift == "plan":
+        context["implementation_plan"]["blocking"] = True
+    elif drift == "source":
+        context["source_snapshot_sha256"] = "f" * 64
+    elif drift == "change_hash":
+        context["generated_changes_sha256"] = "f" * 64
+    elif drift == "response":
+        context["model_response"]["output_sha256"] = "f" * 64
+    elif drift == "returned_text":
+        context["generated_changes"][0]["patch"]["after_text"] += "\n// not returned by model"
+        context["generated_changes_sha256"] = canonical_hash(context["generated_changes"])
+    else:
+        context["materialized_code_identity"]["code_sha256"] = "f" * 64
+    with pytest.raises(ValueError):
+        oracle(context)
+    assert not calls

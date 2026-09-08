@@ -6,8 +6,9 @@ import copy
 import hashlib
 import json
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -4560,6 +4561,234 @@ def _run_create_repair_plan(
         })
     if plan.blockers:
         next_state["blockers"].extend(plan.blockers)
+    elif (product_execution_mode is not None and failed_stage == "build"
+          and _read_artifact_data(state, artifact_store, "build_result").get("input_execution_mode") == "isolated_apply"):
+        try:
+            next_state = _reanchor_applied_product_repair(next_state, artifact_store,
+                workspace_root=product_execution_mode.request.isolated_workspace_root)
+        except (ArtifactStoreError, ProductExecutionContractError):
+            # Store/contract failures retain the product executor's platform
+            # classification; they are not missing business-source evidence.
+            raise
+        except (ValueError, OSError) as exc:
+            blocker = {"stage": "repair_plan", "code": "PRODUCT_REPAIR_SOURCE_REANCHORING_REQUIRED",
+                "message": str(exc), "required_next_owner": "evidence"}
+            # The semantic Repair decision remains history. The conditional
+            # edge owns stopping and the existing blocked node persists this
+            # physical evidence gap without a second Repair decision/attempt.
+            next_state["blockers"].append(blocker)
+    return next_state
+
+
+def _reanchor_applied_product_repair(state, artifact_store, *, workspace_root):
+    """Publish physical C1 identities for the original admitted Repair targets.
+
+    This is a deterministic source observation, not another Findings/Planning
+    model turn. Existing semantic obligations and binding IDs remain unchanged.
+    No revision is written until the full in-memory projection has validated.
+    """
+    from src.mod_agent.fresh_planning_continuation import (
+        _validate_selected_plan,
+        _validate_source_items,
+    )
+
+    def require(condition, message):
+        if not condition:
+            raise ValueError("PRODUCT_REPAIR_REANCHORING_REQUIRED: " + message)
+
+    def read(ref):
+        require(ref.feature_id == state["feature_id"], "Artifact belongs to another feature.")
+        return artifact_store.semantic_read_immutable(ref)
+
+    def upstream(envelope, kind):
+        rows = [row for row in envelope["inputs"]["upstream_artifacts"] if row["artifact_type"] == kind]
+        require(len(rows) == 1, "Expected one exact " + kind + " upstream.")
+        return ArtifactRef(feature_id=state["feature_id"], artifact_type=kind,
+            path=rows[0]["path"], artifact_hash=rows[0]["artifact_hash"])
+
+    def selected(kind):
+        return _artifact_ref_from_state(state, kind)
+
+    def sha(value):
+        return hashlib.sha256(value).hexdigest()
+
+    root = Path(workspace_root).resolve(strict=True)
+    require(root.is_dir(), "The product workspace is unavailable.")
+    repair_ref = selected("repair_plan")
+    repair_envelope = read(repair_ref)
+    repair = repair_envelope["data"]
+    require(state["current_stage"] == "repair_plan" and repair_envelope["status"] == "success"
+            and repair["failure_source"] == "build" and not repair.get("blockers")
+            and repair.get("allowed_next_stage") == "generate_patch_proposal",
+            "The Repair owner has not admitted an applied Build repair.")
+    build_ref = upstream(repair_envelope, "build_result")
+    proposal_ref = upstream(repair_envelope, "patch_proposal")
+    require(build_ref == selected("build_result") and proposal_ref == selected("patch_proposal"),
+            "Repair failure lineage differs from the current state.")
+    require(repair["source_proposal"] == {"ref": proposal_ref.path, "hash": proposal_ref.artifact_hash},
+            "Repair's declared parent Proposal differs from its upstream.")
+    build = read(build_ref)["data"]
+    require(build.get("status") == "failed" and build.get("real_build_performed") is True
+            and build.get("execution_mode") == "local" and build.get("input_execution_mode") == "isolated_apply"
+            and build.get("diagnostics"), "Build lacks an executed failed applied input and diagnostics.")
+    apply_ref = upstream(read(build_ref), "isolated_apply_result")
+    apply_envelope = read(apply_ref)
+    review_ref = upstream(apply_envelope, "proposal_review")
+    require(apply_ref == selected("isolated_apply_result") and review_ref == selected("proposal_review")
+            and upstream(apply_envelope, "patch_proposal") == proposal_ref,
+            "Apply does not bind the selected Proposal and Review.")
+    review = read(review_ref)
+    require(review["status"] == "success" and upstream(review, "patch_proposal") == proposal_ref
+            and review["data"].get("allowed_next_stage") == "dry_run_apply",
+            "The original Proposal did not pass its bound Review.")
+    applied = apply_envelope["data"]
+    require(apply_envelope["status"] == "success" and applied.get("execution_mode") == "isolated_apply"
+            and applied.get("actual_write_performed") is True and applied.get("real_patch_applied") is True
+            and applied.get("approved_by_user") is True and applied.get("approved_by_review") is True
+            and applied.get("diff_hash") and applied.get("approved_diff_hash") == applied["diff_hash"],
+            "Apply lacks exact approved written bytes.")
+    dry_run_ref = upstream(apply_envelope, "dry_run_result")
+    dry_run = read(dry_run_ref)
+    require(dry_run_ref == selected("dry_run_result") and dry_run["status"] == "success"
+            and upstream(dry_run, "patch_proposal") == proposal_ref
+            and upstream(dry_run, "proposal_review") == review_ref
+            and dry_run["data"].get("diff_hash") == applied["diff_hash"],
+            "Approved Apply does not match its exact displayed dry-run diff.")
+    proposal = read(proposal_ref)
+    require(proposal["status"] == "success", "The failed parent Proposal was not admitted.")
+    plan_ref, evidence_ref = upstream(proposal, "implementation_plan"), upstream(proposal, "evidence_pack")
+    require(plan_ref == selected("implementation_plan") and evidence_ref == selected("evidence_pack"),
+            "Reanchoring must start from the failed Proposal's original Plan and Evidence.")
+    plan, evidence = copy.deepcopy(read(plan_ref)["data"]), copy.deepcopy(read(evidence_ref)["data"])
+    _validate_selected_plan(plan, evidence, feature_id=state["feature_id"])
+    registry = plan["binding_registry"]
+    bindings = {row["binding_id"]: row for row in registry["edit_bindings"]}
+    require(set(bindings).issubset(set(repair["allowed_edit_binding_ids"])),
+            "Current Plan extends beyond Repair's admitted binding IDs.")
+    changes, receipts, previews = proposal["data"]["diff_intent"], applied.get("changes"), applied.get("diff_preview")
+    require(isinstance(receipts, list) and isinstance(previews, list)
+            and len(changes) == len(receipts) == len(previews) and changes,
+            "Apply change coverage is incomplete; real before/after receipts are required.")
+    per_path = {}
+    for change, receipt, preview in zip(changes, receipts, previews, strict=True):
+        binding = bindings.get(change["edit_binding_id"])
+        require(binding is not None, "An applied change has no original edit binding.")
+        path = binding["canonical_target_path"]
+        require(all(row.get("edit_binding_id") == binding["binding_id"] and row.get("path") == path
+                    and row.get("change_id") == change["change_id"] for row in (receipt, preview)),
+                "Apply's path or change identity differs from the original binding.")
+        require(change["patch"].get("kind") == "exact_text_replace"
+                and preview["before_text"] == change["patch"]["before_text"]
+                and preview["after_text"] == change["patch"]["after_text"]
+                and preview["before_sha256"] == receipt["before_sha256"]
+                and preview["after_sha256"] == receipt["after_sha256"],
+                "Apply preview differs from the approved Proposal bytes.")
+        per_path.setdefault(path, []).append((change, receipt))
+
+    observations = []
+    current_files = {}
+    for path, records in per_path.items():
+        relative = PurePosixPath(path)
+        require(not relative.is_absolute() and ".." not in relative.parts and "\\" not in path,
+                "An applied path is not a canonical workspace-relative path.")
+        source = (root / path).resolve(strict=True)
+        require(source.is_relative_to(root) and source.is_file(), "Applied source escaped the workspace.")
+        live = source.read_bytes()
+        current_files[path] = live
+        require(sha(live) == records[-1][1]["after_sha256"], "Live bytes differ from the final approved Apply output.")
+        baseline = live
+        for change, receipt in reversed(records):
+            before, after = (change["patch"][key].encode("utf-8") for key in ("before_text", "after_text"))
+            require(sha(baseline) == receipt["after_sha256"] and after and baseline.count(after) == 1,
+                    "Approved output location is absent or ambiguous; exact source evidence is required.")
+            baseline = baseline.replace(after, before, 1)
+            require(sha(baseline) == receipt["before_sha256"], "Reverse Apply did not recover the recorded base bytes.")
+        target_items = [item for item in evidence["items"] if item["source_type"] == "target_source"
+                        and item["source_path"] == path]
+        require(target_items, "Applied source has no original source evidence.")
+        offsets = [0]
+        for line in baseline.splitlines(keepends=True):
+            offsets.append(offsets[-1] + len(line))
+        spans = {}
+        for item in target_items:
+            require(item.get("source_hash") == sha(baseline) and item.get("file_hash") in (None, sha(baseline)),
+                    "Original source evidence does not identify the recovered Apply baseline.")
+            require(not item.get("verified_member_accesses"),
+                    "Changed source carries compiled member observations that require fresh evidence.")
+            span = item["span"]
+            start, end = span["start_line"], span["end_line"]
+            require(type(start) is int and type(end) is int and 1 <= start <= end < len(offsets),
+                    "Original evidence does not carry an exact line span.")
+            spans[item["evidence_id"]] = [offsets[start - 1], offsets[end]]
+        replay = baseline
+        for change, receipt in records:
+            before, after = (change["patch"][key].encode("utf-8") for key in ("before_text", "after_text"))
+            require(before and replay.count(before) == 1, "Approved input location is ambiguous during replay.")
+            position, length = replay.index(before), len(before)
+            delta = len(after) - length
+            for span in spans.values():
+                start, end = span
+                if position + length <= start:
+                    span[:] = [start + delta, end + delta]
+                elif position >= end:
+                    continue
+                elif start <= position and position + length <= end:
+                    span[1] += delta
+                else:
+                    raise ValueError("PRODUCT_REPAIR_REANCHORING_REQUIRED: Approved replacement crosses an evidence boundary.")
+            replay = replay.replace(before, after, 1)
+            require(sha(replay) == receipt["after_sha256"], "Approved replay did not match its recorded output.")
+        require(replay == live, "Approved replay differs from current source.")
+        current_offsets = [0]
+        for line in live.splitlines(keepends=True):
+            current_offsets.append(current_offsets[-1] + len(line))
+        for item in target_items:
+            start, end = spans[item["evidence_id"]]
+            require(start < end and start in current_offsets and end in current_offsets,
+                    "The admitted target no longer maps to a complete nonempty line span.")
+            original_span = dict(item["span"])
+            item.update(span={"start_line": current_offsets.index(start) + 1, "end_line": current_offsets.index(end)},
+                source_ref=str(source), source_hash=sha(live), file_hash=sha(live), doc_hash=sha(live),
+                excerpt=live[start:end].decode("utf-8"), retrieval_method="approved_apply_byte_mapping")
+            item["risk_notes"] = [*item["risk_notes"], "Physical identity refreshed from approved Apply; semantic Findings were not re-executed."]
+            observations.append({"evidence_id": item["evidence_id"], "source_path": path,
+                "before_span": original_span, "after_span": dict(item["span"]),
+                "before_sha256": sha(baseline), "after_sha256": sha(live)})
+    items = {item["evidence_id"]: item for item in evidence["items"]}
+    for binding in registry["edit_bindings"]:
+        item = items[binding["evidence_id"]]
+        binding.update(source_hash=item["source_hash"], target_span=dict(item["span"]))
+    for binding in registry.get("supporting_bindings", []):
+        item = items[binding["evidence_id"]]
+        if item["source_type"] == "target_source" and item["source_path"] in per_path:
+            binding["target_span"] = dict(item["span"])
+    refs = [repair_ref, plan_ref, evidence_ref, proposal_ref, review_ref, dry_run_ref, apply_ref, build_ref]
+    trace_refs = [f"{ref.path}#sha256={ref.artifact_hash}" for ref in refs]
+    provenance = {"repair_plan_ref": {"path": repair_ref.path, "artifact_hash": repair_ref.artifact_hash},
+        "base_relationship": "revision_against_verified_applied_parent", "findings_reexecuted": False,
+        "planning_model_reexecuted": False, "approval_inherited": False, "observations": observations}
+    evidence["provenance_validation"] = {**evidence.get("provenance_validation", {}), "repair_source_reanchoring": provenance}
+    evidence["trace_refs"] = list(dict.fromkeys([*evidence["trace_refs"], *trace_refs]))
+    evidence["retrieval_methods_used"] = list(dict.fromkeys([*evidence["retrieval_methods_used"], "approved_apply_byte_mapping"]))
+    EvidencePack.from_artifact_payload(evidence)
+    _validate_selected_plan(plan, evidence, feature_id=state["feature_id"])
+    _validate_source_items(evidence, root)
+    require(all((root / path).read_bytes() == content for path, content in current_files.items()),
+            "Source changed during repair identity observation.")
+    feature_ref = selected("feature_spec")
+    writer_scope = getattr(artifact_store, "repair_source_revision_scope", None)
+    with trace_operation("repair.reanchor_applied_source", attributes={"repair_plan_hash": repair_ref.artifact_hash,
+            "findings_reexecuted": False, "refreshed_source_items": len(observations)}), (
+            writer_scope(repair_ref) if writer_scope is not None else nullcontext()):
+        fresh_evidence = artifact_store.write(feature_id=state["feature_id"], artifact_type="evidence_pack",
+            payload=evidence, status="success", upstream_refs=[feature_ref],
+            exact_revision_upstream_types={"feature_spec"}, trace_refs=trace_refs)
+        fresh_plan = artifact_store.write(feature_id=state["feature_id"], artifact_type="implementation_plan",
+            payload=plan, status="success", upstream_refs=[feature_ref, fresh_evidence],
+            exact_revision_upstream_types={"feature_spec", "evidence_pack"}, trace_refs=trace_refs)
+    next_state = _copy_state(state)
+    _record_artifact(next_state, "evidence_pack", fresh_evidence)
+    _record_artifact(next_state, "implementation_plan", fresh_plan)
     return next_state
 
 
@@ -5166,6 +5395,8 @@ def _run_isolated_apply(
     *,
     isolated_apply_factory: PatchExecutionFactory,
 ) -> ModAgentState:
+    from langgraph.errors import GraphInterrupt
+
     proposal = _read_artifact_data(state, artifact_store, "patch_proposal")
     review = _read_artifact_data(state, artifact_store, "proposal_review")
     semantic_assurance, semantic_contract_present = (
@@ -5221,6 +5452,8 @@ def _run_isolated_apply(
                     "message": str(exc),
                 }
             )
+        except GraphInterrupt:
+            raise
         except Exception as exc:
             payload = {
                 "execution_mode": "isolated_apply",

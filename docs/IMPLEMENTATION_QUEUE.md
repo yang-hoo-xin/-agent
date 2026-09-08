@@ -9,6 +9,31 @@ Completed, frozen, review, and superseded records belong in
 
 ## 1. Current Queue
 
+### 当前整链实施：自然语言主入口迁移与交付链联合验收
+
+用户 2026-09-08 回执已批准本页优先实施 P1/P2，允许替换触及链条的旧重复装配；不扩大31组模块盘点，不嵌套CLI、复制runner、人工拼Artifact或静默回退旧生成路径。本块是最新整链状态的唯一详细控制位置，恢复上下文时先核对本块与当前Git/源码。
+
+- 集成页：`01a07fb9-9dfe-7a20-a345-de16b4ab1892`；接收基线 `0f59a0c185d253fc18a604e53e262b264ba98110`（含 `d8db786` 完整验证/DSH/摘要与 `21f2a36` C#验证修正）。当前阶段：入口接缝聚焦复现与实施，尚无本任务工程贯穿或真实模型结果。
+- 选定首任务：无已保存配置时 `General Settings` 下 `Follow Recoil` 默认关闭；已有显式true/false、其余默认值和全部键保持不变。起点为自然语言 `run-request`、真实项目和正常环境配置；不预填Findings、编辑位置或Plan，不伪造Repair输入。
+- 首个接缝：原 `run_local_request` 的重复Patch装配迁移到已有共享worker，并接入本次上游产物、journal、失败上下文、实际effect与全任务/阶段累计预算。
+- 后段：保留原Review/完整diff/精确批准/隔离Apply；仅在任务适用且有效授权时续接原Build/Runtime。Build消费实际Apply工程，Runtime消费本次Build产物；新代码重新Review/批准。本回执不批准尚未生成的diff或具体游戏操作。
+- 文件归属已由原页面确认：整合页负责 `local_entry.py`、`product_executor.py`、`workflow/graph.py`、`cli.py`、`reviewed_patch_continuation.py`及对应整链测试、本Queue块。原页面拥有训练数据、SFT/checkpoint/部署/worker A/B及其脚本测试；其A/B在独立 `sft-ab-frozen` 工作树固定0f59a0c。保护其现有六份文档WIP及训练测试改动。
+- 直接复用：完整编译/真实配置、DSH批准与隔离Apply、失败摘要/执行索引/Langfuse；不重建。实际模型运行前固定集成版本并协调GPU，当前未选择本任务真实运行profile/预算，未开始模型发送。
+- 验证与报告分四层：公开入口工程贯穿；真实模型任务结果；获准后实际到达交付阶段；同任务统一查询与阻断。历史FirstShot、OwnedConfigService及其他任务局部成功不合并成本任务成功。
+- 31组覆盖清单保留为总目标；旧文档RAG/PDF/图片/RAGAS/Dense/RRF独立验收，仅任务实际需要时接入。首任务使用其自身配置判定，不套FirstShot36项或改变原FirstShot要求。
+- 本页实施进展：已移除 `run_local_request` 中约30KB重复生成/格式修复/旧span生成装配，改为原共享worker；无人工target输入的模型Planning工程场景已进入同一worker。当前只是传输/编译器替身的工程贯穿，不是实际模型或Mod成功。
+- P1聚焦：`python -X utf8 -B -m pytest tests/unit/test_run_request_shared_worker.py -q --tb=short --basetemp=C:/Users/10160/AppData/Local/Temp/p1-natural-20260908`，先复现旧路径绕过worker，迁移后2项通过（3.74s）；两项分别覆盖兼容人工target和未传target的真实生产Planning装配，模型传输为明确替身。
+- P2：原Apply checkpoint→显式批准Build→原Build/Runtime checkpoint后段及公开 `apply-patch --continue-build` 已实现，原Apply默认仍停Build前。owner22项通过（30.23s），CLI+BuildAdapter30项通过（12.99s）；均工程替身。P2小checkpoint46通过/1旧Repair fixture失败，串行仍失败；该fixture缺当前source identity，不是本次真实运行。
+- 本任务验证器：显式CONFIG_CASE选自身5项义务，复用原完整编译/真实配置，保留旧FirstShot语义；聚焦34通过/2真实.NET项未选（16.37s），有界checkpoint102通过（31.04s）。真实run-request的项目根/Plan根坐标仍待适配，不据此宣称本任务实际已验收。
+- 新Product journal入口复用原receipt/Store引用；与Fresh不同的run_root/a布局已复现修复，11项聚焦通过（5.10s）；较早Fresh/index兼容checkpoint91通过（26.28s）。
+- 集成结果：postApply失败的Graph当前源重绑定/窄span及worker修订消费、原checkpoint持久待审批/同工程Apply/Build续接、原manifest等待状态、项目根与Plan根分离、同段查询与DSH审阅投影已集成。自然语言初始状态不伪造Repair；两种合法入口共用原worker，外部Qwen以显式现有profile保留原披露边界，无旧generator fallback。
+- 唯一集成checkpoint：`.venv/Scripts/python.exe -B -m pytest tests/unit/test_run_request_shared_worker.py tests/unit/test_run_request_external_worker.py tests/unit/test_product_patch_journal.py tests/unit/test_request_patch_repair_context.py tests/unit/test_product_patch_outcome.py tests/unit/test_product_repair_reanchoring.py tests/unit/test_deferred_product_approval.py tests/unit/test_reviewed_patch_continuation.py tests/unit/test_reviewed_patch_cli.py tests/unit/test_actual_crosshair_configuration.py tests/unit/test_complete_crosshair_verification.py tests/unit/test_full_project_compilation.py tests/unit/test_accurate_crosshair_eval.py tests/unit/test_product_execution.py::test_public_product_executor_preserves_repair_attempt_prefixes tests/unit/test_product_execution.py::test_product_repair_review_uses_ephemeral_review_context_only_on_repair tests/unit/test_product_execution.py::test_public_product_executor_returns_repair_budget_exhaustion_result tests/unit/test_product_execution.py::test_public_product_executor_runs_exact_runtime_terminal_chain -k 'not original_source_exposes' -q --tb=short -n 2 --dist=loadfile --basetemp=C:/Users/10160/AppData/Local/Temp/jointcp0908`：157 passed，83.18s。后续仅新增公开timeout穿透，`test_run_request_shared_worker.py`定点3 passed，4.51s；未重复大组。
+- 首Actual事前判定：采用完整工程编译与真实完整DLL的CONFIG_CASE五项配置义务（首次false、其他默认、原6键、已有true/false）。固定两源码文件的旧doubles matrix保留独立，不作为本任务模型合法选址的门槛；本任务配置I/O在隔离进程执行，GTFO游戏/自动LiveEdit不在本轮完成声明内。获准后的正式Build仍与预审批编译分开报告。
+- 预选真实运行：`qwen3-coder:30b`，仅loopback，context32768/output4096/timeout600s；全任务14次额度，projection2/findings2/planning2/initial_patch4/repair4累计，不按节点重置，原worker每段上限4。到原`--defer-approval`停点后等本次精确diff批准，未批准不Apply/后段Build，不启动游戏；第一物理失败照原规则处理。
+- 当前未完成：固定集成commit/独立执行树、一次上述真实模型验收及其实际到达阶段。GPU由原页面顺序使用，收到交还再开始；此前本页0真实模型发送。原页面独立提交已推进到99a3c5a，冻结时以当前实际HEAD及本页commit为准。
+
+### 并行训练与既有产品工作
+
 Current user-selected work: complete an actual bounded repair SFT A/B (not only preparation), using verified diverse owned code revisions, task-family splits, completion-only token masks, checkpoint save/reload and the original worker deployment. Do not make First Shot passing a prerequisite or silently substitute requirement extraction. DPO is optional after appropriate same-input data and comparisons. Also add automatic evidence-based failure summaries to the existing query so module/chain/multi-task failures can be located without manual reference reconstruction. Completed full compilation/configuration and offline DSH Apply work is in 0.32; no real Mod or Runtime success is implied.
 
 Next parallel work after tracing 0.31: (1) complete changed-project isolated compilation and actual configuration integration, retaining the original 36 checks separately and returning new failures to the shared worker; (2) bounded model-quality experiments with fixed task/evaluation and independent holdout, separating requirement/state understanding from code repair, then performance/quantization comparison; (3) continue original product-entry/DSH task lifecycle integration, with explicit approval and applicable execution boundaries. New-run Langfuse readback should accompany an authorized normal task; do not manufacture another model run or rewrite historical times.

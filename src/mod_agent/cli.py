@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import MISSING, asdict, dataclass, fields
 from pathlib import Path
 
 from .actual_execution import (
@@ -58,6 +59,7 @@ from .local_entry import (
     LocalEntryError,
     LocalOllamaInitialPatchAdapter,
     LocalOllamaInitialPatchProfileV1,
+    RunLocalGameFolderBindingV1,
     make_exact_no_write_dry_run_factory,
     preflight_local_runtime,
     preflight_stagger_edit_authority_review,
@@ -112,6 +114,105 @@ class PlanRequestResult:
     stopped_before: str
     request_planning_report: dict[str, object]
     mod_planning_brief: dict[str, object]
+
+
+def _execution_trace_configuration(args):
+    from src.mod_agent.patch_execution_trace import PatchExecutionTraceConfiguration
+
+    sink = None
+    if args.langfuse_metadata:
+        from src.observability.patch_langfuse import LangfuseHttpTransport
+        from src.observability.patch_live_langfuse import PatchLiveLangfuseSink
+
+        sink = PatchLiveLangfuseSink(LangfuseHttpTransport.from_environment())
+    return PatchExecutionTraceConfiguration(environment=args.trace_environment, sink=sink)
+
+
+def _add_execution_trace_arguments(parser):
+    parser.add_argument("--trace-environment", default="local",
+        help="Deployment label for measured execution observations; default local.")
+    parser.add_argument("--langfuse-metadata", action="store_true",
+        help="Explicitly export allowlisted execution metadata to the configured Langfuse project; no source, prompts or raw replies.")
+
+
+def _load_reviewed_build_resume(path):
+    from src.mod_agent.workflow.interrupts import ResumePayload
+
+    value = read_json_object(path)
+    declared = fields(ResumePayload)
+    required = {item.name for item in declared if item.default is MISSING and item.default_factory is MISSING}
+    if not required.issubset(value) or not set(value).issubset({item.name for item in declared}):
+        raise ValueError("REVIEWED_BUILD_RESUME_FIELDS_INVALID")
+    if (not isinstance(value["artifact_refs"], list)
+            or any(not isinstance(item, str) or not item for item in value["artifact_refs"])):
+        raise ValueError("REVIEWED_BUILD_RESUME_REFERENCES_INVALID")
+    return ResumePayload(**{**value, "artifact_refs": tuple(value["artifact_refs"])})
+
+
+def _load_reviewed_build_profile(path, destination):
+    from src.mod_agent.build.adapter import BuildProfile
+
+    value = read_json_object(path)
+    declared = fields(BuildProfile)
+    required = {item.name for item in declared if item.default is MISSING and item.default_factory is MISSING}
+    if not required.issubset(value) or not set(value).issubset({item.name for item in declared}):
+        raise ValueError("REVIEWED_BUILD_PROFILE_FIELDS_INVALID")
+    if any(not isinstance(value[name], str) or not value[name]
+            for name in ("profile_id", "build_system", "working_directory")):
+        raise ValueError("REVIEWED_BUILD_PROFILE_VALUES_INVALID")
+    if (type(value["timeout_seconds"]) is not int or value["timeout_seconds"] < 1
+            or not isinstance(value["command"], list) or not value["command"]
+            or any(not isinstance(item, str) or not item for item in value["command"])):
+        raise ValueError("REVIEWED_BUILD_PROFILE_COMMAND_INVALID")
+    if (not Path(value["working_directory"]).is_absolute()
+            or Path(value["working_directory"]).resolve() != destination):
+        raise ValueError("REVIEWED_BUILD_PROFILE_WORKSPACE_MISMATCH")
+    expected = value.get("expected_artifacts")
+    if (not isinstance(expected, list) or not expected
+            or any(not isinstance(item, str) or not item for item in expected)):
+        raise ValueError("REVIEWED_BUILD_EXPECTED_ARTIFACTS_REQUIRED")
+    for item in expected:
+        relative = Path(item)
+        output = (destination / relative).resolve()
+        if relative.is_absolute() or ".." in relative.parts or not output.is_relative_to(destination):
+            raise ValueError("REVIEWED_BUILD_EXPECTED_ARTIFACT_PATH_INVALID")
+        if output.exists():
+            raise ValueError("REVIEWED_BUILD_PREEXISTING_OUTPUT_REJECTED")
+    if value.get("log_path") is not None and (not isinstance(value["log_path"], str) or not value["log_path"]):
+        raise ValueError("REVIEWED_BUILD_PROFILE_LOG_PATH_INVALID")
+    return BuildProfile(**{**value, "command": tuple(value["command"]), "expected_artifacts": tuple(expected)})
+
+
+def _continue_reviewed_build_from_cli(args):
+    from src.mod_agent.build.adapter import BuildAdapter, run_build_profile_command
+    from src.mod_agent.reviewed_patch_continuation import (
+        _reviewed_build_inputs,
+        continue_reviewed_patch,
+    )
+
+    if (not args.allow_build or not all((args.artifact_store_root, args.feature_id,
+            args.checkpoint_path, args.checkpoint_hash, args.resume_payload, args.build_profile))):
+        raise ValueError("REVIEWED_BUILD_EXPLICIT_CONFIGURATION_REQUIRED")
+    if any((args.confirm, args.workspace_root, args.run_id, args.isolated_root)):
+        raise ValueError("REVIEWED_BUILD_APPLY_ARGUMENTS_FORBIDDEN")
+    checkpoint_ref = ArtifactRef(feature_id=args.feature_id, artifact_type="workflow_checkpoint",
+        path=args.checkpoint_path, artifact_hash=args.checkpoint_hash)
+    payload = _load_reviewed_build_resume(args.resume_payload)
+    _, _, _, destination = _reviewed_build_inputs(ArtifactStore(args.artifact_store_root), checkpoint_ref, payload)
+    profile = _load_reviewed_build_profile(args.build_profile, destination)
+
+    def build_applied(selected_destination, feature_id, mode):
+        if selected_destination != destination:
+            raise ValueError("REVIEWED_BUILD_PROFILE_WORKSPACE_MISMATCH")
+        # The original BuildAdapter owns diagnostics and output verification;
+        # the shared command runner owns process execution. No nested CLI runs.
+        return BuildAdapter().run_local(feature_id=feature_id, profile=profile,
+            command_runner=lambda selected: run_build_profile_command(selected, environment=os.environ.copy()),
+            allow_execution=True, input_execution_mode=mode)
+
+    return continue_reviewed_patch(artifact_store_root=args.artifact_store_root,
+        checkpoint_ref=checkpoint_ref, resume_payload=payload, allow_build=True,
+        build_result_factory=build_applied, execution_trace_configuration=_execution_trace_configuration(args))
 
 
 def _strict_cli_bool(value: str) -> bool:
@@ -783,10 +884,7 @@ def build_parser(
     )
     patch_continuation_parser.add_argument("--artifact-root", required=True)
     patch_continuation_parser.add_argument("--workspace-root", required=True)
-    patch_continuation_parser.add_argument("--trace-environment", default="local",
-        help="Deployment label for measured execution observations; default local.")
-    patch_continuation_parser.add_argument("--langfuse-metadata", action="store_true",
-        help="Explicitly export this invocation's allowlisted execution metadata to the configured Langfuse project; no source, prompts or raw replies.")
+    _add_execution_trace_arguments(patch_continuation_parser)
     patch_continuation_parser.add_argument("--feature-id", required=True)
     patch_continuation_parser.add_argument("--feature-spec-path", required=True)
     patch_continuation_parser.add_argument("--feature-spec-hash", required=True)
@@ -920,13 +1018,26 @@ def build_parser(
 
     apply_parser = subparsers.add_parser(
         "apply-patch",
-        help="Blocked placeholder for future patch application.",
+        help="Apply a reviewed exact diff in isolation, or explicitly continue its checkpoint through Build.",
     )
     apply_parser.add_argument("--confirm", action="store_true", help="Request confirmed apply.")
     for name in ("artifact-store-root", "workspace-root", "feature-id", "run-id", "isolated-root"):
         apply_parser.add_argument("--" + name)
-    apply_parser.add_argument("--human-decision-stdin", action="store_true",
+    apply_mode = apply_parser.add_mutually_exclusive_group()
+    apply_mode.add_argument("--human-decision-stdin", action="store_true",
         help="Consume the displayed binding and existing human semantic decision from JSON stdin.")
+    apply_mode.add_argument("--continue-build", action="store_true",
+        help="Consume the existing Apply checkpoint and ResumePayload for a separately authorized Build; does not repeat Apply.")
+    apply_mode.add_argument("--resume-approval", action="store_true",
+        help="Resume a deferred product diff in its existing isolated workspace using the original checkpoint and exact human decision.")
+    apply_parser.add_argument("--checkpoint-path")
+    apply_parser.add_argument("--checkpoint-hash")
+    apply_parser.add_argument("--resume-payload", help="JSON file containing the existing exact ResumePayload fields.")
+    apply_parser.add_argument("--build-profile", help="JSON file containing the existing BuildProfile fields; its working_directory must be this Apply's isolated workspace.")
+    apply_parser.add_argument("--human-semantic-decision", help="JSON file containing the existing exact human_semantic_decision_v1 decision.")
+    apply_parser.add_argument("--allow-build", action="store_true",
+        help="Explicitly authorize this Build continuation only; Runtime needs its own existing authorization.")
+    _add_execution_trace_arguments(apply_parser)
 
     run_parser = subparsers.add_parser(
         "run-request",
@@ -934,6 +1045,10 @@ def build_parser(
     )
     run_parser.add_argument("description", help="Natural-language Mod request.")
     run_parser.add_argument("--target-project", required=True)
+    run_parser.add_argument("--game-folder-build-binding", help="JSON with the existing exact read-only GameFolder binding.")
+    run_parser.add_argument("--external-patch-profile", help="Explicit existing external Qwen worker profile JSON.")
+    run_parser.add_argument("--run-id", help="Explicit identity for one new product invocation.")
+    run_parser.add_argument("--request-id", help="Logical request identity; supplied together with --run-id.")
     run_parser.add_argument(
         "--workspace-root",
         default="workspaces/v2_codegen_real_001",
@@ -953,10 +1068,20 @@ def build_parser(
         "--ollama-base-url", default="http://127.0.0.1:11434"
     )
     run_parser.add_argument("--ollama-model")
+    run_parser.add_argument("--ollama-timeout-seconds", type=float)
     run_parser.add_argument(
         "--ollama-max-output-tokens", type=int, default=4096
     )
     run_parser.add_argument("--ollama-context-window", type=int)
+    run_parser.add_argument("--patch-worker-config",
+        help="Explicit existing PatchWorkerConfiguration JSON for the shared worker and optional evaluator.")
+    run_parser.add_argument("--defer-approval", action="store_true",
+        help="Persist the completed exact Dry-run and pause before asking for or performing Apply; resume through apply-patch --resume-approval.")
+    run_parser.add_argument("--task-model-call-limit", type=int,
+        help="Positive total model-call limit shared across this product task.")
+    run_parser.add_argument("--stage-model-call-limits",
+        help="JSON object with the existing requirement_projection, requirement_findings, planning, initial_patch and repair call limits.")
+    _add_execution_trace_arguments(run_parser)
     run_parser.add_argument(
         "--allow-source-disclosure",
         action="store_true",
@@ -1793,13 +1918,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             } if worker_config else {}
             if qualified_selection is not None:
                 configured_worker["qualified_profile_selection"] = qualified_selection
-            from src.mod_agent.patch_execution_trace import PatchExecutionTraceConfiguration
-            trace_sink = None
-            if args.langfuse_metadata:
-                from src.observability.patch_langfuse import LangfuseHttpTransport
-                from src.observability.patch_live_langfuse import PatchLiveLangfuseSink
-                trace_sink = PatchLiveLangfuseSink(LangfuseHttpTransport.from_environment())
-            trace_configuration = PatchExecutionTraceConfiguration(environment=args.trace_environment, sink=trace_sink)
+            trace_configuration = _execution_trace_configuration(args)
             store = ArtifactStore(args.artifact_root)
             result = run_fresh_patch_continuation(
                 request,
@@ -2112,6 +2231,44 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if result.status == "terminal" else 2
 
     if args.command == "apply-patch":
+        if args.resume_approval:
+            from src.mod_agent.reviewed_patch_continuation import resume_deferred_approval
+
+            try:
+                if not all((args.artifact_store_root, args.feature_id, args.checkpoint_path,
+                        args.checkpoint_hash, args.resume_payload, args.human_semantic_decision)):
+                    raise ValueError("DEFERRED_APPROVAL_EXPLICIT_CONFIGURATION_REQUIRED")
+                if any((args.confirm, args.workspace_root, args.run_id, args.isolated_root, args.allow_build, args.build_profile)):
+                    raise ValueError("DEFERRED_APPROVAL_UNRELATED_ARGUMENTS_FORBIDDEN")
+                result = resume_deferred_approval(artifact_store_root=args.artifact_store_root,
+                    checkpoint_ref=ArtifactRef(feature_id=args.feature_id, artifact_type="workflow_checkpoint",
+                        path=args.checkpoint_path, artifact_hash=args.checkpoint_hash),
+                    resume_payload=_load_reviewed_build_resume(args.resume_payload),
+                    human_semantic_decision=read_json_object(args.human_semantic_decision),
+                    execution_trace_configuration=_execution_trace_configuration(args))
+            except (ValueError, RuntimeError, OSError, TypeError) as exc:
+                result = {"entry": "apply-patch", "status": "blocked", "feature_id": args.feature_id,
+                    "reason": str(exc), "execution_outcome": "not_confirmed_check_resume_report_and_apply_artifacts"}
+            print(json.dumps(result, ensure_ascii=False))
+            return 0 if result["status"] == "applied_in_isolation" else 2
+        if args.continue_build:
+            try:
+                if args.human_semantic_decision:
+                    raise ValueError("REVIEWED_BUILD_APPLY_ARGUMENTS_FORBIDDEN")
+                result = _continue_reviewed_build_from_cli(args)
+            except (ValueError, RuntimeError, OSError, TypeError) as exc:
+                result = {"entry": "apply-patch", "status": "blocked", "feature_id": args.feature_id,
+                    "reason": str(exc), "execution_outcome": "not_confirmed_check_resume_report_and_build_artifacts",
+                    "builds_performed": None, "model_calls_performed": 0, "runtime_executions_performed": 0,
+                    "product_source_writes_performed": False,
+                    "resume_report": getattr(exc, "resume_report", None),
+                    "execution_trace": getattr(exc, "execution_trace", None)}
+            print(json.dumps(result, ensure_ascii=False))
+            return 0 if result["status"] == "built" else 1 if result["status"] == "failed" else 2
+        if any((args.allow_build, args.checkpoint_path, args.checkpoint_hash, args.resume_payload, args.build_profile, args.human_semantic_decision)):
+            print(json.dumps({"entry": "apply-patch", "status": "blocked",
+                "reason": "REVIEWED_BUILD_MODE_REQUIRED"}, ensure_ascii=False))
+            return 2
         if args.human_decision_stdin:
             from src.mod_agent.reviewed_patch_continuation import apply_reviewed_patch
 
@@ -2124,7 +2281,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     raise ValueError("APPLY_HUMAN_REQUEST_INVALID")
                 result = apply_reviewed_patch(artifact_store_root=args.artifact_store_root,
                     workspace_root=args.workspace_root, feature_id=args.feature_id, run_id=args.run_id,
-                    isolated_root=args.isolated_root, **request)
+                    isolated_root=args.isolated_root, execution_trace_configuration=_execution_trace_configuration(args), **request)
             except (ValueError, RuntimeError, OSError) as exc:
                 result = {"entry": "apply-patch", "status": "blocked", "run_id": args.run_id,
                     "feature_id": args.feature_id, "reason": str(exc),
@@ -2253,9 +2410,29 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "run-request":
         try:
+            dependency_binding = None
+            if args.game_folder_build_binding:
+                dependency_document = read_json_object(args.game_folder_build_binding)
+                if dependency_document.pop("binding_version", None) != "run_local_game_folder_binding_v1":
+                    raise ValueError("RUN_REQUEST_GAME_FOLDER_BINDING_VERSION_INVALID")
+                dependency_binding = RunLocalGameFolderBindingV1(**dependency_document)
+            external_profile = None
+            if args.external_patch_profile:
+                from .external_patch import ExternalQwenPatchProfile
+                external_profile = ExternalQwenPatchProfile(**read_json_object(args.external_patch_profile))
+            worker_configuration = PatchWorkerConfiguration.load(args.patch_worker_config) if args.patch_worker_config else None
+            stage_limits = read_json_object(args.stage_model_call_limits) if args.stage_model_call_limits else None
+            if stage_limits is not None and (not stage_limits or any(type(value) is not int or value < 1 for value in stage_limits.values())):
+                raise ValueError("RUN_REQUEST_STAGE_MODEL_LIMITS_INVALID")
+            if args.task_model_call_limit is not None and args.task_model_call_limit < 1:
+                raise ValueError("RUN_REQUEST_TASK_MODEL_LIMIT_INVALID")
             result = run_local_request(
                 description=args.description,
                 target_project=args.target_project,
+                run_id=args.run_id,
+                request_id=args.request_id,
+                game_folder_build_binding=dependency_binding,
+                external_patch_profile=external_profile,
                 workspace_base=args.workspace_root,
                 settings_path=args.settings,
                 api_key_env=args.api_key_env,
@@ -2276,6 +2453,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 planning_target_evidence_ids=tuple(
                     args.planning_target_evidence_id
                 ),
+                **({"ollama_timeout_seconds": args.ollama_timeout_seconds}
+                   if args.ollama_timeout_seconds is not None else {}),
+                patch_worker_configuration=worker_configuration,
+                task_model_call_limit=args.task_model_call_limit,
+                stage_model_call_limits=stage_limits,
+                execution_trace_configuration=_execution_trace_configuration(args),
+                defer_approval=bool(args.defer_approval),
             )
         except ProductExecutionPresentationError as exc:
             print(
@@ -2311,7 +2495,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             )
             return 2
-        except LocalEntryError as exc:
+        except (LocalEntryError, OSError, ValueError) as exc:
             print(
                 json.dumps(
                     {"status": "BLOCKED", "reason": str(exc)},
@@ -2321,6 +2505,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        if result.get("status") == "awaiting_approval":
+            return 0
         structured = result.get("product_execution_result")
         if not isinstance(structured, Mapping):
             return 2

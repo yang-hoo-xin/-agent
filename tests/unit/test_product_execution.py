@@ -631,10 +631,15 @@ def _successful_compile_adapters(
     request: ProductExecutionRequestV1,
     *,
     build_exit_codes: list[int] | None = None,
+    physical_apply: bool = False,
 ) -> ProductExecutionAdaptersV1:
     source_path = "generated_mods/Example/Plugin.cs"
     diff_hash = "sha256:" + "d" * 64
     remaining_build_exit_codes = list(build_exit_codes or [0])
+    target = Path(request.isolated_workspace_root) / source_path
+    applier = ExactTextPatchApplier()
+    observed_dry_run = None
+    patch_calls = 0
 
     def evidence_pack_factory(_state, feature_data):
         retrieved_pack = EvidencePack(
@@ -651,8 +656,11 @@ def _successful_compile_adapters(
                     retrieval_method="symbol_exact",
                     score=1.0,
                     claim_supported="Load is the exact selected source symbol.",
-                    excerpt="public void Load() {}",
-                    source_hash="a" * 64,
+                    excerpt=target.read_bytes().decode("utf-8") if physical_apply else "public void Load() {}",
+                    source_ref=str(target) if physical_apply else None,
+                    source_hash=hashlib.sha256(target.read_bytes()).hexdigest() if physical_apply else "a" * 64,
+                    file_hash=hashlib.sha256(target.read_bytes()).hexdigest() if physical_apply else None,
+                    doc_hash=hashlib.sha256(target.read_bytes()).hexdigest() if physical_apply else None,
                     authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
                 ),
             ),
@@ -665,6 +673,8 @@ def _successful_compile_adapters(
         )
 
     def patch_change_factory(_state, implementation, _evidence_pack):
+        nonlocal patch_calls
+        patch_calls += 1
         changes = copy.deepcopy(implementation["proposed_changes"])
         assert len(changes) == 1
         changes[0]["patch"] = {
@@ -673,9 +683,17 @@ def _successful_compile_adapters(
             "after_text": "public void Load() { /* product */ }",
             "expected_occurrences": 1,
         }
+        if physical_apply:
+            changes[0]["patch"].update(before_text=target.read_bytes().decode("utf-8"),
+                after_text=f"public void Load() {{ /* product revision {patch_calls} */ }}\n")
         return tuple(changes)
 
     def dry_run_factory(_proposal, _implementation, _review):
+        nonlocal observed_dry_run
+        if physical_apply:
+            observed_dry_run = applier.run(workspace_root=request.isolated_workspace_root,
+                proposal=_proposal, implementation_plan=_implementation, review=_review, allow_write=False)
+            return observed_dry_run
         return {
             "execution_mode": "dry_run",
             "diff_hash": diff_hash,
@@ -686,6 +704,12 @@ def _successful_compile_adapters(
         }
 
     def isolated_apply_factory(proposal, _implementation, review):
+        if physical_apply:
+            assert observed_dry_run is not None
+            return applier.run(workspace_root=request.isolated_workspace_root,
+                proposal=proposal, implementation_plan=_implementation, review=review, allow_write=True,
+                approved_diff_hash=observed_dry_run["diff_hash"],
+                human_semantic_decision=_human_semantic_approve_from_dry_run(observed_dry_run))
         human_decision = _human_semantic_approve(
             proposal,
             review,
@@ -2875,13 +2899,13 @@ def test_public_product_executor_preserves_repair_attempt_prefixes(
         source_snapshot(Path(request.isolated_target_root))
     )
     request = ProductExecutionRequestV1.from_dict(request_values)
-    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 0])
+    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 0], physical_apply=True)
 
     result = execute_product_execution(
         preflight_product_execution(request, adapters, store), adapters, store
     )
 
-    assert result.execution_disposition == "succeeded"
+    assert result.execution_disposition == "succeeded", (result.failure_stage, [item.message for item in result.blockers])
     build_attempts = [
         item for item in result.store_attempts if item.artifact_role == "build_result"
     ]
@@ -2906,7 +2930,7 @@ def test_product_repair_review_uses_ephemeral_review_context_only_on_repair(
         source_snapshot(Path(request.isolated_target_root))
     )
     request = ProductExecutionRequestV1.from_dict(request_values)
-    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 0])
+    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 0], physical_apply=True)
     review_context_calls: list[str] = []
 
     def proposal_review_context_factory(state, implementation, evidence_pack):
@@ -2922,7 +2946,7 @@ def test_product_repair_review_uses_ephemeral_review_context_only_on_repair(
         preflight_product_execution(request, adapters, store), adapters, store
     )
 
-    assert result.execution_disposition == "succeeded"
+    assert result.execution_disposition == "succeeded", (result.failure_stage, [item.message for item in result.blockers])
     assert review_context_calls == ["patch_proposal"]
     assert [
         item.repair_attempt
@@ -2943,13 +2967,13 @@ def test_public_product_executor_returns_repair_budget_exhaustion_result(
         source_snapshot(Path(request.isolated_target_root))
     )
     request = ProductExecutionRequestV1.from_dict(request_values)
-    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 1, 1])
+    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 1, 1], physical_apply=True)
 
     result = execute_product_execution(
         preflight_product_execution(request, adapters, store), adapters, store
     )
 
-    assert result.platform_status == "completed"
+    assert result.platform_status == "completed", (result.failure_stage, [item.message for item in result.blockers])
     assert result.execution_disposition == "domain_blocked"
     assert result.failure_stage is None
     selected = [
@@ -2960,8 +2984,12 @@ def test_public_product_executor_returns_repair_budget_exhaustion_result(
     assert selected == [
         ("build", 0, "build_result"),
         ("create_repair_plan", 1, "repair_plan"),
+        ("create_repair_plan", 1, "evidence_pack"),
+        ("create_repair_plan", 1, "implementation_plan"),
         ("build", 1, "build_result"),
         ("create_repair_plan", 2, "repair_plan"),
+        ("create_repair_plan", 2, "evidence_pack"),
+        ("create_repair_plan", 2, "implementation_plan"),
         ("build", 2, "build_result"),
         ("create_repair_plan", 2, "repair_plan"),
         ("blocked", 2, "blocked_report"),
@@ -3069,7 +3097,7 @@ def test_strict_replay_rejects_tampered_exhausted_repair_plan(
         source_snapshot(Path(request.isolated_target_root))
     )
     request = ProductExecutionRequestV1.from_dict(values)
-    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 1, 1])
+    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 1, 1], physical_apply=True)
     result = execute_product_execution(
         preflight_product_execution(request, adapters, store), adapters, store
     )
@@ -3244,7 +3272,7 @@ def test_repair_plan_store_failure_keeps_c5_truth_before_payload_validation(
         outcome=outcome,
         occurrence=3,
     )
-    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 1, 1])
+    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 1, 1], physical_apply=True)
 
     result = execute_product_execution(
         preflight_product_execution(request, adapters, store), adapters, store
@@ -3282,7 +3310,7 @@ def test_blocked_report_store_failure_validates_committed_repair_plan_then_keeps
         artifact_role="blocked_report",
         outcome=outcome,
     )
-    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 1, 1])
+    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 1, 1], physical_apply=True)
     result = execute_product_execution(
         preflight_product_execution(request, adapters, store), adapters, store
     )
@@ -3332,7 +3360,7 @@ def test_committed_terminal_repair_plan_readback_failure_is_post_validation_part
         return original_read(ref)
 
     monkeypatch.setattr(store, "read", fail_final_repair_readback)
-    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 1, 1])
+    adapters = _successful_compile_adapters(request, build_exit_codes=[1, 1, 1], physical_apply=True)
 
     result = execute_product_execution(
         preflight_product_execution(request, adapters, store), adapters, store

@@ -1824,6 +1824,144 @@ def admit_active_worker_failure(request, receipt, artifact_store):
 class PatchContinuationAttemptJournal:
     """Atomic non-Artifact receipt for one external Patch attempt and its gates."""
 
+    @classmethod
+    def for_product_execution(
+        cls,
+        *,
+        artifact_root: str | Path,
+        run_id: str,
+        request_id: str,
+        parent_run_id: str,
+        feature_spec_ref: ArtifactRef,
+        evidence_pack_ref: ArtifactRef,
+        implementation_plan_ref: ArtifactRef,
+        workspace_root: str | Path,
+        max_model_calls: int,
+        worker_configuration_ref: Mapping[str, str] | None = None,
+        worker_profile_sha256: str | None = None,
+    ) -> PatchContinuationAttemptJournal:
+        """Bind a Product Graph worker segment without claiming a Fresh continuation.
+
+        This records current owner outputs and source observations. The caller
+        retains execution and disclosure admission; no Repair context is inferred.
+        """
+        if any(type(value) is not str or not value.strip()
+               for value in (run_id, request_id, parent_run_id)) or run_id == parent_run_id:
+            raise PatchContinuationError(
+                "PATCH_PRODUCT_JOURNAL_IDENTITY_INVALID", "patch_attempt_receipt",
+                "A worker segment requires explicit request and distinct parent/run identities.",
+            )
+        if type(max_model_calls) is not int or not 1 <= max_model_calls <= 5:
+            raise PatchContinuationError(
+                "PATCH_CONTINUATION_MODEL_CALL_BUDGET_INVALID", "request",
+                "The worker segment model-call budget must be between one and five.",
+            )
+        selected_refs = (feature_spec_ref, evidence_pack_ref, implementation_plan_ref)
+        try:
+            for ref, kind in zip(selected_refs, ("feature_spec", "evidence_pack", "implementation_plan")):
+                _validate_artifact_ref(ref, field_name=kind + "_ref", expected_type=kind)
+            if len({ref.feature_id for ref in selected_refs}) != 1:
+                raise PatchContinuationError(
+                    "PATCH_CONTINUATION_FEATURE_MISMATCH", "artifact_admission",
+                    "The Product Graph selected refs from different features.",
+                )
+            root = Path(artifact_root).resolve(strict=True)
+            workspace = Path(workspace_root).resolve(strict=True)
+            if not root.is_dir() or not workspace.is_dir():
+                raise OSError("Journal roots must be existing directories.")
+            # Product execution already stores Artifacts beneath its run root;
+            # that workspace may contain the Store, but cannot be inside it.
+            if _is_within(workspace, root):
+                raise PatchContinuationError(
+                    "PATCH_CONTINUATION_ROOTS_OVERLAP", "artifact_admission",
+                    "The product workspace cannot be the ArtifactStore or lie inside it.",
+                )
+            _validate_worker_configuration_identity(
+                worker_configuration_ref, worker_profile_sha256, verify_bytes=True,
+            )
+            store = ArtifactStore(root)
+            envelopes = tuple(_read_selected_exact_revision(
+                store, ref, consumer_stage=None if index == 0 else PATCH_CONSUMER_STAGE,
+            ) for index, ref in enumerate(selected_refs))
+            if any(envelope.get("status") != "success" for envelope in envelopes):
+                raise PatchContinuationError(
+                    "PATCH_CONTINUATION_ARTIFACT_STATUS_INVALID", "artifact_admission",
+                    "A Product Graph worker requires successful selected Artifacts.",
+                )
+            _validate_exact_upstream_set(envelopes[1], (feature_spec_ref,))
+            _validate_exact_upstream_set(envelopes[2], (feature_spec_ref, evidence_pack_ref))
+            feature = strict_feature_spec_payload(envelopes[0]["data"])
+            evidence = EvidencePack.from_artifact_payload(envelopes[1]["data"]).to_artifact_payload()
+            plan = dict(envelopes[2]["data"])
+            if feature["feature_id"] != feature_spec_ref.feature_id or evidence["query"] != feature["user_request"]:
+                raise PatchContinuationError(
+                    "PATCH_CONTINUATION_SEMANTIC_IDENTITY_MISMATCH", "artifact_admission",
+                    "Selected FeatureSpec and EvidencePack semantic identities differ.",
+                )
+            _validate_selected_plan(plan, evidence, feature_id=feature_spec_ref.feature_id)
+            before = _csharp_source_snapshot(workspace)
+            source_validation = _validate_source_items(evidence, workspace)
+            if any(_is_within(workspace / row["source_path"], root)
+                   for row in source_validation["files"]):
+                raise PatchContinuationError(
+                    "PATCH_PRODUCT_JOURNAL_SOURCE_IN_STORE", "source_validation",
+                    "Product target-source evidence must not resolve into the ArtifactStore.",
+                )
+            after = _csharp_source_snapshot(workspace)
+            if before != after:
+                raise PatchContinuationError(
+                    "PATCH_CONTINUATION_SOURCE_HASH_MISMATCH", "source_validation",
+                    "Product source changed while the worker journal was admitted.",
+                )
+        except PlanningContinuationError as exc:
+            raise PatchContinuationError(
+                exc.code.replace("PLANNING_", "PATCH_", 1), exc.stage, exc.reason,
+            ) from exc
+        except (OSError, TypeError, KeyError, ValueError) as exc:
+            if isinstance(exc, PatchContinuationError):
+                raise
+            raise PatchContinuationError(
+                "PATCH_PRODUCT_JOURNAL_INPUT_INVALID", "artifact_admission",
+                "The Product Graph worker journal inputs failed admission.",
+            ) from exc
+
+        selection = {ref.artifact_type: _artifact_ref_dict(ref) for ref in selected_refs}
+        snapshot_hash = _source_tree_snapshot_sha256(after)
+        identity = {
+            "continuation_selection": "product_graph_current_implementation_plan",
+            "run_id": run_id, "request_id": request_id, "parent_run_id": parent_run_id,
+            "artifact_store_root": str(root), "workspace_root": str(workspace),
+            "selected_artifacts": selection, "source_snapshot_sha256": snapshot_hash,
+            "max_model_calls": max_model_calls,
+            "worker_configuration_ref": (dict(worker_configuration_ref)
+                                         if worker_configuration_ref is not None else None),
+            "worker_profile_sha256": worker_profile_sha256,
+        }
+        journal = cls.__new__(cls)
+        locator = hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:32]
+        journal.path = root / "cr" / f"{locator}.json"
+        journal._document = {
+            "receipt_version": PATCH_CONTINUATION_RECEIPT_VERSION,
+            "status": "admitted", "run_id": run_id, "request_id": request_id,
+            "parent_run_id": parent_run_id, "feature_id": feature_spec_ref.feature_id,
+            "continuation_selection": identity["continuation_selection"],
+            "caller": {"workspace_root": str(workspace), "parent_run_id": parent_run_id},
+            "semantic_authority_claimed": False, "selected_artifacts": selection,
+            "latest_observations": {ref.artifact_type: _latest_observation(store, ref)
+                                    for ref in selected_refs},
+            "source_validation": source_validation,
+            "generated_against_snapshot_sha256": snapshot_hash,
+            "current_snapshot_sha256": snapshot_hash,
+            "model_call_count": 0, "proposal_admitted": False, "artifacts": {}, "events": [],
+            "attempt_identity_sha256": _canonical_sha256(identity),
+            "max_model_calls": max_model_calls,
+        }
+        if worker_configuration_ref is not None:
+            journal._document["worker_configuration_ref"] = dict(worker_configuration_ref)
+            journal._document["worker_profile_sha256"] = worker_profile_sha256
+        journal._write(exclusive=True)
+        return journal
+
     def __init__(
         self,
         *,

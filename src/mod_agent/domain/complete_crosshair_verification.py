@@ -8,6 +8,11 @@ from uuid import uuid4
 from src.mod_agent.domain.accurate_crosshair_configuration import (
     ActualCrosshairConfigurationChecker,
 )
+from src.mod_agent.domain.accurate_crosshair_eval import (
+    CONFIG_CASE,
+    CONFIG_CHECKS,
+    CurrentPlanTaskOracle,
+)
 from src.mod_agent.domain.accurate_crosshair_revalidation import CurrentPlanExistingMatrixOracle
 from src.mod_agent.domain.full_project_compilation import FullProjectCompilationChecker, _ref, _save
 from src.mod_agent.local_entry import RunLocalGameFolderBindingV1
@@ -20,15 +25,19 @@ class CompleteCrosshairVerification:
     Completion here means the declared pre-approval checks passed. It never
     claims plugin deployment, Unity startup, automatic watching or gameplay.
     """
-    def __init__(self, *, matrix, compilation, configuration, output_root):
+    def __init__(self, *, matrix, compilation, configuration, output_root, case_id=None):
+        if matrix is None and case_id != CONFIG_CASE:
+            raise ValueError("COMPLETE_VERIFICATION_MATRIX_REQUIRED")
         self.matrix, self.compilation, self.configuration = matrix, compilation, configuration
+        self.case_id = case_id
         self.output_root = Path(output_root)
         self.calls = 0
 
     def verification_identity(self):
-        children = {"matrix": self.matrix.verification_identity(),
-                    "compilation": self.compilation.verification_identity(),
+        children = {"compilation": self.compilation.verification_identity(),
                     "configuration": self.configuration.verification_identity()}
+        if self.matrix is not None:
+            children["matrix"] = self.matrix.verification_identity()
         return {"validator_sha256": canonical_hash({"owner": _ref(__file__), "children": children}),
                 "inputs_sha256": canonical_hash({key: value["inputs_sha256"] for key, value in children.items()}),
                 "environment_sha256": canonical_hash({key: value["environment_sha256"] for key, value in children.items()}),
@@ -46,6 +55,7 @@ class CompleteCrosshairVerification:
         observations, bindings = [], []
         status, owner = "passed", None
         matrix_report = None
+        config = None
         full = self.compilation(context)
         compilation = full.get("changed", full.get("baseline"))
         phases["full_compilation"] = {"status": full["status"], "report_ref": compilation["report_ref"],
@@ -78,7 +88,7 @@ class CompleteCrosshairVerification:
                     observations.append({"check_id": "configuration_execution", "input": {},
                         "expected": "Declared configuration checks execute successfully.",
                         "observed": {"status": status, "report_ref": config["report_ref"]}})
-            else:
+            elif self.matrix is not None:
                 matrix_report = self.matrix(context)
                 status, owner = matrix_report["status"], matrix_report.get("failure_owner")
                 observations = deepcopy(matrix_report["observations"])
@@ -86,6 +96,13 @@ class CompleteCrosshairVerification:
                 phases["behavior_matrix"] = {"status": status, "report_ref": matrix_report["report_ref"],
                     "verification_ref": matrix_report.get("verification_ref"),
                     "verification_summary": matrix_report.get("verification_summary")}
+            else:
+                if tuple(row["check_id"] for row in config["checks"]) != CONFIG_CHECKS:
+                    raise ValueError("COMPLETE_CONFIGURATION_TASK_CHECK_SET_MISMATCH")
+                phases["behavior_matrix"] = {
+                    "status": "not_applicable",
+                    "reason": "task_behavior_measured_on_full_assembly_configuration_without_fixed_source_targets",
+                }
         if owner == "patch_implementation" and matrix_report is None:
             bindings = [row["edit_binding_id"] for row in context["generated_changes"]]
         if self.verification_identity() != identity:
@@ -103,12 +120,26 @@ class CompleteCrosshairVerification:
             "verification_scope": "full_compilation_and_real_configuration_and_original_cold_behavior_matrix_not_runtime"}
         if matrix_report is not None and matrix_report.get("verification_ref") is not None:
             report["verification_ref"] = deepcopy(matrix_report["verification_ref"])
+        if self.case_id is not None:
+            report.update(case_id=self.case_id,
+                verification_scope="full_compilation_and_real_configuration_and_task_behavior_not_runtime")
+        if self.matrix is None and config is not None:
+            report.update(
+                execution_origin=config.get("execution_origin", "unknown"),
+                verification_ref=deepcopy(config["report_ref"]),
+                verification_summary={"checks": len(config["checks"]),
+                    "failed_checks": sum(not row["passed"] for row in config["checks"]),
+                    "executions": len(config["observations"])},
+                verification_scope="full_compilation_and_real_configuration_task_behavior_not_runtime",
+            )
         return {**report, "report_ref": _save(destination / "report.json", report)}
 
 
 def make_complete_crosshair_evaluator(*, matrix_kwargs, compilation_kwargs, configuration_kwargs,
-                                     output_root, baseline_compilation_ref=None):
+                                     output_root, baseline_compilation_ref=None, case_id=None):
     """Select via the existing worker factory_ref/factory_name/kwargs contract."""
+    if case_id not in (None, CONFIG_CASE):
+        raise ValueError("COMPLETE_VERIFICATION_CASE_UNSUPPORTED")
     run_scope = uuid4().hex[:16]
     parameters = deepcopy(compilation_kwargs)
     if baseline_compilation_ref is None:
@@ -122,5 +153,14 @@ def make_complete_crosshair_evaluator(*, matrix_kwargs, compilation_kwargs, conf
     compilation = FullProjectCompilationChecker(**parameters)
     if baseline_compilation_ref is not None:
         compilation.adopt_baseline(baseline_compilation_ref)
-    return CompleteCrosshairVerification(matrix=CurrentPlanExistingMatrixOracle(**matrix_kwargs),
-        compilation=compilation, configuration=ActualCrosshairConfigurationChecker(**config_parameters), output_root=Path(output_root) / run_scope)
+    if case_id is None:
+        matrix = CurrentPlanExistingMatrixOracle(**matrix_kwargs)
+    elif matrix_kwargs is not None:
+        matrix = CurrentPlanTaskOracle(case_id=case_id, **matrix_kwargs)
+        config_parameters["case_id"] = case_id
+    else:
+        matrix = None
+        config_parameters["case_id"] = case_id
+    return CompleteCrosshairVerification(matrix=matrix, compilation=compilation,
+        configuration=ActualCrosshairConfigurationChecker(**config_parameters),
+        output_root=Path(output_root) / run_scope, case_id=case_id)

@@ -74,8 +74,12 @@ class FullProjectCompilationChecker:
 
     def __init__(self, *, source_root, project_relative_path, artifact_store_root,
                  dependency_binding: RunLocalGameFolderBindingV1, nuget_config_ref,
-                 output_root, expected_artifact, timeout_seconds=120, build_runner=None):
+                 output_root, expected_artifact, timeout_seconds=120, build_runner=None,
+                 workspace_root=None):
         self.source_root = Path(source_root).resolve(strict=True)
+        self.workspace_root = (Path(workspace_root).resolve(strict=True)
+                               if workspace_root is not None else self.source_root)
+        self._source_prefix = self.source_root.relative_to(self.workspace_root).as_posix()
         self.project_relative_path = project_relative_path
         self.project = _within(self.source_root, project_relative_path)
         if not self.project.is_file() or self.project.suffix != ".csproj":
@@ -134,12 +138,14 @@ class FullProjectCompilationChecker:
             raise ValueError("FULL_COMPILE_SOURCE_CHANGED")
         if _ref(self.nuget_config_ref["path"]) != self.nuget_config_ref:
             raise ValueError("FULL_COMPILE_NUGET_CONFIG_CHANGED")
+        coordinate = ({"plan_source_prefix": self._source_prefix}
+                      if self.workspace_root != self.source_root else {})
         return {"validator_sha256": canonical_hash({"checker": _ref(__file__),
                     "build_adapter": _ref(Path(__file__).parents[1] / "build/adapter.py"),
                     "build_execution_owner": _ref(Path(__file__).parents[1] / "local_entry.py")}),
                 "inputs_sha256": canonical_hash({"sources": self._source_identity,
                     "project": self.project_relative_path, "expected_artifact": self.expected_artifact,
-                    "nuget_config": self.nuget_config_ref}),
+                    "nuget_config": self.nuget_config_ref, **coordinate}),
                 "environment_sha256": canonical_hash(self.dependency_binding.to_dict()),
                 "environment_identity_scope": "exact_game_dependency_tree_and_declared_build_profile_not_entire_host",
                 "deterministic_reuse_allowed": False}
@@ -295,7 +301,7 @@ class FullProjectCompilationChecker:
         if (len(by_id) != len(submitted) or len(changes) != len(submitted)
                 or set(by_id) != {row["edit_binding_id"] for row in changes}):
             raise ValueError("FULL_COMPILE_RESPONSE_CHANGE_SET_MISMATCH")
-        materialized = materialize_exact_text_patch(workspace_root=self.source_root, diff_intent=changes, implementation_plan=plan)
+        materialized = materialize_exact_text_patch(workspace_root=self.workspace_root, diff_intent=changes, implementation_plan=plan)
         identity = {"baseline_sha256": materialized.baseline_sha256, "code_sha256": materialized.code_sha256,
                     "files": sorted(materialized.files)}
         if identity != context["materialized_code_identity"]:
@@ -311,7 +317,17 @@ class FullProjectCompilationChecker:
             ):
                 raise ValueError("FULL_COMPILE_MODEL_CODE_CHANGED")
         self._calls += 1
-        changed = self._compile(label=f"version-{self._calls:03d}", files=materialized.files,
+        # Canonical Plan paths stay relative to the product workspace. Compile
+        # only the explicitly selected project tree, not its changing journals.
+        project_files = {}
+        for relative, content in materialized.files.items():
+            path = _within(self.workspace_root, relative)
+            try:
+                project_relative = path.relative_to(self.source_root).as_posix()
+            except ValueError as exc:
+                raise ValueError("FULL_COMPILE_CHANGE_OUTSIDE_SELECTED_PROJECT") from exc
+            project_files[project_relative] = content
+        changed = self._compile(label=f"version-{self._calls:03d}", files=project_files,
             code_identity=identity, plan_ref=context["implementation_plan_ref"],
             response_ref={"path": response["path"], "sha256": response["output_sha256"]})
         return {"status": changed["status"], "failure_owner": changed["failure_owner"],

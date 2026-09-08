@@ -107,6 +107,56 @@ class ExternalQwenPatchProfile:
         return result
 
 
+def _validate_external_disclosure(profile, record, requested):
+    if not isinstance(record, dict) or record.get("scope") != "this_run_only" or not record.get("approval_id"):
+        raise ExternalPatchError("EXTERNAL_PATCH_CURRENT_RUN_DISCLOSURE_REQUIRED")
+    destination = record.get("destination") or {}
+    if (destination.get("provider") != "qwen_chat" or destination.get("model") != profile.model
+            or destination.get("base_url") != profile.base_url
+            or destination.get("request_url") != profile.base_url + "/chat/completions"):
+        raise ExternalPatchError("EXTERNAL_PATCH_DISCLOSURE_DESTINATION_MISMATCH")
+    allowed = (*SOURCE_DISCLOSURE_DATA_CLASSES, *PATCH_FEEDBACK_DATA_CLASSES)
+    classes = record.get("approved_data_classes")
+    if not isinstance(classes, list) or any(value not in allowed for value in classes) or len(set(classes)) != len(classes):
+        raise ExternalPatchError("EXTERNAL_PATCH_DISCLOSURE_CLASSES_INVALID")
+    _verify_source_disclosure(record, requested_data_classes=requested)
+
+
+def read_external_qwen_model_identity(profile):
+    """Read the existing exact Qwen catalogue contract without source material."""
+    key = os.environ.get(profile.credential_env)
+    if not key:
+        raise ExternalPatchError("EXTERNAL_PATCH_CREDENTIAL_UNAVAILABLE")
+    for page in range(1, 4):
+        try:
+            with httpx.Client(timeout=profile.timeout_seconds, trust_env=False, follow_redirects=False) as client:
+                response = client.get(profile.model_catalog_url,
+                    params={"page_no": page, "page_size": 100}, headers={"Authorization": "Bearer " + key})
+            if response.status_code != 200 or len(response.content) > MAX_RESPONSE_BYTES:
+                raise ExternalPatchError("EXTERNAL_PATCH_MODEL_CATALOG_UNAVAILABLE")
+            payload = response.json()
+            output = payload.get("output") if isinstance(payload, dict) else None
+            models = output.get("models") if isinstance(output, dict) else None
+            if not isinstance(models, list):
+                raise ExternalPatchError("EXTERNAL_PATCH_MODEL_CATALOG_INVALID")
+            matched = [row for row in models if isinstance(row, dict) and row.get("model") == profile.model]
+            if len(matched) == 1:
+                return {"provider": "qwen_chat", "model": profile.model, "model_digest": None,
+                    "availability": "catalogue_listing_not_generation_acceptance", "catalog_model_id": matched[0]["model"],
+                    "catalog_response_sha256": hashlib.sha256(response.content).hexdigest(),
+                    "catalogue_url": profile.model_catalog_url,
+                    "observed_at": datetime.now(timezone.utc).isoformat(), "execution_locality": "external"}
+            if matched:
+                raise ExternalPatchError("EXTERNAL_PATCH_MODEL_CATALOG_AMBIGUOUS")
+            if len(models) < 100:
+                break
+        except (httpx.HTTPError, ValueError) as exc:
+            if isinstance(exc, ExternalPatchError):
+                raise
+            raise ExternalPatchError("EXTERNAL_PATCH_MODEL_CATALOG_UNAVAILABLE") from None
+    raise ExternalPatchError("EXTERNAL_PATCH_MODEL_NOT_LISTED")
+
+
 class ExternalQwenPatchAdapter(LocalOllamaInitialPatchAdapter):
     """Reuse the same tool/generation/feedback implementation through provider hooks."""
 
@@ -154,19 +204,7 @@ class ExternalQwenPatchAdapter(LocalOllamaInitialPatchAdapter):
                 raise ExternalPatchError("EXTERNAL_PATCH_INDEPENDENT_SOURCE_ONLY_REQUIRED")
 
     def _validate_disclosure(self, requested):
-        record = self._disclosure
-        if not isinstance(record, dict) or record.get("scope") != "this_run_only" or not record.get("approval_id"):
-            raise ExternalPatchError("EXTERNAL_PATCH_CURRENT_RUN_DISCLOSURE_REQUIRED")
-        destination = record.get("destination") or {}
-        if (destination.get("provider") != "qwen_chat" or destination.get("model") != self.profile.model
-                or destination.get("base_url") != self.profile.base_url
-                or destination.get("request_url") != self.profile.base_url + "/chat/completions"):
-            raise ExternalPatchError("EXTERNAL_PATCH_DISCLOSURE_DESTINATION_MISMATCH")
-        allowed = (*SOURCE_DISCLOSURE_DATA_CLASSES, *PATCH_FEEDBACK_DATA_CLASSES)
-        classes = record.get("approved_data_classes")
-        if not isinstance(classes, list) or any(value not in allowed for value in classes) or len(set(classes)) != len(classes):
-            raise ExternalPatchError("EXTERNAL_PATCH_DISCLOSURE_CLASSES_INVALID")
-        _verify_source_disclosure(record, requested_data_classes=requested)
+        _validate_external_disclosure(self.profile, self._disclosure, requested)
 
     def _credential(self):
         key = os.environ.get(self.profile.credential_env)
@@ -175,35 +213,7 @@ class ExternalQwenPatchAdapter(LocalOllamaInitialPatchAdapter):
         return key
 
     def _catalog(self):
-        key = self._credential()
-        for page in range(1, 4):
-            try:
-                with httpx.Client(timeout=self.profile.timeout_seconds, trust_env=False, follow_redirects=False) as client:
-                    response = client.get(self.profile.model_catalog_url,
-                        params={"page_no": page, "page_size": 100}, headers={"Authorization": "Bearer " + key})
-                if response.status_code != 200 or len(response.content) > MAX_RESPONSE_BYTES:
-                    raise ExternalPatchError("EXTERNAL_PATCH_MODEL_CATALOG_UNAVAILABLE")
-                payload = response.json()
-                output = payload.get("output") if isinstance(payload, dict) else None
-                models = output.get("models") if isinstance(output, dict) else None
-                if not isinstance(models, list):
-                    raise ExternalPatchError("EXTERNAL_PATCH_MODEL_CATALOG_INVALID")
-                matched = [row for row in models if isinstance(row, dict) and row.get("model") == self.profile.model]
-                if len(matched) == 1:
-                    return {"provider": "qwen_chat", "model": self.profile.model, "model_digest": None,
-                        "availability": "catalogue_listing_not_generation_acceptance", "catalog_model_id": matched[0]["model"],
-                        "catalog_response_sha256": hashlib.sha256(response.content).hexdigest(),
-                        "catalogue_url": self.profile.model_catalog_url,
-                        "observed_at": datetime.now(timezone.utc).isoformat(), "execution_locality": "external"}
-                if matched:
-                    raise ExternalPatchError("EXTERNAL_PATCH_MODEL_CATALOG_AMBIGUOUS")
-                if len(models) < 100:
-                    break
-            except (httpx.HTTPError, ValueError) as exc:
-                if isinstance(exc, ExternalPatchError):
-                    raise
-                raise ExternalPatchError("EXTERNAL_PATCH_MODEL_CATALOG_UNAVAILABLE") from None
-        raise ExternalPatchError("EXTERNAL_PATCH_MODEL_NOT_LISTED")
+        return read_external_qwen_model_identity(self.profile)
 
     def _admit_model_identity(self, state, implementation, evidence_pack):
         self._active_evidence = deepcopy(evidence_pack)
@@ -425,6 +435,78 @@ class ExternalQwenPatchAdapter(LocalOllamaInitialPatchAdapter):
             return response
 
         return SimpleNamespace(provider=recorded.provider, model=recorded.model, complete_turn=complete_turn)
+
+
+def validate_run_request_external_profile(profile, *, model, base_url, credential_env):
+    """Admit operator-supplied facts before run-request can call any upstream model."""
+    if not isinstance(profile, ExternalQwenPatchProfile):
+        raise ExternalPatchError("EXTERNAL_PATCH_RUN_REQUEST_PROFILE_REQUIRED")
+    if (profile.model != model or profile.base_url != base_url or profile.credential_env != credential_env):
+        raise ExternalPatchError("EXTERNAL_PATCH_RUN_REQUEST_PROFILE_MISMATCH")
+    return profile
+
+
+class RunRequestExternalAssembly:
+    """Provider-only assembly for the original Planning and shared Patch owners."""
+
+    def __init__(self, *, profile, source_disclosure):
+        self.profile = profile
+        self.disclosure = deepcopy(source_disclosure)
+        _validate_external_disclosure(profile, self.disclosure, SOURCE_DISCLOSURE_DATA_CLASSES)
+        # This reads catalogue metadata only, before any source-bearing upstream
+        # request. Listing is never reported as generation acceptance.
+        self.identity = read_external_qwen_model_identity(profile)
+
+    def read_identity(self, base_url, model):
+        if (base_url, model) != (self.profile.base_url, self.profile.model):
+            raise ExternalPatchError("EXTERNAL_PATCH_RUN_REQUEST_PROFILE_MISMATCH")
+        return read_external_qwen_model_identity(self.profile)
+
+    def make_worker(self, *, profile, artifact_store, workspace_root, patch_agent_loop_policy,
+                    identity_reader, behavior_evaluator, enable_recovery_loop):
+        if profile != self.profile:
+            raise ExternalPatchError("EXTERNAL_PATCH_RUN_REQUEST_PROFILE_MISMATCH")
+        root = Path(workspace_root).resolve(strict=True)
+        sources = {path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+                   for path in root.rglob("*.cs")}
+        return ExternalQwenPatchAdapter(profile=profile, artifact_store=artifact_store, workspace_root=root,
+            patch_agent_loop_policy=patch_agent_loop_policy, behavior_evaluator=behavior_evaluator,
+            enable_recovery_loop=enable_recovery_loop, source_disclosure=self.disclosure,
+            approved_source_files=sources)
+
+    def planning_client(self):
+        profile = self.profile
+        key = os.environ.get(profile.credential_env)
+        if not key:
+            raise ExternalPatchError("EXTERNAL_PATCH_CREDENTIAL_UNAVAILABLE")
+
+        def send(url, payload, headers):
+            if url != profile.base_url + "/chat/completions" or payload.get("model") != profile.model:
+                raise ExternalPatchError("EXTERNAL_PATCH_SEND_ENDPOINT_MISMATCH")
+            _validate_external_disclosure(profile, self.disclosure, SOURCE_DISCLOSURE_DATA_CLASSES)
+            wire = httpx.Request("POST", url, json=payload).content
+            if len(wire) + profile.output_budget > profile.context_window:
+                raise ExternalPatchError("EXTERNAL_PATCH_REQUEST_CONTEXT_PROXY_EXCEEDED")
+            try:
+                with httpx.Client(timeout=profile.timeout_seconds, trust_env=False, follow_redirects=False) as client:
+                    response = client.post(url, content=wire, headers=headers)
+                if response.status_code != 200 or len(response.content) > MAX_RESPONSE_BYTES:
+                    raise ExternalPatchError("EXTERNAL_PATCH_PLANNING_RESPONSE_UNAVAILABLE")
+                return response.json()
+            except httpx.HTTPError:
+                raise ExternalPatchError("EXTERNAL_PATCH_PLANNING_TRANSPORT_FAILED") from None
+
+        client = QwenChatAgentAdapter(api_key=key, base_url=profile.base_url, model=profile.model,
+            max_completion_tokens=profile.output_budget, request_sender=send)
+
+        def complete_turn(request):
+            response = client.complete_turn(request)
+            if (response.model != profile.model or response.provider != "qwen_chat"
+                    or not isinstance(response.raw_response, dict) or response.raw_response.get("model") != profile.model):
+                raise ExternalPatchError("EXTERNAL_PATCH_RESPONSE_MODEL_MISMATCH")
+            return response
+
+        return SimpleNamespace(provider=client.provider, model=client.model, complete_turn=complete_turn)
 
 
 def run_external_patch_continuation(request, *, profile, worker_configuration, source_disclosure=None,

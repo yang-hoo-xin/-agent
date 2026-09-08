@@ -6,6 +6,7 @@ import hashlib
 import json
 import subprocess
 from collections.abc import Callable, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -14,12 +15,10 @@ from urllib.parse import urlsplit, urlunsplit
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore, ArtifactWriteResult
 from src.mod_agent.domain import GTFOAdapter, UnsupportedDomainAdapter
 from src.mod_agent.execution import ExactDiffApprovalRejectedError
-from src.mod_agent.runtime import (
-    GTFORuntimeAutomationError,
-    build_gtfo_runtime_capability_report,
-    build_gtfo_stagger_acceptance_report,
-    profile_from_settings,
-    stagger_profile_from_settings,
+from src.mod_agent.git.admission import GitAdmissionError, StrictGitAdmission
+from src.mod_agent.model_admission import (
+    local_model_admission_record,
+    local_no_external_disclosure_record,
 )
 from src.mod_agent.product_execution import (
     PRODUCT_EXECUTION_DECLARATION,
@@ -40,14 +39,15 @@ from src.mod_agent.product_execution import (
     ProductRuntimeCompletionV1,
     project_product_execution_result,
 )
+from src.mod_agent.runtime import (
+    GTFORuntimeAutomationError,
+    build_gtfo_runtime_capability_report,
+    build_gtfo_stagger_acceptance_report,
+    profile_from_settings,
+    stagger_profile_from_settings,
+)
 from src.mod_agent.workflow.graph import build_graph
 from src.mod_agent.workflow.state import create_initial_state
-from src.mod_agent.git.admission import GitAdmissionError, StrictGitAdmission
-from src.mod_agent.model_admission import (
-    local_model_admission_record,
-    local_no_external_disclosure_record,
-)
-
 
 SOURCE_DISCLOSURE_DATA_CLASSES = (
     "natural_language_request",
@@ -882,7 +882,36 @@ class ProductExecutionPresentationError(RuntimeError):
         self.sink = sink
 
 
-class _ProductStoreStopped(RuntimeError):
+class ProductApprovalDeferred(RuntimeError):  # noqa: N818 - intentional control pause, not failure
+    """An intentional approval pause, not a failed or rejected typed terminal."""
+
+    def __init__(self, *, request, checkpoint_ref, dry_run_ref, dry_run, outputs, effect_events):
+        super().__init__("The saved exact diff awaits human semantic approval.")
+        self.request = request
+        self.checkpoint_ref = checkpoint_ref
+        self.dry_run_ref = dry_run_ref
+        self.outputs = outputs
+        self.effect_events = effect_events
+        self._dry_run = dry_run
+
+    def to_dict(self):
+        def reference(ref):
+            return {name: getattr(ref, name) for name in ("feature_id", "artifact_type", "path", "artifact_hash")}
+
+        return {
+            "status": "awaiting_approval", "run_id": self.request.run_id,
+            "request_id": self.request.request_id, "feature_id": self.checkpoint_ref.feature_id,
+            "isolated_workspace": self.request.isolated_workspace_root,
+            "workflow_checkpoint": reference(self.checkpoint_ref), "dry_run_result": reference(self.dry_run_ref),
+            "diff_hash": self._dry_run["diff_hash"], "unified_diff": self._dry_run["unified_diff"],
+            "unified_diff_sha256": self._dry_run["unified_diff_sha256"],
+            "human_semantic_decision_binding": self._dry_run["human_semantic_decision_binding"],
+            "product_source_writes_performed": False, "builds_performed": 0,
+            "runtime_executions_performed": 0, "approval_recorded": False, "stopped_before": "isolated_apply",
+        }
+
+
+class _ProductStoreStopped(RuntimeError):  # noqa: N818 - existing control-flow signal
     pass
 
 
@@ -895,10 +924,12 @@ class _ProductStoreRecorder:
         self.outputs: list[ProductExecutionOutputV1] = []
         self.effect_events: list[ProductExecutionEffectEventV1] = []
         self._repair_attempt = 0
-        self._role_owner = {
-            role: node for node, role in PRODUCT_EXECUTION_DECLARATION.node_store_roles
-        }
+        self._role_owner: dict[str, str] = {}
+        for node, role in PRODUCT_EXECUTION_DECLARATION.node_store_roles:
+            self._role_owner.setdefault(role, node)
         self._phase_by_node = PRODUCT_EXECUTION_DECLARATION.phase_by_node
+        self._repair_source_scope: ArtifactRef | None = None
+        self._repair_source_roles: list[str] = []
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._store, name)
@@ -907,9 +938,61 @@ class _ProductStoreRecorder:
     def current_repair_attempt(self) -> int:
         return self._repair_attempt
 
+    @contextmanager
+    def repair_source_revision_scope(self, repair_ref: ArtifactRef):
+        """Record physical revisions written by the existing Repair Graph node."""
+        if (self._repair_source_scope is not None or not self.attempts
+                or self.attempts[-1].node_name != "create_repair_plan"
+                or self.attempts[-1].artifact_role != "repair_plan"
+                or self.attempts[-1].store_result.artifact_ref != repair_ref
+                or self.attempts[-1].store_result.outcome != "committed"
+                or self._repair_attempt < 1):
+            raise ProductExecutionContractError("Repair source revisions require the just-committed Repair owner.",
+                                                side_effects_may_have_started=True)
+        envelope = self._store.semantic_read_immutable(repair_ref)
+        repair = envelope["data"]
+        if (envelope["status"] != "success" or repair.get("failure_source") != "build"
+                or repair.get("blockers") or repair.get("allowed_next_stage") != "generate_patch_proposal"):
+            raise ProductExecutionContractError("Repair source revision scope has no admitted Build repair.",
+                                                side_effects_may_have_started=True)
+        self._repair_source_scope, self._repair_source_roles = repair_ref, []
+        try:
+            yield
+            if self._repair_source_roles != ["evidence_pack", "implementation_plan"]:
+                raise ProductExecutionContractError("Repair source revision scope must publish Evidence then Plan once.",
+                                                    side_effects_may_have_started=True)
+        finally:
+            self._repair_source_scope, self._repair_source_roles = None, []
+
+    def _validate_repair_source_write(self, kwargs: Mapping[str, Any]) -> None:
+        ref = self._repair_source_scope
+        if ref is None:
+            return
+        expected = ("evidence_pack", "implementation_plan")
+        index = len(self._repair_source_roles)
+        role = kwargs.get("artifact_type")
+        if (index >= len(expected) or role != expected[index] or kwargs.get("feature_id") != ref.feature_id
+                or f"{ref.path}#sha256={ref.artifact_hash}" not in kwargs.get("trace_refs", [])):
+            raise ProductExecutionContractError("Repair source Store roles or exact owner binding changed.",
+                                                side_effects_may_have_started=True)
+        if role == "evidence_pack":
+            provenance = kwargs["payload"].get("provenance_validation", {}).get("repair_source_reanchoring", {})
+            if (provenance.get("repair_plan_ref") != {"path": ref.path, "artifact_hash": ref.artifact_hash}
+                    or provenance.get("findings_reexecuted") is not False
+                    or provenance.get("planning_model_reexecuted") is not False
+                    or provenance.get("approval_inherited") is not False):
+                raise ProductExecutionContractError("Physical repair revision must not claim a new semantic model decision.",
+                                                    side_effects_may_have_started=True)
+        else:
+            evidence_ref = self.attempts[-1].store_result.artifact_ref
+            upstream_refs = kwargs.get("upstream_refs", [])
+            if evidence_ref is None or evidence_ref not in upstream_refs:
+                raise ProductExecutionContractError("Repair Plan must bind its just-observed Evidence revision.",
+                                                    side_effects_may_have_started=True)
+
     def _record(self, result: ArtifactWriteResult, *, payload: Mapping[str, Any]) -> None:
         role = result.artifact_type
-        node = self._role_owner.get(role)
+        node = "create_repair_plan" if self._repair_source_scope is not None else self._role_owner.get(role)
         if node is None:
             raise ProductExecutionContractError(
                 f"Product Graph attempted undeclared Store role {role}.",
@@ -933,6 +1016,8 @@ class _ProductStoreRecorder:
             store_result=result,
         )
         self.attempts.append(attempt)
+        if self._repair_source_scope is not None:
+            self._repair_source_roles.append(role)
         if result.outcome == "committed":
             if result.artifact_ref is None:
                 raise ProductExecutionContractError(
@@ -958,6 +1043,7 @@ class _ProductStoreRecorder:
             )
 
     def write(self, **kwargs: Any) -> ArtifactRef:
+        self._validate_repair_source_write(kwargs)
         result = self._store.write_with_result(**kwargs)
         self._record(result, payload=kwargs["payload"])
         if result.artifact_ref is None:
@@ -968,6 +1054,7 @@ class _ProductStoreRecorder:
         return result.artifact_ref
 
     def write_with_result(self, **kwargs: Any) -> ArtifactWriteResult:
+        self._validate_repair_source_write(kwargs)
         result = self._store.write_with_result(**kwargs)
         self._record(result, payload=kwargs["payload"])
         return result
@@ -1033,6 +1120,17 @@ class _ProductStoreRecorder:
             )
             return result
 
+        # Preserve the existing worker's reporting/control hooks across effect
+        # accounting. They do not grant a route or create another executor.
+        for name in ("bind_upstream_effects", "bind_attempt_recorder", "patch_attempt_receipt"):
+            hook = getattr(factory, name, None)
+            if hook is not None:
+                if not callable(hook):
+                    raise ProductExecutionContractError(
+                        f"Product adapter {name} must be callable.",
+                        side_effects_may_have_started=False,
+                    )
+                setattr(wrapped, name, hook)
         return wrapped
 
 
@@ -1431,9 +1529,12 @@ def execute_product_execution(
     artifact_store: ArtifactStore,
     *,
     strict_git_admission: StrictGitAdmission | None = None,
+    defer_approval: bool = False,
 ) -> ProductExecutionResultV1:
     """Execute the existing StateGraph exactly once and freeze one machine result."""
 
+    if type(defer_approval) is not bool:
+        raise ValueError("defer_approval must be boolean.")
     if not isinstance(preflight, ProductExecutionPreflightResultV1) or preflight.preflight_status != "ready":
         raise ProductExecutionContractError(
             "Product execute requires a ready ProductExecutionPreflightResultV1.",
@@ -1453,11 +1554,35 @@ def execute_product_execution(
         )
     initial_isolated_snapshot = source_snapshot(Path(request.isolated_target_root))
     recorder = _ProductStoreRecorder(artifact_store)
+
+    def await_exact_approval(_proposal, _implementation, _review):
+        from langgraph.types import interrupt
+
+        from src.mod_agent.workflow.interrupts import InterruptRequest
+
+        dry_output = _output_by_role(tuple(recorder.outputs), "dry_run_result")
+        if dry_output is None:
+            raise ProductExecutionContractError("Approval pause requires the committed DryRunResult.",
+                side_effects_may_have_started=True)
+        dry = artifact_store.semantic_read_immutable(dry_output.artifact_ref)["data"]
+        pending = InterruptRequest(interrupt_id="approval_" + request.run_id,
+            run_id=request.run_id, feature_id=dry_output.artifact_ref.feature_id, stage="dry_run_apply",
+            reason="The complete exact diff awaits human semantic approval before isolated Apply.",
+            payload={"diff_hash": dry["diff_hash"], "unified_diff": dry["unified_diff"],
+                "human_semantic_decision_binding": dry["human_semantic_decision_binding"]},
+            resume_allowed_fields=("approvals.dry_run",),
+            artifact_refs=tuple(item.artifact_ref.path for item in recorder.outputs))
+        interrupt(pending.to_dict())
+        raise ProductExecutionContractError(
+            "Deferred approval resumes only through its persisted exact checkpoint and approved diff.",
+            side_effects_may_have_started=False)
+
     wrapped = ProductExecutionAdaptersV1(
         evidence_pack_factory=recorder.wrap_effect(effect_role="evidence_retrieval", node_name="retrieve_evidence", factory=adapters.evidence_pack_factory),
         patch_change_factory=recorder.wrap_effect(effect_role="patch_generation", node_name="generate_patch_proposal", factory=adapters.patch_change_factory),
         dry_run_factory=recorder.wrap_effect(effect_role="dry_run", node_name="dry_run_apply", factory=adapters.dry_run_factory),
-        isolated_apply_factory=recorder.wrap_effect(effect_role="isolated_apply", node_name="isolated_apply", factory=adapters.isolated_apply_factory),
+        isolated_apply_factory=(await_exact_approval if defer_approval else recorder.wrap_effect(
+            effect_role="isolated_apply", node_name="isolated_apply", factory=adapters.isolated_apply_factory)),
         build_result_factory=recorder.wrap_effect(effect_role="build", node_name="build", factory=adapters.build_result_factory),
         runtime_evidence_factory=recorder.wrap_effect(effect_role="runtime", node_name="collect_runtime_evidence", factory=adapters.runtime_evidence_factory),
         compiled_artifact_verifier=adapters.compiled_artifact_verifier,
@@ -1467,6 +1592,9 @@ def execute_product_execution(
             adapters.planning_target_selection_factory
         ),
     )
+    if defer_approval:
+        from src.mod_agent.workflow.checkpointing import WorkflowCheckpointStore
+
     graph = build_graph(
         recorder,
         evidence_pack_factory=wrapped.evidence_pack_factory,
@@ -1488,6 +1616,7 @@ def execute_product_execution(
         product_execution_mode=ProductExecutionGraphModeV1(
             contract_version="1", request=request
         ),
+        **({"checkpointer": WorkflowCheckpointStore.langgraph_memory_checkpointer()} if defer_approval else {}),
     )
     state = create_initial_state(
         run_id=request.run_id,
@@ -1500,8 +1629,9 @@ def execute_product_execution(
     graph_result: Mapping[str, Any] = state
     platform_blockers: tuple[ProductExecutionBlockerV1, ...] = ()
     failure_stage: str | None = None
+    config = {"configurable": {"thread_id": request.run_id}} if defer_approval else None
     try:
-        graph_result = graph.invoke(state)
+        graph_result = graph.invoke(state, config) if defer_approval else graph.invoke(state)
     except _ProductStoreStopped:
         last = recorder.attempts[-1]
         failure_stage = f"{last.artifact_role}_store"
@@ -1533,6 +1663,30 @@ def execute_product_execution(
                 node,
             ),
         )
+    if defer_approval and graph_result.get("__interrupt__"):
+        snapshot = graph.get_state(config)
+        paused = dict(snapshot.values)
+        if (paused.get("current_stage") != "dry_run_apply" or tuple(snapshot.next) != ("isolated_apply",)
+                or "isolated_apply_result" in paused["artifacts"]
+                or any(item.effect_role in {"isolated_apply", "build", "runtime"} for item in recorder.effect_events)):
+            raise ProductExecutionContractError("Approval pause did not occur at the exact no-write boundary.",
+                side_effects_may_have_started=True)
+        if source_snapshot_sha256(source_snapshot(Path(request.source_root))) != request.source_snapshot_sha256:
+            raise ProductExecutionContractError("Canonical source changed before approval pause.", side_effects_may_have_started=True)
+        if source_snapshot_sha256(source_snapshot(Path(request.isolated_target_root))) != request.isolated_source_snapshot_sha256:
+            raise ProductExecutionContractError("Isolated source changed before approval pause.", side_effects_may_have_started=True)
+        # The existing typed decoder validates field order. Retain its own
+        # serialized representation intact across the Store's sorted envelope.
+        paused["runtime_summary"] = {**paused["runtime_summary"],
+            "deferred_product_request_json": json.dumps(request.to_dict(), ensure_ascii=False, separators=(",", ":"))}
+        checkpoint_ref = WorkflowCheckpointStore(artifact_store).create_checkpoint(paused,
+            interrupt_reason="The saved exact diff awaits human semantic approval before isolated Apply.",
+            resume_allowed_fields=("approvals.dry_run",))
+        dry_ref = ArtifactRef(feature_id=paused["feature_id"], artifact_type="dry_run_result",
+            path=paused["artifacts"]["dry_run_result"], artifact_hash=paused["artifact_hashes"]["dry_run_result"])
+        raise ProductApprovalDeferred(request=request, checkpoint_ref=checkpoint_ref, dry_run_ref=dry_ref,
+            dry_run=artifact_store.semantic_read_immutable(dry_ref)["data"],
+            outputs=tuple(recorder.outputs), effect_events=tuple(recorder.effect_events))
     attempts = tuple(recorder.attempts)
     outputs = tuple(recorder.outputs)
     terminal = (

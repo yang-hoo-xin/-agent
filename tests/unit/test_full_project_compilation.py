@@ -85,6 +85,27 @@ def test_failed_baseline_stops_before_any_changed_code_compilation(tmp_path, mon
     assert result["changed_compilation_performed"] is False and len(calls) == 1
 
 
+def test_product_plan_root_is_separate_from_the_compiled_project_tree(tmp_path, monkeypatch):
+    inputs, context, original, calls, _ = _checker(tmp_path, monkeypatch)
+    project_root = inputs.behavior.parent
+    checker = FullProjectCompilationChecker(
+        source_root=project_root, workspace_root=inputs.workspace,
+        project_relative_path=original.project.name, artifact_store_root=inputs.store.root,
+        dependency_binding=original.dependency_binding, nuget_config_ref=original.nuget_config_ref,
+        output_root=tmp_path / "product-checks", expected_artifact=original.expected_artifact,
+        build_runner=original._runner,
+    )
+    before = checker.verification_identity()
+    journal = inputs.workspace / "a" / "progress.json"
+    journal.parent.mkdir(exist_ok=True)
+    journal.write_text('{"stage":"patch"}')
+    assert checker.verification_identity() == before
+    result = checker(context)
+    assert result["status"] == "passed" and len(calls) == 2
+    assert result["changed"]["materialized_code_identity"] == context["materialized_code_identity"]
+    assert all(not path.startswith("a/") for path in result["changed"]["required_files"])
+
+
 def test_success_exit_and_dll_without_changed_file_in_compile_manifest_is_not_pass(tmp_path, monkeypatch):
     _, context, checker, calls, _ = _checker(tmp_path, monkeypatch, omit_changed=True)
     result = checker(context)

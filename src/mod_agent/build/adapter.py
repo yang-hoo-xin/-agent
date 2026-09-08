@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-import re
 import hashlib
+import re
+import subprocess
+import time
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal, Mapping
+from typing import Any, Literal
 
 BuildExecutionMode = Literal["fake", "local", "supplied_output", "real"]
 BuildStatus = Literal["success", "failed", "skipped"]
@@ -63,7 +66,7 @@ class BuildProfileRegistry:
         self._profiles = {profile.profile_id: profile for profile in profiles}
 
     @classmethod
-    def from_config(cls, config: Mapping[str, Any]) -> "BuildProfileRegistry":
+    def from_config(cls, config: Mapping[str, Any]) -> BuildProfileRegistry:
         """Build a registry from the `build.profiles` settings shape."""
 
         profiles = []
@@ -130,6 +133,45 @@ class BuildCommandResult:
     stdout: str = ""
     stderr: str = ""
     duration_ms: int = 0
+
+
+def run_build_profile_command(
+    profile: BuildProfile,
+    *,
+    environment: Mapping[str, str],
+    command_runner: Callable[..., Any] | None = None,
+) -> BuildCommandResult:
+    """Execute one explicit profile using the original local process semantics.
+
+    The caller owns authorization, the selected workspace and the environment.
+    BuildAdapter remains responsible for classifying and verifying the result.
+    """
+    if not isinstance(profile, BuildProfile):
+        raise TypeError("Build command requires BuildProfile.")
+    if not profile.command or not all(isinstance(part, str) and part for part in profile.command):
+        raise ValueError("Build command must contain non-empty strings.")
+    if not isinstance(environment, Mapping) or any(
+        not isinstance(key, str) or not isinstance(value, str) for key, value in environment.items()
+    ):
+        raise ValueError("Build environment must be an explicit string mapping.")
+    started = time.perf_counter()
+    completed = (subprocess.run if command_runner is None else command_runner)(
+        profile.command,
+        cwd=profile.working_directory,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=profile.timeout_seconds,
+        check=False,
+        env=dict(environment),
+    )
+    return BuildCommandResult(
+        exit_code=int(completed.returncode),
+        stdout=str(completed.stdout or ""),
+        stderr=str(completed.stderr or ""),
+        duration_ms=int((time.perf_counter() - started) * 1000),
+    )
 
 
 @dataclass(frozen=True)

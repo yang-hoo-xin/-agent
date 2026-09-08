@@ -13,6 +13,7 @@ import tempfile
 from pathlib import Path
 
 from src.core.trace.execution_trace import trace_operation
+from src.mod_agent.domain.accurate_crosshair_eval import CONFIG_CASE, CONFIG_CHECKS
 from src.mod_agent.model_qualification import canonical_hash, read_bound_json
 
 SECTION = "General Settings"
@@ -26,6 +27,10 @@ CONFIGURATION_CHECKS = ("fresh.exact_keys", "fresh.spread_default_true", "fresh.
     "restart_false.file_value", "restart_false.reader_value",
     "reload_true.file_value", "reload_true.reader_value", "reload_true.event",
     "restart_true.file_value", "restart_true.reader_value")
+RECOIL_KEY = "Follow Recoil"
+RECOIL_OTHER_DEFAULTS = {key: value for key, value in EXISTING_DEFAULTS.items() if key != "FollowsRecoil"}
+RECOIL_OTHER_STORED = {"FirstShotType": "Match", "FirstShotMinDelay": 0.25,
+                      "PopEnabled": True, "MinSize": 20, "SpeedScalar": 0.5}
 
 
 def _reference(path):
@@ -46,14 +51,18 @@ def _config(enabled):
             "Pop Enabled = true\nMinimum Size = 20\nResize Modifier = 0.5\n")
 
 
-def _entry(observed, field):
+def _entry(observed, field, key=SWITCH_KEY):
     values = [row["value"] for row in observed[field]
-              if row["section"] == SECTION and row["key"] == SWITCH_KEY]
+              if row["section"] == SECTION and row["key"] == key]
     return values[0] if len(values) == 1 else None
 
 
-def assess_configuration(observations):
+def assess_configuration(observations, *, case_id=None):
     """Check task obligations; absent supported reader is unknown, not a repair hint."""
+    if case_id == CONFIG_CASE:
+        return _assess_recoil_configuration(observations)
+    if case_id is not None:
+        raise ValueError("CONFIGURATION_CASE_UNSUPPORTED")
     fresh, off, restart_off, reload_on, restart_on = observations
     rows = []
     def check(name, actual, expected):
@@ -83,8 +92,53 @@ def assess_configuration(observations):
     return rows, unknown_reader
 
 
+def _assess_recoil_configuration(observations):
+    """Observe the five recoil-default obligations without adding a spread switch."""
+    fresh, enabled, disabled = observations
+    rows = []
+
+    def same(actual, expected):
+        if isinstance(expected, dict):
+            return (isinstance(actual, dict) and actual.keys() == expected.keys()
+                    and all(same(actual[key], value) for key, value in expected.items()))
+        return actual == expected and (type(actual) is bool if type(expected) is bool else True)
+
+    def check(name, actual, expected):
+        rows.append({"check_id": name, "observed": actual, "expected": expected,
+                     "passed": same(actual, expected)})
+
+    def recoil_values(observed):
+        return {"file_value": _entry(observed, "initial_entries", RECOIL_KEY),
+                "reader_value": observed["initial"].get("FollowsRecoil")}
+
+    check("fresh.recoil_default_false", recoil_values(fresh), {"file_value": False, "reader_value": False})
+    check("fresh.other_defaults_preserved",
+          {key: fresh["initial"].get(key) for key in RECOIL_OTHER_DEFAULTS}, RECOIL_OTHER_DEFAULTS)
+    check("fresh.exact_configuration_keys", sorted((row["section"], row["key"]) for row in fresh["keys"]),
+          sorted((SECTION, key) for key in CONFIG_KEYS if key != SWITCH_KEY))
+    for label, observed, expected in (("existing_true", enabled, True), ("existing_false", disabled, False)):
+        check(label + ".explicit_value_preserved",
+              {**recoil_values(observed),
+               "other_settings": {key: observed["initial"].get(key) for key in RECOIL_OTHER_STORED}},
+              {"file_value": expected, "reader_value": expected, "other_settings": RECOIL_OTHER_STORED})
+    if tuple(row["check_id"] for row in rows) != CONFIG_CHECKS:
+        raise ValueError("CONFIGURATION_CHECK_SET_CHANGED")
+    unknown_reader = any(_entry(row, "initial_entries", RECOIL_KEY) is not None
+                         and row["initial"].get("FollowsRecoil") is None for row in observations)
+    return rows, unknown_reader
+
+
+def _recoil_config(enabled):
+    return ("[General Settings]\nFollow Recoil = " + str(enabled).lower() + "\n"
+            "First Shot Display Mode = Match\nFirst Shot Min Delay = 0.25\n"
+            "Pop Enabled = true\nMinimum Size = 20\nResize Modifier = 0.5\n")
+
+
 class ActualCrosshairConfigurationChecker:
-    def __init__(self, *, probe_configuration_ref, output_root, timeout_seconds=20):
+    def __init__(self, *, probe_configuration_ref, output_root, timeout_seconds=20, case_id=None):
+        if case_id not in (None, CONFIG_CASE):
+            raise ValueError("CONFIGURATION_CASE_UNSUPPORTED")
+        self.case_id = case_id
         self.probe_configuration_ref = dict(probe_configuration_ref)
         self.configuration = read_bound_json(probe_configuration_ref)
         self.output_root = Path(output_root).resolve()
@@ -104,10 +158,15 @@ class ActualCrosshairConfigurationChecker:
                 raise ValueError("CONFIGURATION_PROBE_CHANGED")
         if _reference(configuration["dotnet"]["path"]) != configuration["dotnet"]:
             raise ValueError("CONFIGURATION_DOTNET_CHANGED")
+        inputs = {"checks": CONFIGURATION_CHECKS, "section": SECTION,
+                  "switch_key": SWITCH_KEY, "existing_defaults": EXISTING_DEFAULTS}
+        if self.case_id == CONFIG_CASE:
+            inputs = {"case_id": self.case_id, "checks": CONFIG_CHECKS, "section": SECTION,
+                      "configuration_key": RECOIL_KEY, "other_defaults": RECOIL_OTHER_DEFAULTS,
+                      "stored_true": _recoil_config(True), "stored_false": _recoil_config(False)}
         return {"validator_sha256": canonical_hash({"checker": _reference(__file__),
                     "probe": self.probe_configuration_ref, "files": configuration["files"]}),
-                "inputs_sha256": canonical_hash({"checks": CONFIGURATION_CHECKS, "section": SECTION,
-                    "switch_key": SWITCH_KEY, "existing_defaults": EXISTING_DEFAULTS}),
+                "inputs_sha256": canonical_hash(inputs),
                 "environment_sha256": canonical_hash(configuration["dotnet"]),
                 "deterministic_reuse_allowed": False}
 
@@ -131,6 +190,10 @@ class ActualCrosshairConfigurationChecker:
         configurations = (("fresh", fresh, None, None), ("false", stored, _config(False), None),
             ("restart_false", stored, None, None), ("reload_true", stored, None, _config(True)),
             ("restart_true", stored, None, None))
+        if self.case_id == CONFIG_CASE:
+            configurations = (("fresh", fresh, None, None),
+                ("existing_true", stored, _recoil_config(True), None),
+                ("existing_false", stored, _recoil_config(False), None))
         observations, process_refs = [], []
         status, failure_owner = "passed", None
         failed_execution = []
@@ -168,7 +231,8 @@ class ActualCrosshairConfigurationChecker:
                         status, failure_owner = "infrastructure_failed", "validator"
                         process_refs.append(_save(run / (label + "-failure.json"), {"error_type": type(error).__name__}))
                         break
-            checks, reader_unknown = assess_configuration(observations) if len(observations) == 5 else ([], False)
+            checks, reader_unknown = (assess_configuration(observations, case_id=self.case_id)
+                                      if len(observations) == len(configurations) else ([], False))
             checks.extend(failed_execution)
             if reader_unknown:
                 status, failure_owner = "needs_evidence", "validator"
@@ -184,8 +248,12 @@ class ActualCrosshairConfigurationChecker:
                   "process_refs": process_refs, "observations": observations, "verification_identity": identity,
                   "compilation_report_ref": compilation["report_ref"], "built_artifact_ref": assembly,
                   "materialized_code_identity": compilation["materialized_code_identity"],
-                  "reader_mapping": "AccurateCrosshair.Configuration.AccurateSpreadEnabled",
+                  "reader_mapping": ("AccurateCrosshair.Configuration.FollowsRecoil" if self.case_id == CONFIG_CASE
+                                     else "AccurateCrosshair.Configuration.AccurateSpreadEnabled"),
                   "reader_mapping_status": "needs_verifier_adaptation" if reader_unknown else "observed",
                   "runtime_status": "not_executed", "automatic_liveedit_status": "not_executed",
                   "scope": "compiled_configuration_real_bepinex_io_and_reload_consumer_only"}
+        if self.case_id == CONFIG_CASE:
+            report.update(case_id=self.case_id, scope="compiled_configuration_real_bepinex_io_only",
+                          execution_origin="executed" if len(observations) == len(configurations) else "incomplete")
         return {**report, "report_ref": _save(run / "report.json", report)}

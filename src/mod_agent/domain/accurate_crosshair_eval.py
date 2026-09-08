@@ -6,13 +6,14 @@ They establish local behavior only, not Unity or GTFO Runtime.
 """
 from __future__ import annotations
 
+import codecs
 import hashlib
 import json
 import os
 import shutil
 import subprocess
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from src.mod_agent.execution.patch_apply import materialize_exact_text_patch
 from src.mod_agent.model_qualification import canonical_hash, read_bound_json
@@ -181,12 +182,19 @@ def _dotnet_identity():
 
 
 class AccurateCrosshairTaskOracle:
-    def __init__(self, *, case_id, workspace_root, implementation_plan, output_root):
+    def __init__(self, *, case_id, workspace_root, implementation_plan, output_root, source_prefix=""):
         if case_id not in {CONFIG_CASE, API_CASE}:
             raise ValueError("PATCH_EVAL_CASE_UNSUPPORTED")
         self.case_id, self.workspace_root = case_id, Path(workspace_root).resolve(strict=True)
         self.plan, self.output_root = implementation_plan, Path(output_root).resolve()
-        self.sources = CONFIG_SOURCES if case_id == CONFIG_CASE else API_SOURCES
+        if (not isinstance(source_prefix, str) or "\\" in source_prefix
+                or PurePosixPath(source_prefix).is_absolute() or ".." in PurePosixPath(source_prefix).parts
+                or ":" in source_prefix):
+            raise ValueError("PATCH_EVAL_SOURCE_PREFIX_INVALID")
+        selected_sources = CONFIG_SOURCES if case_id == CONFIG_CASE else API_SOURCES
+        self.sources = tuple((PurePosixPath(source_prefix) / name).as_posix() for name in selected_sources)
+        if any(not (self.workspace_root / name).resolve().is_relative_to(self.workspace_root) for name in self.sources):
+            raise ValueError("PATCH_EVAL_SOURCE_OUTSIDE_WORKSPACE")
         self.expected_check_ids = CONFIG_CHECKS if case_id == CONFIG_CASE else API_CHECKS
         self.environment = _dotnet_identity()
         self.source_hashes = {name: hashlib.sha256((self.workspace_root / name).read_bytes()).hexdigest()
@@ -250,10 +258,13 @@ class AccurateCrosshairTaskOracle:
                 "verification_identity": self.verification_identity()}
 
     def __call__(self, context):
+        return self._evaluate(context, self.plan)
+
+    def _evaluate(self, context, plan, *, plan_ref=None):
         identity = self.verification_identity()
         output_root = self.output_root / _response_scope(context)
         result = materialize_exact_text_patch(workspace_root=self.workspace_root,
-            diff_intent=context["generated_changes"], implementation_plan=self.plan)
+            diff_intent=context["generated_changes"], implementation_plan=plan)
         code = {"baseline_sha256": result.baseline_sha256, "code_sha256": result.code_sha256, "files": sorted(result.files)}
         if context.get("materialized_code_identity") != code:
             raise ValueError("PATCH_EVAL_CODE_IDENTITY_MISMATCH")
@@ -275,6 +286,8 @@ class AccurateCrosshairTaskOracle:
             "verification_identity": identity, "verification_ref": matrix_ref,
             "verification_summary": {"checks": len(matrix["checks"]), "failed_checks": len(failures), "executions": matrix["executions"]},
             "execution_origin": "executed", "verification_scope": "isolated_real_CSharp_source_with_dependency_doubles_not_GTFO_Runtime"}
+        if plan_ref is not None:
+            report["implementation_plan_ref"] = dict(plan_ref)
         return {**report, "report_ref": _save(output_root / f"report-{self.calls:03d}.json", report)}
 
 
@@ -287,6 +300,70 @@ def make_behavior_evaluator(*, case_id, artifact_store_root, workspace_root, pla
     if tuple(expected_check_ids) != oracle.expected_check_ids:
         raise ValueError("PATCH_EVAL_CHECK_SET_MISMATCH")
     return oracle
+
+
+class CurrentPlanTaskOracle(AccurateCrosshairTaskOracle):
+    """Keep fixed task assertions while binding each attempt to its current Plan."""
+
+    def __init__(self, *, case_id, artifact_store_root, workspace_root, output_root, expected_check_ids,
+                 source_prefix=""):
+        from src.mod_agent.artifacts import ArtifactStore
+
+        super().__init__(case_id=case_id, workspace_root=workspace_root,
+                         implementation_plan={}, output_root=output_root, source_prefix=source_prefix)
+        if tuple(expected_check_ids) != self.expected_check_ids:
+            raise ValueError("PATCH_EVAL_CHECK_SET_MISMATCH")
+        self.store = ArtifactStore(artifact_store_root)
+
+    def __call__(self, context):
+        from src.mod_agent.artifacts import ArtifactRef
+        from src.mod_agent.proposal.patch_agent_loop import (
+            PatchAgentLoopPolicy,
+            PlanBoundSourceInspector,
+        )
+
+        self.verification_identity()
+        ref = ArtifactRef(**context["implementation_plan_ref"])
+        envelope = self.store.read(ref)
+        plan = envelope["data"]
+        if (ref.artifact_type != "implementation_plan" or envelope["status"] != "success"
+                or plan.get("blocking") or plan != context["implementation_plan"]):
+            raise ValueError("PATCH_EVAL_CURRENT_PLAN_MISMATCH")
+        inspector = PlanBoundSourceInspector(workspace_root=self.workspace_root,
+            implementation_plan=plan, policy=PatchAgentLoopPolicy())
+        if inspector.source_snapshot_sha256 != context["source_snapshot_sha256"]:
+            raise ValueError("PATCH_EVAL_CURRENT_SOURCE_MISMATCH")
+        changes = context["generated_changes"]
+        if canonical_hash(changes) != context["generated_changes_sha256"]:
+            raise ValueError("PATCH_EVAL_CHANGE_IDENTITY_MISMATCH")
+        response = context["model_response"]
+        raw = Path(response["path"]).read_bytes()
+        if (hashlib.sha256(raw).hexdigest() != response["output_sha256"]
+                or len(raw) != response["output_utf8_bytes"]):
+            raise ValueError("PATCH_EVAL_RESPONSE_IDENTITY_MISMATCH")
+        submitted = json.loads(raw)["changes"]
+        by_id = {row["edit_binding_id"]: row for row in submitted}
+        planned = {(row["change_id"], row["edit_binding_id"]): row for row in plan["proposed_changes"]}
+        if (len(by_id) != len(submitted) or len(changes) != len(submitted)
+                or set(by_id) != {row["edit_binding_id"] for row in changes}
+                or {(row["change_id"], row["edit_binding_id"]) for row in changes} != set(planned)):
+            raise ValueError("PATCH_EVAL_CHANGE_SET_MISMATCH")
+        bindings = {row["binding_id"]: row for row in plan["binding_registry"]["edit_bindings"]}
+        for change in changes:
+            if change["expected_validation"] != planned[(change["change_id"], change["edit_binding_id"])]["expected_validation"]:
+                raise ValueError("PATCH_EVAL_VALIDATION_OBLIGATION_CHANGED")
+            binding = bindings[change["edit_binding_id"]]
+            path = binding["canonical_target_path"]
+            if path not in self.sources:
+                raise ValueError("PATCH_EVAL_SOURCE_COVERAGE_INCOMPLETE")
+            original = (self.workspace_root / path).read_bytes()
+            after, returned = change["patch"]["after_text"], by_id[change["edit_binding_id"]]["after_text"]
+            if after != returned and not (
+                original.startswith(codecs.BOM_UTF8) and after == "\ufeff" + returned
+                or not original.startswith(codecs.BOM_UTF8) and returned == "\ufeff" + after
+            ):
+                raise ValueError("PATCH_EVAL_MODEL_OUTPUT_CHANGED")
+        return self._evaluate(context, plan, plan_ref=context["implementation_plan_ref"])
 
 
 class BoundExistingMatrixOracle:

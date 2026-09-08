@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from src.mod_agent.domain.accurate_crosshair_eval import CONFIG_CASE, CONFIG_CHECKS
 from src.mod_agent.domain.complete_crosshair_verification import CompleteCrosshairVerification
 from src.mod_agent.domain.full_project_compilation import _ref, _save
 from src.mod_agent.fresh_planning_continuation import run_fresh_patch_continuation
@@ -104,6 +105,26 @@ def _context():
     return {"generated_changes": [{"edit_binding_id": "edit_binding_001"}], "generated_changes_sha256": "a" * 64,
             "source_snapshot_sha256": "b" * 64, "model_response": {"output_sha256": "c" * 64},
             "materialized_code_identity": {"code_sha256": "d" * 64}, "implementation_plan_ref": {"artifact_hash": "e" * 64}}
+
+
+def test_configuration_task_acceptance_can_use_the_full_assembly_without_fixed_source_targets(tmp_path):
+    class ConfigurationTask(_Configuration):
+        def __call__(self, compilation):
+            report = super().__call__(compilation)
+            report["checks"] = [{"check_id": name, "expected": True, "observed": True, "passed": True}
+                                for name in CONFIG_CHECKS]
+            report.update(execution_origin="executed", observations=[{}, {}, {}])
+            report["report_ref"] = _save(self.root / "task.json", {key: value for key, value in report.items() if key != "report_ref"})
+            return report
+
+    combined = CompleteCrosshairVerification(matrix=None, case_id=CONFIG_CASE,
+        compilation=_Compilation(tmp_path / "compile"), configuration=ConfigurationTask(tmp_path / "config"),
+        output_root=tmp_path / "combined")
+    report = combined(_context())
+    assert report["status"] == "passed" and report["execution_origin"] == "executed"
+    assert report["verification_summary"] == {"checks": 5, "failed_checks": 0, "executions": 3}
+    assert report["validation_results"]["behavior_matrix"]["status"] == "not_applicable"
+    assert report["validation_results"]["configuration"]["checks_run"] == 5
 
 
 @pytest.mark.parametrize("phase", ["compilation", "configuration"])
@@ -206,3 +227,61 @@ def test_public_worker_does_not_repair_business_code_for_environment_failure(tmp
     assert not configuration.calls and not matrix.contexts and not client.investigated_failure
     assert all(not any(isinstance(message.content, dict) and message.content.get("message_type") == "patch_behavior_correction"
                        for message in request.messages) for request in client.requests)
+
+
+@pytest.mark.parametrize("case_id", [None, CONFIG_CASE])
+def test_factory_selects_task_checks_without_changing_legacy_defaults(tmp_path, monkeypatch, case_id):
+    from src.mod_agent.domain import complete_crosshair_verification as module
+
+    captured = {}
+    compilation = _Compilation(tmp_path / "compile")
+    configuration = _Configuration(tmp_path / "configuration")
+    matrix = _Matrix(tmp_path / "matrix")
+    def select(name, result):
+        def construct(**kwargs):
+            captured[name] = deepcopy(kwargs)
+            return result
+        return construct
+    monkeypatch.setattr(module, "FullProjectCompilationChecker", select("compilation", compilation))
+    monkeypatch.setattr(module, "ActualCrosshairConfigurationChecker", select("configuration", configuration))
+    monkeypatch.setattr(module, "CurrentPlanExistingMatrixOracle", select("legacy", matrix))
+    monkeypatch.setattr(module, "CurrentPlanTaskOracle", select("task", matrix))
+    matrix_kwargs = {"artifact_store_root": str(tmp_path / "store"), "workspace_root": str(tmp_path / "source"),
+                     "expected_check_ids": list(CONFIG_CHECKS), "output_root": str(tmp_path / "task-matrix")}
+    compile_kwargs = {"dependency_binding": {"binding_version": "run_local_game_folder_binding_v1",
+        "source_root": str(tmp_path / "dep"), "file_count": 1, "snapshot_sha256": "a" * 64},
+        "output_root": str(tmp_path / "compile")}
+    original = deepcopy(compile_kwargs)
+    wrapper = module.make_complete_crosshair_evaluator(case_id=case_id, matrix_kwargs=matrix_kwargs,
+        compilation_kwargs=compile_kwargs, configuration_kwargs={"output_root": str(tmp_path / "configuration")},
+        output_root=tmp_path / "combined")
+    assert compile_kwargs == original
+    if case_id is None:
+        assert "legacy" in captured and "task" not in captured
+        assert "case_id" not in captured["configuration"]
+    else:
+        assert "task" in captured and "legacy" not in captured
+        assert captured["task"] == {"case_id": CONFIG_CASE, **matrix_kwargs}
+        assert captured["configuration"]["case_id"] == CONFIG_CASE
+        assert "plan_ref" not in captured["task"]
+    assert wrapper.case_id == case_id
+
+
+def test_config_task_combination_preserves_five_check_report_and_current_plan(tmp_path, monkeypatch):
+    from tests.unit.test_accurate_crosshair_eval import _current_task_oracle
+
+    _, context, matrix, calls = _current_task_oracle(tmp_path / "task", monkeypatch)
+    compilation = _Compilation(tmp_path / "compile")
+    configuration = _Configuration(tmp_path / "config")
+    wrapper = CompleteCrosshairVerification(matrix=matrix, compilation=compilation,
+        configuration=configuration, output_root=tmp_path / "combined", case_id=CONFIG_CASE)
+    report = wrapper(context)
+    assert report["status"] == "passed" and len(calls) == 1
+    assert report["case_id"] == CONFIG_CASE
+    assert report["verification_summary"] == {"checks": 5, "failed_checks": 0, "executions": 3}
+    assert report["implementation_plan_ref"] == context["implementation_plan_ref"]
+    assert report["materialized_code_identity"] == context["materialized_code_identity"]
+    saved_matrix = json.loads(Path(report["verification_ref"]["path"]).read_text(encoding="utf-8"))
+    assert tuple(row["check"] for row in saved_matrix["checks"]) == CONFIG_CHECKS
+    assert report["validation_results"]["runtime"]["status"] == "not_executed"
+    assert report["verification_scope"] == "full_compilation_and_real_configuration_and_task_behavior_not_runtime"
