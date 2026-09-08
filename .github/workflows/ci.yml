@@ -29,6 +29,12 @@ jobs:
           uv lock --check
           uv sync --frozen --extra dev
 
+      - name: Install source inspection dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ripgrep
+          rg --version
+
       - name: Ruff fatal errors
         run: uv run --frozen ruff check --select E9,F63,F7 src tests scripts main.py
 
