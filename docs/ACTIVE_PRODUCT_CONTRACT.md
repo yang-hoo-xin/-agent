@@ -40,9 +40,9 @@ this chain. They are not independent product lines.
 
 ### 1.1 Current Development Selection
 
-The next selected experiment is bounded repair-focused SFT A/B alongside the product chain. It does not wait for First Shot success. 014 unchanged bytes passed full compilation and real configuration checks (0.32), while behavior remains unresolved. Training/evaluation inputs, saved model, same-worker results and adoption decision must be distinguished. DSH approval/isolated Apply is accepted offline, not executed on the real Mod.
+The bounded repair-focused SFT A/B is complete without a demonstrated task-completion gain (reconciliation 0.35): retain the checkpoints and original results, do not adopt this trained profile or automatically add training/DPO. The current user request is an evidence-backed Repair/real-Mod route review; full product-chain acceptance remains owned by the separate integration task. First Shot remains unresolved. A saved model, a passing engineering test, and a repaired Mod are separate outcomes.
 
-Prospective shared-worker tracing is now implemented and accepted offline (reconciliation 0.31): actual sends, tools, materialization, verification and reached Graph stages have measured observations in the original journal/index and a metadata-only native OTLP mapping. New-run Cloud readback is unperformed; no new model or P0 success is claimed. Next selected acceptance also requires complete changed-project compilation and actual configuration-path checks, separately from the original 36 behavior checks. Model quality/performance experiments remain distinct from framework verification.
+Prospective shared-worker tracing has measured local observations, and the explicitly approved first four SFT attempts have now been exported and read back in Cloud (0.35). This was capture during execution followed by authorized export, not automatic live export for every future task. The complete changed-project compilation/configuration checks remain separate from the original 36-check matrix and applicable Runtime. Current hosted CI still has unresolved integration failures (0.36); no production readiness or Mod success is claimed.
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 Current two-hour checkpoint: P0 014 returned unchanged code and twice 33/36;

@@ -7,9 +7,9 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
-014 unchanged model bytes now passed whole-project compilation (all 10 source files) and 13 real BepInEx configuration checks; the prior 33/36 behavior failure remains. Complete-check feedback and DSH exact approval to isolated Apply were accepted offline (0.32); no real Mod Apply/Runtime. The user now selected an actual repair-focused SFT A/B, with First Shot retained as exposed difficult regression rather than prerequisite or independent holdout. Training preparation is not a trained checkpoint or quality result.
+The bounded repair-focused SFT A/B has completed with actual checkpoints and same-worker results, but no demonstrated task-completion gain; the trained profile is not adopted (reconciliation 0.35). The current user request is a Repair/real-Mod route review backed by source and failures. First Shot remains the exposed difficult regression: 014 unchanged bytes passed whole-project compilation and real configuration checks, while its behavior result remains 33/36. The separate integration task owns current natural-language product acceptance; no new Mod success is established here.
 
-New shared Patch/Repair execution tracing is implemented and accepted through the public entry offline (0.31). Historical Cloud imports remain unchanged; a new real task has not yet been verified in Cloud. Original journals and read-only queries carry measured model/tool/verification stages; explicit export is metadata-only. Full changed-project compilation and real configuration checks are now selected to complement the partial 36-check domain matrix. P0 is still unresolved.
+New execution timing and native model usage from the first four SFT attempts have been explicitly exported and verified in Cloud (0.35); historical imports are unchanged and later SFT attempts remain local. This does not prove automatic future live export or task success. Hosted CI closed its original environment/path/fixture failures but still reports another integration failure set after the product entry migration (0.36); current code is not declared fully green.
 
 P0 remains unresolved: 014 executed two 33/36 matrices on unchanged code; 015
 received one local-27B response, then timed out after 600 seconds with no code.

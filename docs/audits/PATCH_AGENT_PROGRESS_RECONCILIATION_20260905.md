@@ -6,7 +6,7 @@
 
 ## 0. 最新状态快照
 
-**首轮正式修码 SFT 已训练完成，A/B 已进入原 worker（0.33）。** 6 个独立训练任务、3 epoch、18 optimizer steps，三个 LoRA checkpoint 已保存并验证重载。当前 Base 与 epoch1 的两个 validation 任务均为0/2，尚无修码收益或采用结论；holdout未访问、未追加DPO。完整已提交开发分支已同步GitHub（0.34），不含未提交工作或训练权重。
+**首轮修码 SFT 与冻结 A/B 均已完成，未观察到任务完成收益，本轮不采用训练版本（0.35）。** checkpoint、全部失败和代码差异均保留；不追加训练/DPO。First Shot仍未修好。前四次真实SFT运行的原生时序/用量已获授权导入Cloud并回查；当前GitHub CI仍有13项新整合失败待原owner核对（0.36）。以下较早段落保留其当时快照含义，不覆盖最新完成状态。
 
 **2026-09-08 完整验证与操作续接（0.32）：014 原模型代码的完整项目编译通过（10 个源文件全部进入编译），真实配置 13/13 通过；旧 First Shot 三项失败仍保留。**
 新增验证经原回调进入同一 worker 的修订分支已有离线验收。DSH 的精确 diff→明确批准→原 Graph/Applier 隔离写入→Build 前停止通过离线验收，尚未据此执行真实 Mod Apply。
@@ -1518,6 +1518,41 @@ A/B采用独立冻结工作树 `sft-ab-frozen` 的 `ebfb466`，避开另页整�
 完整 `codex/rag-capability-mainline` 已成功推送到 `https://github.com/yang-hoo-xin/-agent.git`，并通过独立 `git ls-remote --heads` 查回 `a1a0edb6bcb1174d0aee8d8d5683bec2f0b176b4`，共比main多456提交。main保持 `914f16e9da82aa90e6433cbf80d12683d36ea67b`。这包含已提交源码、测试和工程记录，不包含工作树WIP、训练权重或凭据；尚无main合并、hosted CI或Release结论。原直连失败记录保留，最终使用本机已配置的代理完成正常Git推送。
 
 远端核对证据：本任务输出根 `git-sync-inspection-001/remote-sync-verified.json`。上传前2630个未发布reachable blobs的已知凭据模式扫描无匹配；该扫描不等于全面安全审查。后续同步沿用用户授权范围，不默认覆盖未提交工作或扩展外发数据。
+
+### 0.35 冻结 SFT A/B、授权清理与真实时序 Cloud 回查收口（2026-09-08）
+
+**训练与部署**：0.33的6个训练任务、3epoch、18优化步骤和3个LoRA checkpoint保持不变。统一BaseNorm与e1/e2/e3-v2部署完成，精确tag/digest/GGUF/receipt/checkpoint在本任务输出根 `scratch/patch_sft_001/deployment/val2-model-refs-v2.json`，SHA `f9f1e1ded862e5362b81a5cb33b112bda1bd2468af7a523d8613d87240e36ec8`。矩阵F16、113个向量F32与BaseNorm数值相同，310个张量布局对齐。e2显示参数行序变化曾被整串比较误拒；只修核验解析并从已生成模型读回恢复，未重跑训练/合并/create，原失败保留，未保留的阶段时长标unknown。
+
+用户先授权8个可重建HF中间权重清理，再授权4套旧Ollama部署与对应4份GGUF。后一批严格按已审阅tag/文件hash执行：公开 `ollama rm` 仅删除被选manifest及其未共享层，native `Remove-Item -LiteralPath` 仅删除4个已核验GGUF；6个未引用上传blob未删除。后一批逻辑释放28,823,455,232 bytes，清理当时C盘15.24GB→44.06GB，之后e2/e3-v2部署及HF中间清理完成时剩23.27GB。官方HF、全部LoRA/checkpoint与记录保留。收据 `deployment/storage-review/cleanup-execution-001.json`；当前授权不能自动扩展到其余部署副本。
+
+**原 worker 实测**：冻结执行树 `sft-ab-frozen`、commit `ebfb466a76d94e0cb729177d5e9a10f51c8e0696`，未使用主树整链WIP。每项经原 `scripts.run_patch_sft_eval --execute --prepared ... --prepared-sha256 ...`，同源码/Plan/权限/5次调用上限/16384上下文与4096输出/原C#检查，实际命令、prepared、请求/响应和结果逐项保留。Base与3个epoch在validation2均0/2；按原平局规则选择e1，并先落不可变selection再访问holdout。选择不表示合格。selection SHA `70b8e8d89a410f64592aa033b9792d1eb8ee8e904f49d7e68be586b36f9c29c9`。
+
+| profile | holdout模式 | 任务成功 | 实际模型调用 | 有效修订 | 保留义务通过/未验 |
+|---|---|---:|---:|---:|---:|
+| BaseNorm | 固定失败修订 | 0/4 | 9 | 0 | 4/0 |
+| e1-v2 | 固定失败修订 | 0/4 | 13 | 0 | 3/1 |
+| BaseNorm | 给定Plan首次生成 | 0/4 | 8 | 0 | 0/4 |
+| e1-v2 | 给定Plan首次生成 | 0/4 | 8 | 0 | 0/4 |
+
+共validation8+holdout16=24个attempt，14+38=52次真实本地模型调用。holdout只有4任务/2家族，不能说16个独立任务；initial_patch不是自然语言到Mod。首次生成8次都请求上游，没有行为检查，不能记作行为0分。固定失败模式Base有1任务、e1有2任务曾产生不同物化字节，但没有有效修复，不能概括全部原样返回。8次上游退出没有调用后model digest记录，保留该未知；前置身份与对应profile一致。不改评分、不重试、不加训/DPO、不Apply/正式Build/游戏Runtime。结论：本SFT不作为Repair主力，Base也未获任务资格。
+
+完整事实：`scratch/sft_ab004_holdout_001/ab-results.json`，SHA `f5473093bd9f68384e16c929933b773f246bec0e48ead56a19cca58e48972242`；人读表 `ab-results.md`，SHA `afa0d5bce13c26da7665134610c1a1c9ec634d8344a6a4ba17cf61dcc3805c11`。已为全部16个holdout attempt生成原查询投影，未改变原结果。
+
+**输入表示边界**：只读核对表明训练预置完整源码观察后监督直接JSON，验证从未读取开始；模板、nonthinking、系统说明、工具定义、输出schema相同，预算呈现和精度不同。不能把这一差异直接当根因或在冻结A/B中途修改。材料 `scratch/sft_ab004_val_001/training-serving-interface-review.json`。
+
+**Cloud**：用户另行授权仅首四个SFT attempt的57条元数据。实际执行时采集的4trace/57观测/9generation经既有OTLP映射输出，精确预览SHA `23f0976914e89ffbd9136e6f4a3d8f0c71e8ff6d067e393a291664686f565a68`；57次POST接受、0重发，原ID全部回查。模型、父子关系、UTC到服务端毫秒精度对齐，input29,050/output609/total29,659一致，cost/TTFT为null。四任务仍partial，completed观测不代表完成任务。4个root的长artifact_refs在本次API投影仅200/357字符，完整值未核验，不判数据丢失；9个usageDetails初始差异为服务端增添正确total。初次13处mismatch收据不改写，最终独立reconciliation SHA `f44a34d1528f02c1352b5ade0a1871e71eda9e22e7ec105bb6225ffd78fc2f36`，位于 `scratch/sft_ab004_val_001/langfuse-preview/cloud-export-001/reconciliation.json`。未上传源码/prompt/原回复/本地路径/GTFO/密钥，也未上传e2/e3/holdout。此为采集后授权导出，尚非所有未来任务自动实时导出。
+
+用户要求给6Pro审查Repair路线，已生成本任务输出根 `review_materials_6pro_repair_001/给6Pro_Repair路线资料_完整.txt`，含8段冻结源码、实际两工具定义、自有失败样例、预算/纠正状态接缝和A/B结果。无GTFO源码、密钥、本机绝对路径或留出答案，未调用6Pro或自动外发此包。新自然语言Mod验收与其发现的父义务投影缺口由另页负责；该次在Findings后阻断，未进入模型Planning/Patch，不能算Repair写码失败。
+
+### 0.36 Hosted CI 首失败修复与整合边界（2026-09-08）
+
+原 `4d493c7` CI真实98failed/845passed/2skipped：最先是缺`rg`，73项直接该错误。`6d03556`只在原Ubuntu workflow安装ripgrep并读版本，未删检查；真实复验11failed/932passed/2skipped，87个原失败转过，缺rg签名消失。`99a3c5a`修TraceService按记录路径语法而非宿主Path解析，保留basename且继续隐藏目录：先复现4fail/16pass，修后20个跨平台例通过，owner36通过。原3失败及新增20例在远端通过，总955passed/8failed/2skipped；Ruff无新增问题，20个旧类型注解提示未作无关迁移。
+
+剩余8项在隔离`ci_remaining8_99a3c5a`只修3个测试文件：catalog HTTP边界明确替身、分离坏source_hash与正确hash下越span前置、跨平台明确winerror=145、Repair Plan/Evidence携同一合成源SHA。生产/Review规则/旧断言不放宽。先6+2个原签名失败，修后8通过4.80s；相邻9通过3.03s，Repair文件29通过3.89s。移入另页`7ea960f`整合后，原8+新公开shared-worker三个场景11通过6.03s。提交 `f976a59` 仅三测试文件，已推原开发分支，main未改。
+
+`f976a59`真实CI原8全部PASS，但包含新产品入口整合的整体结果为950passed/13failed/2skipped。新13为ProductExecution恢复生命周期10、外部profile前置1、CLI场景2。首项 `test_owner_produced_terminal_repair_shapes_use_exact_attempt_transition[review_max-expected_tail1]` 预期尾部轮次2/2/2，实际0/1/1提前blocked；未证明是生产route还是scenario缺前置，已交整链owner，本页不继续擅改其生产路径。不能宣称CI全绿，也不能以此解释产品模型语义失败。
+
+三次后续真实CI的命令/完整原日志/节点对应统一在本任务输出根 `scratch/github_ci_4d493c7_001` 的 `verification-6d03556-result.json`、`verification-99a3c5a-result.json`、`verification-f976a59-result.json`。最后运行：https://github.com/yang-hoo-xin/-agent/actions/runs/34213085996/job/102018412091 。原失败日志保留，没有把后来的通过改写进旧运行。
 
 ## 1. 结论与范围
 
