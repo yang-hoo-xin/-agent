@@ -6,6 +6,8 @@
 
 ## 0. 最新状态快照
 
+**首轮正式修码 SFT 已训练完成，A/B 正待执行（0.33）。** 6 个独立训练任务、3 epoch、18 optimizer steps，三个 LoRA checkpoint 已保存并验证重载；没有读取 val/holdout 答案或追加 DPO。训练 loss 不是修码收益。当前模型是否改善须由原 worker 的固定失败/给定 Plan 初始生成对照决定。
+
 **2026-09-08 完整验证与操作续接（0.32）：014 原模型代码的完整项目编译通过（10 个源文件全部进入编译），真实配置 13/13 通过；旧 First Shot 三项失败仍保留。**
 新增验证经原回调进入同一 worker 的修订分支已有离线验收。DSH 的精确 diff→明确批准→原 Graph/Applier 隔离写入→Build 前停止通过离线验收，尚未据此执行真实 Mod Apply。
 用户已选择开展面向失败反馈与代码修订的真实 SFT A/B；当前完成三任务六组合准备、独立训练环境/官方权重准备及监督样本核对，尚无正式训练后成绩。
@@ -1470,6 +1472,31 @@ DSH Apply owner 最初反向依赖非 authority 执行索引，被原架构守�
 现有 peval7 三个任务经原准入全部通过。新增多模型实验准备固定 task/check/worker/verifier/profile/预算及家族划分，3×2 共 6 个 cell 全部 not_run；这两配置是原本地 30B/27B，不是 SFT A/B。新/旧准备测试18项通过（28.58s），另实际公开 CLI→原序列化器的仅 model 轴对照1项通过（7.62s）。原第3任务虽在holdout分区，仍明确共享源码/调优独立性未证明。
 
 用户随后明确选择真实“失败反馈→代码修订”SFT A/B，而非只训练需求提取。SFT数据、checkpoint、原部署worker前后结果与采用决定分别验收；错误历史只作输入，监督仅正确后续；DPO同输入配对作为后续选择，不默认训练。三层验收继续区分模块、整链、独立多任务，Langfuse展示不代替Graph编排或实际完成任务。
+
+### 0.33 修码 SFT 数据、资源验证与正式训练（2026-09-08）
+
+用户明确授权首轮真实 SFT A/B，不以 First Shot 通过为前提，不把目标换成需求提取，不默认追加 DPO。新旧模块完整自然语言→交付联合验收交另页；本页仍负责训练前后同 worker 对照，并明确人辅 Plan 的起点。
+
+**数据**：新自有 C# 12 任务、6 个不同失败家族；按家族3/1/2分成train6/val2/holdout4。涉及共享状态/可选效果、输入校验和余额保持、FIFO取消、可变快照、分页边界、实际文件提交失败保持。36个B0/C1/C2版本均真实编译/运行，C1必须失败、C2全部通过；资料明确teacher/operator-authored、零模型产生历史。C2是训练目标或隐藏判定，不进入评估prompt。准备001/002的接线/合法语句误报保留，003仅复用相同来源/工具chain/检查下的已核验结果。
+
+数据 manifest：本任务输出根 `scratch/patch_sft_owned_003/manifest.json`，SHA `61204fcf8e72109a67b7cda3c1801151f130bdc25f9db9a17b5528cbd46e0511`。错误历史只为prompt，最终正确后续才监督。train6完整token长度3161–3308；token mask实际核验通过，未截断需求/源码/失败。
+
+另有OwnedConfigService真实成功历史整理的一条长样本，仅用于资源probe：实际请求4的编译F1上下文→已通过原15项的真实turn5修订。标 `curated_supervision_not_original_turn`，没有中途新增源码/业务事实、没有冒充原turn4或DPO同输入对。完整6470 tokens=6264 prompt（labels全-100）+206 completion；该样本未并入train6。
+
+**环境与基座**：本机RTX4060 Laptop约8GB。独立训练venv复用只读global torch2.5.1+cu121，锁定transformers5.16.1/peft0.20.0/trl1.12.0/accelerate1.14.0/datasets5.0.1/safetensors0.8.0/bitsandbytes0.50.2；31个新增wheel按官方hash安装。官方Qwen/Qwen3-1.7B revision `70d244cc86ccca08cf5af4e1e306ecf908b1ad5e` 的11文件共4,079,448,540 bytes经下载和磁盘读回校验。资源清单 `scratch/patch_sft_001/resource-readiness.json`。官方GGUF计数size_label=2.0B与repo名不同，按实际元数据保存，不改写计数。
+
+**真实故障与恢复**：
+
+- GPU probe002在6470 tokens的SDPA前向申请2.50GiB时OOM，0 optimizer、无checkpoint；原记录保留。
+- 小张量诊断确认当前Windows torch flash未编译，native efficient不接GQA，但显式repeat_kv后可用。FP32/BF16输出/梯度与参考通过预设数值比较，注册端验证仅efficient开启、无math回退；采用HF公开注册接口，不改全局库、不删context。
+- probe003在同输入/allocator cap下完成实际1 step并保存LoRA，随后字节级重载检查失败。查明TRL将adapter cast BF16，PEFT load默认升到FP32；修正owner只接受同key/shape、精确数值相等的无损升精度，拒绝权重改动、降精度、缺键及NaN。
+- 只加载已保存003的恢复检查验证392 tensors精确一致，0新optimizer；不重写003失败。正式训练将steps/peak/save facts在重载检查前落盘，避免后续失败丢已发生的事实。
+
+**正式004**：使用同一官方Base新建LoRA，NF4/double quant/bf16/r8 alpha16、microbatch1、gradient checkpoint、TRL chunked_nll、efficient-only、allocator fraction0.82。脚本SHA `23333336d88981c02490a52d439c270fdc292de508b38fe86755768317be1478`，config004 SHA `aa6ac3f982888dc8f824f51c222d3ca8d42a7a8862d653de17d3f53695b80986` 全程未变。train6固定3epoch，实际18 optimizer；训练段65.25s/全进程93.20s，loss0.3721只作优化记录。peak allocated4,028,358,656 bytes约3.75GiB/reserved约3.98GiB。checkpoint6/12/18保存，最终392 tensors重载数值全部精确一致。汇总 `scratch/patch_sft_001/train-004.acceptance-summary.json`，详细 `run_004/train/result.json`。val/holdout未读、未生成训练后任务回答；尚无采用结论。
+
+**部署准备**：官方llama.cpp converter固定 `7d701b59296bc6f5ba504d5a4cddaf416c449a15`，独立CPU环境不改训练栈。Base F16 GGUF SHA `4274f0847160401e723713b1106843f8650bb197891a14940ef909c51b0fb23b`，Ollama独立tag `codex-patch-sft-base:20260908`，digest `9602214cc128ab657f4da67f6041ce3865eb0630cff59d8baedb5884dc82622d`。show确认tools/thinking/completion、ctx16384/predict4096、模板与HF/GGUF一致，原五模型未变。仅导入，没有chat。三个epoch将以同方法/精度部署；validation2选择后再一次holdout4，固定失败与给定Plan初始生成分开。不能命名为自然语言到Runtime已完成。
+
+训练入口13项聚焦覆盖真实tokenmask、拒绝截断、只读train、损失/梯度等价与tinyCPU真实Trainer保存重载；重载规则8项CPU正反例通过；注意力注册2项小GPU等价/梯度检查通过。SFT数据/训练与A/B脚本的准确调用及hash仍以本任务独立receipt为准，原全部失败和未运行项保留。
 
 ## 1. 结论与范围
 
