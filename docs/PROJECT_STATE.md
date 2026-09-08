@@ -1,11 +1,13 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-09-07
+Last updated: 2026-09-08
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
+
+New shared Patch/Repair execution tracing is implemented and accepted through the public entry offline (0.31). Historical Cloud imports remain unchanged; a new real task has not yet been verified in Cloud. Original journals and read-only queries carry measured model/tool/verification stages; explicit export is metadata-only. Full changed-project compilation and real configuration checks are now selected to complement the partial 36-check domain matrix. P0 is still unresolved.
 
 P0 remains unresolved: 014 executed two 33/36 matrices on unchanged code; 015
 received one local-27B response, then timed out after 600 seconds with no code.

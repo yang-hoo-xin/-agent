@@ -14,6 +14,7 @@ import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
+from src.core.trace.execution_trace import trace_operation
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.evidence.requirement_coverage import (
     default_feature_requirement_projection,
@@ -151,8 +152,11 @@ class OwnedConfigOracle:
         arguments.extend('"' + str(path) + '"' for path in sorted(project.rglob("*.cs")))
         response_file = stage / "compile.rsp"
         response_file.write_text("\n".join(arguments), encoding="utf-8")
-        commands = [self._command([executable, self.toolchain["compiler"]["path"], "@" + str(response_file)],
-                                 project, stage / "cli-home", timeout=60)]
+        with trace_operation("patch.compile", attributes={"validator": CASE_ID}) as operation:
+            commands = [self._command([executable, self.toolchain["compiler"]["path"], "@" + str(response_file)],
+                                     project, stage / "cli-home", timeout=60)]
+            operation.update(exit_code=commands[-1]["exit_code"], timed_out=commands[-1]["timed_out"],
+                             verification_status="passed" if commands[-1]["exit_code"] == 0 and not commands[-1]["timed_out"] else "failed")
         command_ref = save_once(run / "build-commands.json", commands)
         if any(item["exit_code"] != 0 or item["timed_out"] for item in commands):
             compile_error = not commands[-1]["timed_out"] and "error CS" in commands[-1]["stdout"]
@@ -163,70 +167,76 @@ class OwnedConfigOracle:
         runtime_config = binary_root / (APPLICATION + ".runtimeconfig.json")
         runtime_config.write_text(json.dumps({"runtimeOptions": {"tfm": "net7.0",
             "framework": {"name": "Microsoft.NETCore.App", "version": "7.0.11"}}}), encoding="utf-8")
-        observations, checks = [], []
+        with trace_operation("behavior.matrix", kind="evaluator", attributes={"validator": CASE_ID}) as matrix_operation:
+            observations, checks = [], []
 
-        def invoke(arguments):
-            item = self._command([executable, str(application), *arguments], stage, stage / "cli-home", timeout=5)
-            observations.append(item)
-            try:
-                item["json"] = json.loads(item["stdout"])
-            except ValueError:
-                item["json"] = None
-            return item
+            def invoke(arguments):
+                with trace_operation("behavior.process", attributes={"validator": CASE_ID,
+                        "process_index": len(observations) + 1}) as operation:
+                    item = self._command([executable, str(application), *arguments], stage, stage / "cli-home", timeout=5)
+                    operation.update(exit_code=item["exit_code"], timed_out=item["timed_out"])
+                observations.append(item)
+                try:
+                    item["json"] = json.loads(item["stdout"])
+                except ValueError:
+                    item["json"] = None
+                return item
 
-        def fresh(name):
-            path = stage / "data" / (name + ".json")
-            path.parent.mkdir(exist_ok=True)
-            path.write_bytes(json.dumps(SEED, ensure_ascii=False, separators=(",", ":")).encode())
-            return path
+            def fresh(name):
+                path = stage / "data" / (name + ".json")
+                path.parent.mkdir(exist_ok=True)
+                path.write_bytes(json.dumps(SEED, ensure_ascii=False, separators=(",", ":")).encode())
+                return path
 
-        for name, value in INVALID_VALUES:
-            path = fresh(name)
+            for name, value in INVALID_VALUES:
+                path = fresh(name)
+                before = path.read_bytes()
+                observed = invoke(["set", str(path), "maxRetries", value])
+                actual = {"exit_code": observed["exit_code"], "stdout_status": (observed["json"] or {}).get("status"),
+                          "file_unchanged": path.read_bytes() == before, "timed_out": observed["timed_out"]}
+                expected = {"exit_code": 2, "stdout_status": "rejected", "file_unchanged": True, "timed_out": False}
+                checks.append({"check": "reject_" + name + "_without_write", "group": "requested_change", "input": {"key": "maxRetries", "json_value": value},
+                               "expected": expected, "actual": actual, "passed": actual == expected})
+            for name, value in (("zero", 0), ("middle", 3), ("five", 5)):
+                path = fresh("valid_" + name)
+                updated = invoke(["set", str(path), "maxRetries", str(value)])
+                shown = invoke(["show", str(path)])
+                expected = {**SEED, "maxRetries": value}
+                checks.append({"check": "valid_" + name + "_persists", "group": "preservation", "input": {"key": "maxRetries", "value": value},
+                    "expected": expected, "actual": shown["json"], "passed": updated["exit_code"] == shown["exit_code"] == 0 and shown["json"] == expected})
+            for name, key, value in (("unknown_nested_update_roundtrips", "futurePlugin", {"items": [1, {"flag": True}], "mode": "opaque"}),
+                                     ("unknown_existing_keys_preserved", "maxRetries", 4),
+                                     ("service_name_update_preserved", "serviceName", "node-B")):
+                path = fresh(name)
+                updated = invoke(["set", str(path), key, json.dumps(value, separators=(",", ":"))])
+                shown = invoke(["show", str(path)])
+                expected = {**SEED, key: value}
+                checks.append({"check": name, "group": "preservation", "input": {"key": key, "value": value},
+                    "expected": expected, "actual": shown["json"], "passed": updated["exit_code"] == shown["exit_code"] == 0 and shown["json"] == expected})
+            path = fresh("restart")
+            first = invoke(["set", str(path), "maxRetries", "0"])
+            second = invoke(["set", str(path), "maxRetries", "5"])
+            shown = invoke(["show", str(path)])
+            expected = {**SEED, "maxRetries": 5}
+            checks.append({"check": "restart_reads_last_committed_value", "group": "preservation", "input": {"updates": [0, 5], "read_in_new_process": True},
+                "expected": expected, "actual": shown["json"], "passed": first["exit_code"] == second["exit_code"] == shown["exit_code"] == 0 and shown["json"] == expected})
+            path = fresh("malformed")
             before = path.read_bytes()
-            observed = invoke(["set", str(path), "maxRetries", value])
-            actual = {"exit_code": observed["exit_code"], "stdout_status": (observed["json"] or {}).get("status"),
-                      "file_unchanged": path.read_bytes() == before, "timed_out": observed["timed_out"]}
-            expected = {"exit_code": 2, "stdout_status": "rejected", "file_unchanged": True, "timed_out": False}
-            checks.append({"check": "reject_" + name + "_without_write", "group": "requested_change", "input": {"key": "maxRetries", "json_value": value},
-                           "expected": expected, "actual": actual, "passed": actual == expected})
-        for name, value in (("zero", 0), ("middle", 3), ("five", 5)):
-            path = fresh("valid_" + name)
-            updated = invoke(["set", str(path), "maxRetries", str(value)])
-            shown = invoke(["show", str(path)])
-            expected = {**SEED, "maxRetries": value}
-            checks.append({"check": "valid_" + name + "_persists", "group": "preservation", "input": {"key": "maxRetries", "value": value},
-                "expected": expected, "actual": shown["json"], "passed": updated["exit_code"] == shown["exit_code"] == 0 and shown["json"] == expected})
-        for name, key, value in (("unknown_nested_update_roundtrips", "futurePlugin", {"items": [1, {"flag": True}], "mode": "opaque"}),
-                                 ("unknown_existing_keys_preserved", "maxRetries", 4),
-                                 ("service_name_update_preserved", "serviceName", "node-B")):
-            path = fresh(name)
-            updated = invoke(["set", str(path), key, json.dumps(value, separators=(",", ":"))])
-            shown = invoke(["show", str(path)])
-            expected = {**SEED, key: value}
-            checks.append({"check": name, "group": "preservation", "input": {"key": key, "value": value},
-                "expected": expected, "actual": shown["json"], "passed": updated["exit_code"] == shown["exit_code"] == 0 and shown["json"] == expected})
-        path = fresh("restart")
-        first = invoke(["set", str(path), "maxRetries", "0"])
-        second = invoke(["set", str(path), "maxRetries", "5"])
-        shown = invoke(["show", str(path)])
-        expected = {**SEED, "maxRetries": 5}
-        checks.append({"check": "restart_reads_last_committed_value", "group": "preservation", "input": {"updates": [0, 5], "read_in_new_process": True},
-            "expected": expected, "actual": shown["json"], "passed": first["exit_code"] == second["exit_code"] == shown["exit_code"] == 0 and shown["json"] == expected})
-        path = fresh("malformed")
-        before = path.read_bytes()
-        malformed = invoke(["set", str(path), "maxRetries", "{broken"])
-        actual = {"exit_code": malformed["exit_code"], "file_unchanged": path.read_bytes() == before}
-        checks.append({"check": "malformed_json_rejection_preserved", "group": "preservation", "input": {"json_value": "{broken"},
-            "expected": {"exit_code": 2, "file_unchanged": True}, "actual": actual,
-            "passed": actual == {"exit_code": 2, "file_unchanged": True}})
-        if tuple(row["check"] for row in checks) != CHECKS:
-            raise ValueError("OWNED_CONFIG_CHECK_MATRIX_INCOMPLETE")
-        observation_ref = save_once(run / "process-observations.json", observations)
-        return {"status": "passed" if all(row["passed"] for row in checks) else "behavior_failed",
-                "checks": checks, "executions": len(observations), "build_commands_ref": command_ref,
-                "process_observations_ref": observation_ref, "application_ref": reference(application),
-                "build_workspace": str(stage), "source_unchanged": source_files(self.workspace) == self.sources,
-                "scope": "independent_application_process_and_disk_behavior_not_game_runtime"}
+            malformed = invoke(["set", str(path), "maxRetries", "{broken"])
+            actual = {"exit_code": malformed["exit_code"], "file_unchanged": path.read_bytes() == before}
+            checks.append({"check": "malformed_json_rejection_preserved", "group": "preservation", "input": {"json_value": "{broken"},
+                "expected": {"exit_code": 2, "file_unchanged": True}, "actual": actual,
+                "passed": actual == {"exit_code": 2, "file_unchanged": True}})
+            if tuple(row["check"] for row in checks) != CHECKS:
+                raise ValueError("OWNED_CONFIG_CHECK_MATRIX_INCOMPLETE")
+            observation_ref = save_once(run / "process-observations.json", observations)
+            matrix_operation.update(checks_run=len(checks), checks_failed=sum(not row["passed"] for row in checks),
+                                    process_count=len(observations))
+            return {"status": "passed" if all(row["passed"] for row in checks) else "behavior_failed",
+                    "checks": checks, "executions": len(observations), "build_commands_ref": command_ref,
+                    "process_observations_ref": observation_ref, "application_ref": reference(application),
+                    "build_workspace": str(stage), "source_unchanged": source_files(self.workspace) == self.sources,
+                    "scope": "independent_application_process_and_disk_behavior_not_game_runtime"}
 
     def verify_baseline(self):
         run = self.output_root / "baseline"

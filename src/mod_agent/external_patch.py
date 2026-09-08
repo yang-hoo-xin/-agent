@@ -316,8 +316,14 @@ class ExternalQwenPatchAdapter(LocalOllamaInitialPatchAdapter):
         credential = headers["Authorization"].removeprefix("Bearer ")
         try:
             with httpx.Client(timeout=self.profile.timeout_seconds, trust_env=False, follow_redirects=False) as client:
+                from src.libs.llm.transport_observation import (
+                    transport_response_received,
+                    transport_started,
+                )
+                transport_started()
                 with client.stream("POST", url, content=wire, headers=headers) as response:
                     record.update(response_received=True, http_status=response.status_code)
+                    transport_response_received(http_status=response.status_code, response_complete=False)
                     for part in response.iter_bytes(chunk_size=65536):
                         remaining = MAX_RESPONSE_BYTES - bytes_seen
                         bytes_seen += len(part)
@@ -328,6 +334,7 @@ class ExternalQwenPatchAdapter(LocalOllamaInitialPatchAdapter):
                     else:
                         complete = True
             body = b"".join(parts)
+            transport_response_received(http_status=record["http_status"], response_complete=complete)
             self._retain_http_response(record, body, complete=complete, bytes_seen=bytes_seen, credential=credential)
             if not complete:
                 raise ExternalPatchError("EXTERNAL_PATCH_PROVIDER_RESPONSE_TOO_LARGE")
@@ -421,7 +428,7 @@ class ExternalQwenPatchAdapter(LocalOllamaInitialPatchAdapter):
 
 
 def run_external_patch_continuation(request, *, profile, worker_configuration, source_disclosure=None,
-                                    approved_source_files=None):
+                                    approved_source_files=None, execution_trace_configuration=None):
     """Use the original continuation/Graph and bind its existing profile identity slots."""
     if request.patch_upstream_configuration_ref is not None or request.qualified_model_routing_ref is not None:
         raise ExternalPatchError("EXTERNAL_PATCH_LOCAL_ROUTE_OR_QUALIFICATION_UNSUPPORTED")
@@ -436,4 +443,5 @@ def run_external_patch_continuation(request, *, profile, worker_configuration, s
         approved_source_files=approved_source_files)
     return run_fresh_patch_continuation(bound, patch_change_factory=adapter,
         dry_run_factory=make_exact_no_write_dry_run_factory(request.workspace_root),
-        max_model_calls=worker_configuration.policy.max_total_model_turns)
+        max_model_calls=worker_configuration.policy.max_total_model_turns,
+        execution_trace_configuration=execution_trace_configuration)

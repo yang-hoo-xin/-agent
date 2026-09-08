@@ -14,6 +14,7 @@ from uuid import uuid4
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
+from src.core.trace.execution_trace import current_trace, trace_operation
 from src.mod_agent.artifact_semantics import project_artifact_write_intent
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore, ArtifactStoreError
 from src.mod_agent.bindings import resolve_runtime_diagnosis_binding
@@ -1564,7 +1565,29 @@ def _review_route_map(
 
 
 def _make_real_graph_node(node_name: str, run: GraphNode) -> GraphNode:
+    execution_trace = current_trace()
     def _node(state: ModAgentState) -> ModAgentState:
+        # Preserve LangGraph's runtime ContextVars (especially interrupt/resume).
+        # Only bind our trace when a worker does not inherit it automatically.
+        if (current_trace() is None and execution_trace is not None
+                and execution_trace.context.finished_at is None):
+            with execution_trace.activate():
+                return _traced_node(state)
+        return _traced_node(state)
+
+    def _traced_node(state: ModAgentState) -> ModAgentState:
+        names = {"generate_patch_proposal": "patch.worker", "review_proposal": "proposal.review",
+                 "dry_run_apply": "patch.dry_run"}
+        with trace_operation(names.get(node_name, "workflow." + node_name),
+                attributes={"workflow_node": node_name}) as observation:
+            result = _execute_node(state)
+            paths = set(_node_artifact_refs(result, node_name))
+            observation.update(workflow_status=_node_status(result, node_name), artifact_refs=[
+                {"artifact_type": kind, "artifact_hash": result["artifact_hashes"].get(kind)}
+                for kind, path in result["artifacts"].items() if path in paths])
+            return result
+
+    def _execute_node(state: ModAgentState) -> ModAgentState:
         started = _trace_event(
             state=state,
             node_name=node_name,

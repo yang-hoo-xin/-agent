@@ -1908,6 +1908,17 @@ class PatchContinuationAttemptJournal:
         self._document["status"] = phase
         self._write()
 
+    def record_observation(self, observation: Mapping[str, Any]) -> None:
+        """Upsert measured execution state without changing workflow status/budget."""
+        normalized = json.loads(json.dumps(dict(observation), allow_nan=False))
+        rows = self._document.setdefault("execution_observations", {})
+        rows[normalized["id"]] = normalized
+        self._write()
+
+    def record_trace_summary(self, summary: Mapping[str, Any]) -> None:
+        self._document["execution_trace"] = json.loads(json.dumps(dict(summary), allow_nan=False))
+        self._write()
+
     def artifact_ref(self, artifact_type: str) -> ArtifactRef | None:
         artifacts = self._document.get("artifacts")
         value = artifacts.get(artifact_type) if isinstance(artifacts, Mapping) else None
@@ -1940,6 +1951,8 @@ class PatchContinuationAttemptJournal:
             "path": str(self.path),
             "sha256": hashlib.sha256(payload).hexdigest(),
             "status": self._document["status"],
+            **({"execution_trace": self._document["execution_trace"]}
+               if "execution_trace" in self._document else {}),
             "event_count": len(self._document["events"]),
             "model_call_count": self._document.get("model_call_count", 0),
             "proposal_admitted": self._document.get("proposal_admitted", False),
@@ -2767,6 +2780,7 @@ def _attempt_receipt_projection(path: Path, document: Mapping[str, Any]) -> dict
         "proposal_admitted": document.get("proposal_admitted", False),
         "generated_against_snapshot_sha256": document.get("generated_against_snapshot_sha256"),
         "current_snapshot_sha256": document.get("current_snapshot_sha256"),
+        **({"execution_trace": document["execution_trace"]} if "execution_trace" in document else {}),
     }
 
 
@@ -2898,6 +2912,7 @@ def run_fresh_patch_continuation(
     dry_run_factory: PatchContinuationDryRunFactory,
     max_model_calls: int = 1,
     upstream_configuration: Any = None,
+    execution_trace_configuration: Any = None,
 ) -> PatchContinuationResultV1:
     """Run once, or read the same attempt's durable result without replaying tools.
 
@@ -2951,7 +2966,8 @@ def run_fresh_patch_continuation(
     try:
         result = _run_fresh_patch_continuation_once(request,
             patch_change_factory=patch_change_factory, dry_run_factory=dry_run_factory,
-            max_model_calls=max_model_calls, run_id=run_id, upstream_configuration=upstream_configuration)
+            max_model_calls=max_model_calls, run_id=run_id, upstream_configuration=upstream_configuration,
+            execution_trace_configuration=execution_trace_configuration)
     except PatchContinuationError as exc:
         return blocked_patch_continuation_result(code=exc.code, stage=exc.stage,
             duration_seconds=0.0,
@@ -2977,6 +2993,7 @@ def _run_fresh_patch_continuation_once(
     max_model_calls: int = 1,
     run_id: str,
     upstream_configuration: Any = None,
+    execution_trace_configuration: Any = None,
 ) -> PatchContinuationResultV1:
     """Run an exact Plan through Patch, Review, and no-write Dry-run once."""
 
@@ -3024,6 +3041,40 @@ def _run_fresh_patch_continuation_once(
         admitted=admitted,
         max_model_calls=max_model_calls,
     )
+    from src.mod_agent.patch_execution_trace import PatchExecutionTraceConfiguration
+
+    configuration = execution_trace_configuration or PatchExecutionTraceConfiguration()
+    trace = configuration.make_trace(run_id=run_id, feature_id=feature_id,
+        artifact_store_root=request.artifact_store_root, recorder=journal.record_observation)
+    try:
+        with trace.activate():
+            trace.update(artifact_refs=[{"artifact_type": kind, "artifact_hash": ref.artifact_hash}
+                for kind, ref in reported_refs.items()])
+            result = _run_admitted_patch_continuation(request,
+                patch_change_factory=patch_change_factory, dry_run_factory=dry_run_factory,
+                max_model_calls=max_model_calls, run_id=run_id,
+                upstream_configuration=upstream_configuration, started=started,
+                request_id=request_id, admitted=admitted, journal=journal)
+            trace.update(workflow_status=result.status, terminal_stage=result.terminal_stage,
+                failure_code=(result.first_failure or {}).get("code"),
+                proposal_admitted=(result.attempt_receipt or {}).get("proposal_admitted", False))
+    finally:
+        summary = configuration.finish(trace)
+        summary.update(trace_id=trace.context.trace_id, session_id=trace.session_id,
+                       environment=trace.environment)
+        try:
+            journal.record_trace_summary(summary)
+        except Exception:
+            # Telemetry write failure is not a product state transition.
+            pass
+    return replace(result, attempt_receipt=journal.projection())
+
+
+def _run_admitted_patch_continuation(request, *, patch_change_factory, dry_run_factory,
+        max_model_calls, run_id, upstream_configuration, started, request_id, admitted, journal):
+    feature_id = request.feature_spec_ref.feature_id
+    reported_refs = {kind: getattr(request, kind + "_ref")
+                     for kind in ("feature_spec", "evidence_pack", "implementation_plan")}
     upstream_execution = None
     try:
         if upstream_configuration is not None:

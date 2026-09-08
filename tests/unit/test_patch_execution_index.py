@@ -735,3 +735,26 @@ def test_blocked_new_plan_is_distinct_from_last_worker_input(tmp_path, monkeypat
     assert len(row["patch_execution_segments"]) == 1
     assert row["shared_model_budget"]["remaining"] == 0
     assert row["terminal_artifacts"]["patch_proposal_artifact"]["ref"] is None
+
+
+def test_new_execution_trace_projects_measured_tree_without_exporting_context(tmp_path):
+    root, path, journal, _ = _fixture(tmp_path)
+    trace = {"trace_id": "a" * 32, "session_id": "feature-one", "environment": "offline-acceptance",
+             "mode": "metadata_only", "cloud_readback": "not_performed",
+             "export": {"post_attempts": 1, "http_accepted": 1, "secret": "DO_NOT_PROJECT"}}
+    journal["execution_trace"] = trace
+    journal["execution_observations"] = {"b" * 16: {"id": "b" * 16, "parent_id": None,
+        "trace_id": "a" * 32, "session_id": "feature-one", "name": "patch.execution", "kind": "span",
+        "status": "completed", "started_at": "2026-09-08T00:00:00+00:00",
+        "finished_at": "2026-09-08T00:00:01+00:00", "elapsed_ms": 1000,
+        "attributes": {"prompt": "DO_NOT_PROJECT"}}}
+    _retain(path, journal)
+    original = path.read_bytes()
+    projected = project_patch_executions(root)
+    observation = projected["attempts"][0]["execution_trace"]
+    assert observation["availability"] == "recorded"
+    assert observation["trace_id"] == trace["trace_id"]
+    assert observation["export"] == {"post_attempts": 1, "http_accepted": 1}
+    assert observation["observations"][0]["elapsed_ms"] == 1000
+    assert "DO_NOT_PROJECT" not in json.dumps(observation)
+    assert path.read_bytes() == original

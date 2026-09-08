@@ -15,7 +15,7 @@ import subprocess
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime, timezone
@@ -28,6 +28,7 @@ from uuid import uuid4
 from langgraph.types import Command
 
 from src.core.settings import load_settings
+from src.core.trace.execution_trace import current_trace, trace_operation
 from src.libs.llm import (
     AgentMessage,
     AgentResponseFormat,
@@ -40,6 +41,7 @@ from src.libs.llm import (
     OllamaLLM,
     validate_loopback_http_base_url,
 )
+from src.libs.llm.transport_observation import observe_transport
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.artifacts.store import ArtifactWriteResult
 from src.mod_agent.build import (
@@ -1544,8 +1546,26 @@ class LocalOllamaInitialPatchAdapter:
             record["request_ref_scope"] = "effective_agent_turn_request_not_provider_wire_or_send_proof"
             self._emit("local_patch_worker_turn_requested")
             replayed_before = self._replayed_turn_count
+            trace = current_trace()
+            scope = trace.model_call({"turn_index": number, "provider": client.provider, "model": client.model,
+                "request_sha256": record["request_sha256"], "usage_available": False,
+                "response_received": False, "request_bytes": len(request_bytes),
+                "consumed_tool_results": [{"call_id": item.call_id,
+                    "observation_sha256": _sha256_json(item.output)} for item in request.tool_results]}) if trace else nullcontext()
             try:
-                response = client.complete_turn(request)
+                with scope as call_observation:
+                    if call_observation is not None:
+                        record["model_request_observation_id"] = call_observation.observation_id
+                    with observe_transport(call_observation.transport_started if call_observation else None,
+                            call_observation.update if call_observation else None):
+                        response = client.complete_turn(request)
+                    if call_observation is not None:
+                        measured = (response.provider_diagnostic or {}).get("measured_usage")
+                        call_observation.record_response(usage=measured, usage_available=measured is not None,
+                            response_sha256=hashlib.sha256(_patch_agent_context_json(asdict(response)).encode("utf-8")).hexdigest(),
+                            output_sha256=hashlib.sha256((response.content or "").encode("utf-8")).hexdigest(),
+                            response_origin="verified_prior_response" if self._replayed_turn_count > replayed_before else "live_provider_response",
+                            stop_reason=response.stop_reason, tool_call_ids=[item.call_id for item in response.tool_calls])
             except Exception as exc:
                 record.update(status="failed", error_type=type(exc).__name__, error=str(exc))
                 self._emit("local_patch_worker_turn_failed")
@@ -1725,12 +1745,15 @@ class LocalOllamaInitialPatchAdapter:
         return reservations
 
     def _materialized_identity(self, changes: Any) -> dict[str, Any]:
-        result = materialize_exact_text_patch(
-            workspace_root=self.workspace_root, diff_intent=changes,
-            implementation_plan=self._implementation_plan,
-        )
-        return {"baseline_sha256": result.baseline_sha256, "code_sha256": result.code_sha256,
-                "files": sorted(result.files)}
+        with trace_operation("patch.materialize", attributes={"generated_changes_sha256": _sha256_json(changes)}) as operation:
+            result = materialize_exact_text_patch(
+                workspace_root=self.workspace_root, diff_intent=changes,
+                implementation_plan=self._implementation_plan,
+            )
+            operation.update(output_code_sha256=result.code_sha256, baseline_sha256=result.baseline_sha256,
+                             file_count=len(result.files))
+            return {"baseline_sha256": result.baseline_sha256, "code_sha256": result.code_sha256,
+                    "files": sorted(result.files)}
 
     def _verification_identity(self) -> dict[str, Any] | None:
         identity_reader = getattr(self.behavior_evaluator, "verification_identity", None)
@@ -1936,6 +1959,23 @@ class LocalOllamaInitialPatchAdapter:
         )
 
     def _evaluate_generated_behavior(
+        self, generated: GeneratedPatch, inspector: PlanBoundSourceInspector,
+    ) -> dict[str, Any]:
+        with trace_operation("patch.verify", attributes={
+                "generated_changes_sha256": _sha256_json(generated.changes),
+                "output_sha256": self._receipt["model_response"]["output_sha256"],
+                "evaluation_index": len(self._receipt["patch_agent_loop"].get("behavior_evaluations", [])) + 1,
+        }) as operation:
+            report = self._evaluate_generated_behavior_once(generated, inspector)
+            identity = report.get("materialized_code_identity") or {}
+            operation.update(verification_status=report["status"], failure_owner=report.get("failure_owner"),
+                behavior_report_sha256=report["report_ref"]["sha256"],
+                output_code_sha256=identity.get("code_sha256"),
+                execution_origin=report.get("execution_origin", "unknown"),
+                callback_invoked=report.get("callback_invoked", False))
+            return report
+
+    def _evaluate_generated_behavior_once(
         self, generated: GeneratedPatch, inspector: PlanBoundSourceInspector,
     ) -> dict[str, Any]:
         inspector.validate_snapshot()

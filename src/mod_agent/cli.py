@@ -783,6 +783,10 @@ def build_parser(
     )
     patch_continuation_parser.add_argument("--artifact-root", required=True)
     patch_continuation_parser.add_argument("--workspace-root", required=True)
+    patch_continuation_parser.add_argument("--trace-environment", default="local",
+        help="Deployment label for measured execution observations; default local.")
+    patch_continuation_parser.add_argument("--langfuse-metadata", action="store_true",
+        help="Explicitly export this invocation's allowlisted execution metadata to the configured Langfuse project; no source, prompts or raw replies.")
     patch_continuation_parser.add_argument("--feature-id", required=True)
     patch_continuation_parser.add_argument("--feature-spec-path", required=True)
     patch_continuation_parser.add_argument("--feature-spec-hash", required=True)
@@ -1785,6 +1789,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             } if worker_config else {}
             if qualified_selection is not None:
                 configured_worker["qualified_profile_selection"] = qualified_selection
+            from src.mod_agent.patch_execution_trace import PatchExecutionTraceConfiguration
+            trace_sink = None
+            if args.langfuse_metadata:
+                from src.observability.patch_langfuse import LangfuseHttpTransport
+                from src.observability.patch_live_langfuse import PatchLiveLangfuseSink
+                trace_sink = PatchLiveLangfuseSink(LangfuseHttpTransport.from_environment())
+            trace_configuration = PatchExecutionTraceConfiguration(environment=args.trace_environment, sink=trace_sink)
             store = ArtifactStore(args.artifact_root)
             result = run_fresh_patch_continuation(
                 request,
@@ -1799,6 +1810,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     args.workspace_root
                 ),
                 max_model_calls=policy.max_total_model_turns if policy is not None else 1,
+                execution_trace_configuration=trace_configuration,
                 **({"upstream_configuration": upstream_configuration}
                    if upstream_configuration is not None else {}),
             )

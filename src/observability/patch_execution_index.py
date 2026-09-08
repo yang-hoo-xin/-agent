@@ -527,6 +527,18 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
                   "current_snapshot_sha256", "proposal_admitted"),
         "journal_ref": {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest()},
         "journal_identity_checks": _journal_checks(journal),
+        "execution_trace": {
+            "availability": "recorded" if "execution_observations" in journal else "not_recorded",
+            **_fields(_object(journal.get("execution_trace")), "trace_id", "session_id", "environment", "mode",
+                      "cloud_readback"),
+            "export": _fields(_object(_object(journal.get("execution_trace")).get("export")),
+                "post_attempts", "http_accepted", "send_failures", "queue_dropped", "pending",
+                "deadline_exhausted", "remote_readback"),
+            "observations": [_fields(_object(row), "id", "parent_id", "trace_id", "session_id", "environment",
+                "name", "kind", "status", "started_at", "finished_at", "elapsed_ms")
+                for row in _object(journal.get("execution_observations")).values()],
+            "scope": "journal_projection_not_remote_readback_or_model_quality",
+        },
         "journal_observation": (
             "terminal_record_retained" if terminal else "terminal_result_cache_not_recorded"
         ),

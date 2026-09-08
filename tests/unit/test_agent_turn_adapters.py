@@ -113,6 +113,7 @@ def test_qwen_chat_adapter_uses_native_tools_without_thinking_or_parallel_calls(
     assert response.usage.input_tokens == 100
     assert response.usage.output_tokens == 20
     assert response.provider_diagnostic == {
+        "measured_usage": {"input_tokens": 100, "output_tokens": 20, "reasoning_tokens": 0},
         "api_type": "openai_compatible_chat_completions",
         "streaming": False,
         "provider_request_id": "chatcmpl-qwen-001",
@@ -979,3 +980,20 @@ def test_openai_responses_adapter_replays_only_bound_reasoning_call_and_output()
     assert captured[1]["text"]["format"]["strict"] is True
     assert first.usage.reasoning_tokens == 5
     assert second.content == '{"action":"finish"}'
+
+
+@pytest.mark.parametrize("usage, expected", [
+    (None, None), ({}, None),
+    ({"prompt_tokens": 0, "completion_tokens": 0}, {"input_tokens": 0, "output_tokens": 0}),
+    ({"prompt_tokens": 100, "completion_tokens": 20, "prompt_tokens_details": {"cached_tokens": 60}},
+     {"input_tokens": 100, "output_tokens": 20, "cached_input_tokens": 60}),
+    ({"prompt_tokens": True, "completion_tokens": 5}, None),
+])
+def test_native_usage_distinguishes_absence_from_measured_zero(usage, expected):
+    def send(*_):
+        return {"id": "usage-test", "model": "qwen3.6-plus", "usage": usage,
+                "choices": [{"finish_reason": "stop", "message": {"content": "{}"}}]}
+    adapter = QwenChatAgentAdapter(api_key="unused", base_url="https://example.test/v1",
+        model="qwen3.6-plus", max_completion_tokens=100, request_sender=send)
+    response = adapter.complete_turn(AgentTurnRequest(messages=(AgentMessage("user", "test"),)))
+    assert response.provider_diagnostic["measured_usage"] == expected

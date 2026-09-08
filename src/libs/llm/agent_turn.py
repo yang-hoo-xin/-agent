@@ -12,6 +12,7 @@ from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
 
 from src.libs.llm.ollama_llm import build_ollama_context_admission
+from src.libs.llm.transport_observation import transport_response_received, transport_started
 
 
 @dataclass(frozen=True)
@@ -167,7 +168,9 @@ class _HttpJsonSender:
 
         try:
             with httpx.Client(timeout=self.timeout_seconds) as client:
+                transport_started()
                 response = client.post(url, json=payload, headers=headers)
+                transport_response_received(http_status=response.status_code, response_complete=True)
         except httpx.TimeoutException as exc:
             raise AgentTurnProviderError(
                 f"Agent provider request timed out after {self.timeout_seconds:g} seconds."
@@ -234,7 +237,9 @@ class _LoopbackHttpJsonSender:
                 follow_redirects=False,
                 trust_env=False,
             ) as client:
+                transport_started()
                 response = client.post(url, json=payload, headers=headers)
+                transport_response_received(http_status=response.status_code, response_complete=True)
         except httpx.TimeoutException as exc:
             raise AgentTurnProviderError(
                 f"Local Agent request timed out after {self.timeout_seconds:g} seconds."
@@ -781,6 +786,22 @@ def _responses_tool(tool: AgentToolDefinition) -> dict[str, object]:
     }
 
 
+def _measured_chat_usage(data):
+    """Do not turn legacy zero defaults into measured provider usage."""
+    raw = data.get("usage")
+    if not isinstance(raw, dict):
+        return None
+    values = {"input_tokens": raw.get("prompt_tokens"), "output_tokens": raw.get("completion_tokens")}
+    if any(type(value) is not int or value < 0 for value in values.values()):
+        return None
+    for group, key, target in (("prompt_tokens_details", "cached_tokens", "cached_input_tokens"),
+                               ("completion_tokens_details", "reasoning_tokens", "reasoning_tokens")):
+        detail = raw.get(group)
+        if isinstance(detail, dict) and type(detail.get(key)) is int and detail[key] >= 0:
+            values[target] = detail[key]
+    return values
+
+
 def _qwen_chat_response_diagnostic(
     *,
     data: dict[str, Any],
@@ -812,6 +833,7 @@ def _qwen_chat_response_diagnostic(
     if isinstance(choices, list) and choices and isinstance(choices[0], dict):
         choice = choices[0]
     return {
+        "measured_usage": _measured_chat_usage(data),
         "api_type": "openai_compatible_chat_completions",
         "streaming": False,
         "provider_request_id": str(data.get("id") or "") or None,
@@ -916,6 +938,8 @@ def _ollama_provider_diagnostic(
         else None
     )
     return {
+        "measured_usage": ({"input_tokens": data["prompt_eval_count"], "output_tokens": data["eval_count"]}
+            if all(type(data.get(key)) is int and data[key] >= 0 for key in ("prompt_eval_count", "eval_count")) else None),
         "api_type": "ollama_native_chat",
         "streaming": False,
         "thinking": False,

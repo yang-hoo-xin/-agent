@@ -1,13 +1,15 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-09-07
+Last updated: 2026-09-08
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
 `docs/audits/LOOP_HISTORY.md`, not in this queue.
 
 ## 1. Current Queue
+
+Next parallel work after tracing 0.31: (1) complete changed-project isolated compilation and actual configuration integration, retaining the original 36 checks separately and returning new failures to the shared worker; (2) bounded model-quality experiments with fixed task/evaluation and independent holdout, separating requirement/state understanding from code repair, then performance/quantization comparison; (3) continue original product-entry/DSH task lifecycle integration, with explicit approval and applicable execution boundaries. New-run Langfuse readback should accompany an authorized normal task; do not manufacture another model run or rewrite historical times.
 
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 Latest bounded window is recorded in reconciliation 0.30. P0 014 did not improve

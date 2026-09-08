@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from src.core.trace.execution_trace import ExecutionTrace
 from src.mod_agent.artifacts import ArtifactRef
 from src.mod_agent.fresh_planning_continuation import (
     PatchContinuationInputV1,
@@ -31,7 +32,12 @@ def task_module():
 @pytest.fixture(scope="module")
 def prepared(task_module, tmp_path_factory):
     root = tmp_path_factory.mktemp("owned-config") / "task"
-    result = task_module.prepare_owned_config_task(output_root=root)
+    observations = {}
+    trace = ExecutionTrace("b" * 32, "owned-config-baseline", "offline-acceptance",
+        recorder=lambda row: observations.__setitem__(row["id"], row))
+    with trace.activate():
+        result = task_module.prepare_owned_config_task(output_root=root)
+    result["test_execution_observations"] = list(observations.values())
     return root, result
 
 
@@ -105,3 +111,19 @@ def test_actual_compiler_preserves_non_ascii_diagnostic(task_module, tmp_path):
     actual_output = commands[0]["stdout"] + commands[0]["stderr"]
     assert "缺失的配置值" in actual_output
     assert "\ufffd" not in actual_output
+
+
+def test_real_compiler_and_process_observations_use_measured_timing(prepared):
+    _, result = prepared
+    rows = result["test_execution_observations"]
+    compiles = [row for row in rows if row["name"] == "patch.compile"]
+    matrices = [row for row in rows if row["name"] == "behavior.matrix"]
+    processes = [row for row in rows if row["name"] == "behavior.process"]
+    assert len(compiles) == len(matrices) == 1 and len(processes) == 23
+    assert compiles[0]["attributes"]["exit_code"] == 0
+    assert matrices[0]["attributes"]["checks_run"] == 15
+    assert matrices[0]["attributes"]["checks_failed"] == 7
+    assert all(row["parent_id"] == matrices[0]["id"] for row in processes)
+    assert all(row["finished_at"] and row["elapsed_ms"] > 0 for row in [*compiles, *processes])
+    assert not any(row["kind"] == "generation" for row in rows)
+    assert all("stdout" not in row["attributes"] and "argv" not in row["attributes"] for row in rows)

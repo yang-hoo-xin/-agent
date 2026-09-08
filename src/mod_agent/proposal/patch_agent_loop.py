@@ -11,6 +11,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
+from src.core.trace.execution_trace import trace_operation
 from src.libs.llm.agent_turn import (
     AgentMessage,
     AgentResponseFormat,
@@ -1273,8 +1274,13 @@ def run_patch_agent_loop(
             planned_reads = None
             if reuse_covered:
                 try:
-                    planned_reads = _plan_source_reads(source_inspector,
-                        [call.arguments["binding_id"] for call in calls], full_excerpts, observation_sequence)
+                    with trace_operation("source.prepare", attributes={
+                        "turn_index": turn_index, "tool_call_ids": [call.call_id for call in calls],
+                        "provider_response_id": response.request_id, "preparation_only": True,
+                        "tool_dispatch_performed": False,
+                    }):
+                        planned_reads = _plan_source_reads(source_inspector,
+                            [call.arguments["binding_id"] for call in calls], full_excerpts, observation_sequence)
                 except PatchAgentLoopError as exc:
                     for call in calls:
                         tool_call_trace.append(_tool_trace(call, turn_index=turn_index,
@@ -1356,18 +1362,23 @@ def run_patch_agent_loop(
                 seen_tool_call_ids.add(call.call_id)
                 seen_call_bindings[call.call_id] = call.arguments["binding_id"]
                 try:
-                    if planned_reads is not None:
-                        source_inspector.validate_snapshot()
-                        observation, encoded, _ = planned_reads[index]
-                        if "excerpt_ref" not in encoded and (key := _local_excerpt_key(encoded)) is not None:
-                            full_excerpts.setdefault(key, encoded)
-                    else:
-                        observation = source_inspector.inspect(binding_id=call.arguments["binding_id"],
-                            observation_id=f"patch-observation-{tool_rounds_used:03d}")
-                        encoded = (_encode_source_excerpt(observation, full_excerpts)
-                            if encode_excerpts else observation.model_view())
-                    total_observation_bytes += len(_canonical_json(encoded).encode("utf-8"))
-                    admitted = total_observation_bytes <= allowed_observation_end
+                    with trace_operation("source.inspect", kind="tool", attributes={
+                        **_source_trace_attributes(call, response, turn_index), "read_cost": read_cost,
+                        "reused": read_cost == 0, "prepared_before_dispatch": planned_reads is not None,
+                    }) as inspection:
+                        if planned_reads is not None:
+                            source_inspector.validate_snapshot()
+                            observation, encoded, _ = planned_reads[index]
+                            if "excerpt_ref" not in encoded and (key := _local_excerpt_key(encoded)) is not None:
+                                full_excerpts.setdefault(key, encoded)
+                        else:
+                            observation = source_inspector.inspect(binding_id=call.arguments["binding_id"],
+                                observation_id=f"patch-observation-{tool_rounds_used:03d}")
+                            encoded = (_encode_source_excerpt(observation, full_excerpts)
+                                if encode_excerpts else observation.model_view())
+                        total_observation_bytes += len(_canonical_json(encoded).encode("utf-8"))
+                        admitted = total_observation_bytes <= allowed_observation_end
+                        inspection.update(**_source_result_trace_attributes(observation, encoded, admitted))
                     observation_trace.append(_observation_trace(observation, turn_index=turn_index, admitted_to_model=admitted,
                         **({"encoded_payload": encoded} if encode_excerpts else {}),
                         **({"read_cost": read_cost} if reuse_covered else {})))
@@ -1407,8 +1418,13 @@ def run_patch_agent_loop(
         if response.tool_calls:
             call = response.tool_calls[0]
             if call.name == PATCH_UPSTREAM_REQUEST_TOOL_NAME:
-                code, upstream = _validate_upstream_request(call, source_inspector, selected_policy,
-                    tool_available=any(tool.name == PATCH_UPSTREAM_REQUEST_TOOL_NAME for tool in request.tools))
+                with trace_operation("patch.upstream_request", kind="tool", attributes={
+                    "turn_index": turn_index, "tool_call_id": call.call_id,
+                    "provider_response_id": response.request_id, "upstream_execution_performed": False,
+                }) as upstream_observation:
+                    code, upstream = _validate_upstream_request(call, source_inspector, selected_policy,
+                        tool_available=any(tool.name == PATCH_UPSTREAM_REQUEST_TOOL_NAME for tool in request.tools))
+                    upstream_observation.update(request_registered=upstream is not None, result_code=code)
                 tool_call_trace.append(_tool_trace(call, turn_index=turn_index,
                     status="accepted" if upstream is not None else "rejected", code=code,
                     dispatch_started=False))
@@ -1480,10 +1496,19 @@ def run_patch_agent_loop(
             seen_tool_call_ids.add(call.call_id)
             tool_rounds_used += 1
             try:
-                observation = source_inspector.inspect(
-                    binding_id=binding_id,
-                    observation_id=f"patch-observation-{tool_rounds_used:03d}",
-                )
+                with trace_operation("source.inspect", kind="tool", attributes={
+                    **_source_trace_attributes(call, response, turn_index), "read_cost": 1,
+                    "reused": False, "prepared_before_dispatch": False,
+                }) as inspection:
+                    observation = source_inspector.inspect(
+                        binding_id=binding_id,
+                        observation_id=f"patch-observation-{tool_rounds_used:03d}",
+                    )
+                    encoded = (_encode_source_excerpt(observation, full_excerpts)
+                        if selected_policy.deduplicate_source_excerpts else observation.model_view())
+                    total_observation_bytes += len(_canonical_json(encoded).encode("utf-8"))
+                    admitted_to_model = total_observation_bytes <= allowed_observation_end
+                    inspection.update(**_source_result_trace_attributes(observation, encoded, admitted_to_model))
             except PatchAgentLoopError as exc:
                 availability["selection"] = "execution_failed"
                 tool_call_trace.append(
@@ -1508,12 +1533,6 @@ def run_patch_agent_loop(
                     observation_trace=observation_trace,
                     termination=_termination(exc.code, exc.reason, turn_index),
                 )
-            encoded = (_encode_source_excerpt(observation, full_excerpts)
-                if selected_policy.deduplicate_source_excerpts else observation.model_view())
-            total_observation_bytes += len(_canonical_json(encoded).encode("utf-8"))
-            admitted_to_model = (
-                total_observation_bytes <= allowed_observation_end
-            )
             observation_trace.append(
                 _observation_trace(
                     observation,
@@ -1600,7 +1619,14 @@ def run_patch_agent_loop(
             "feedback_queued": False, "feedback_in_request": False, "followup_response_observed": False}
         submission_trace.append(submission)
         try:
-            validate_patch_submission(raw_content, final_response_format.schema)
+            with trace_operation("patch.submission", attributes={
+                "turn_index": turn_index, "provider_response_id": response.request_id,
+                "response_content_sha256": submission["response_sha256"],
+                "schema_sha256": submission["schema_sha256"], "validation_scope": "strict_json_and_submission_schema",
+                "behavior_validation_performed": False, "submission_admitted": False,
+            }) as submission_observation:
+                validate_patch_submission(raw_content, final_response_format.schema)
+                submission_observation.update(submission_admitted=True)
         except ValueError as exc:
             submission["status"] = "contract_invalid"
             return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
@@ -1937,6 +1963,22 @@ def _usage_record(turn_index: int, response: AgentTurnResponse) -> dict[str, obj
     }
 
 
+def _source_trace_attributes(call, response, turn_index):
+    return {"turn_index": turn_index, "tool_call_id": call.call_id,
+            "binding_id": call.arguments["binding_id"], "tool_dispatch_performed": True,
+            "provider_response_id": response.request_id,
+            "response_content_sha256": hashlib.sha256(
+                (response.content if isinstance(response.content, str) else "").encode("utf-8")).hexdigest()}
+
+
+def _source_result_trace_attributes(observation, encoded, queued):
+    return {"source_observation_id": observation.observation_id,
+            "source_snapshot_sha256": observation.source_snapshot_sha256,
+            "encoded_payload_sha256": _canonical_sha256(encoded),
+            "encoded_payload_bytes": len(_canonical_json(encoded).encode("utf-8")),
+            "observation_queued": queued, "model_consumption_proven": False}
+
+
 def _tool_trace(
     call: AgentToolCall,
     *,
@@ -1961,6 +2003,13 @@ def _tool_trace(
         trace["dispatch_started"] = dispatch_started
     if code is not None:
         trace["error_code"] = code
+    with trace_operation("tool.admission", kind="event", attributes={
+        "turn_index": turn_index, "tool_call_id": call.call_id,
+        "arguments_sha256": trace["arguments_sha256"], "admission_result": status,
+        "dispatch_started": dispatch_started is True, "result_code": code,
+        "timing_scope": "decision_record_only_not_validation_or_source_read_duration",
+    }):
+        pass
     return trace
 
 

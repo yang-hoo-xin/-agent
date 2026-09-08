@@ -6,6 +6,12 @@
 
 ## 0. 最新状态快照
 
+**2026-09-08 新运行追踪接线（0.31）：共享 Patch/Repair worker 已自动记录模型发送、工具、提交、物化、验证、Review/Dry-run 的真实时序；原 Store 查询可读。**
+公开入口离线执行树及真实 OTLP 映射通过；新运行 Cloud 回查尚未执行，本轮没有新增真实模型调用或历史导入。
+OwnedConfigService 原基线的真实编译与 23 个进程已产生分段计时；这是基线验证，不是新的模型成功。
+P0 014/015 结论不变。用户新提出的全部修改隔离编译、真实配置路径检查，以及独立模型质量/性能实验进入下一轮工作范围。
+已确认原 36 项未编译 Configuration.cs，配置由替身提供；该缺口不能解释现有三项 First Shot 失败，也不能豁免完整修复验收。
+
 **两小时并行窗口检查点（0.30）：P0仍未修好；014两次原矩阵仍33/36，015本地27B在第二请求超时。**
 Langfuse美区项目已真实查回四次自有任务的54条历史记录和1条行为分数；额外三次历史最初被审核拦住，用户补充明确授权后完成。
 DSH需求准备已通过真实页面与原ArtifactStore验收，并新增按精确运行查看diff的只读入口。
@@ -1368,6 +1374,46 @@ SHA严格回到`8de69acdafa7eb3ce8cfcd06d5919d0daea7e1f2872730307bab60efd23886bd
 仍未完成：First Shot有效修订/原任务审批Apply/changed Build/GTFO Runtime；真实自主Planning与
 有依据的自动上游选择；RAG证据改变下游决策的实证；跨任务资格；DSH执行、批准、取消与恢复；
 完整实时Trace、hosted CI及Release交付。保留六份用户原WIP，不把本轮平台提交视为这些项目全部完成。
+
+### 0.31 新执行时序、原生 Langfuse 映射与公开入口验收（2026-09-08）
+
+本节是本轮详细证据的主位置。旧 EVENT/导入时刻、旧模型响应、原行为报告均未改写。
+本轮没有真实模型请求、Cloud 上传、产品 Apply、整 Mod Build 或 GTFO Runtime。
+
+**实现与边界**
+
+- 中立 `ExecutionTrace` 复用原 `TraceContext`，原 Patch journal 以 `execution_observations` 按 id 更新 running/finished 状态；没有第二 Graph、数据库或业务状态机。
+- 模型调用先有 `model.request`；只有底层实际进入 HTTP transport 才出现 `patch.generate`。发送前准入失败、保存响应复用不虚构 generation。HTTP 响应已到但解析失败时仍记录 received/complete/status，不伪造合法输出或 usage。
+- 模型、工具、提交、物化和验证通过原请求/响应、工具调用、源码观察、物化代码与报告 hash 关联。工具准备、拒绝、真正 dispatch 和已有观察复用分别记录；后续请求的消费 hash 与首次 finished 导出内容相互对应。
+- `patch.verify` 是现有验证 callback 的实测总范围。已在 OwnedConfigService 真实 compiler、行为矩阵和每个进程处额外计时。未改造的第三方 callback 仍只有聚合验证计时；不能从旧报告生成虚假的子步骤时间。
+- 实际 Graph 节点记录 Patch worker、Repair/上游节点、Review、Dry-run；不预建未执行的 Apply/Build/Runtime。每次 invocation 独立 trace，同一 Store 的 Feature 关联同 session。此关联测试不等于审批跨进程恢复全验收。
+- 原生 OTLP generation 承载模型和已测 token；缓存/推理 token 从包含它们的总数中拆开，不重复累计。缺失用量、成本、TTFT 不填成已测零。当前非 token streaming；TTFT 未实现。未核实成本价格匹配。
+- `PatchLiveLangfuseSink` 复用原 HTTP transport，白名单 metadata-only，运行中异步发送结束步骤；不导出源码、prompt、原回复、路径或异常正文。队列和退出等待有界，无自动 POST 重试。超时/队列溢出如实记 pending/dropped；不保证持久投递，HTTP 接受不等于 Cloud 回查。
+- CLI 新增 `--trace-environment`、显式 `--langfuse-metadata`；仅存在环境变量不会触发上传。Python 公共入口接受 `PatchExecutionTraceConfiguration`。默认本地记录，terminal 缓存读取不重写原 journal、不重复模型/工具/导出。
+- 原 `patch_execution_index` 吸收 trace/session、步骤时序及有限发送状态，保持只读。查询仍不授予成功、恢复或写权限。
+
+**本轮真实遇到并关闭的接缝**
+
+1. source.inspect 在结束后才补结果，会使首次 finished 导出缺 hash；调整为结束前完成结果记录。
+2. producer 使用 tool_call_id/encoded_payload_sha256，sink 白名单不对应，实际公开路径 OTLP 测试先失败；明确映射后通过。
+3. 复制整个 ContextVars 上下文覆盖了 LangGraph runnable/interrupt 状态，造成 19 项旧审批回归失败；只绑定本模块 trace，19 项原检查全部恢复通过。
+4. HTTP 200 已收到完整但无效 JSON，旧测量误记 response_received=false；在传输边界记录 HTTP 接收，解析失败保留 failed，定点红绿通过。
+
+**执行的检查（不把重复执行相加成能力成绩）**
+
+- `python -X utf8 -B -m pytest tests/unit/test_patch_live_trace_cli.py -q --tb=short --basetemp=C:/Users/10160/AppData/Local/Temp/lf-live-final-public-20260908`：8 项通过，36.14s；随后新增 HTTP 完整响应/无效 JSON 的第 9 项，连同未接收响应超时反例定点 2 项通过，4.30s。使用预设 HTTP 响应和 marker verifier，无真实模型/编译/Cloud。
+- `python -B -m pytest tests/unit/test_patch_agent_loop.py tests/unit/test_patch_source_coverage_reuse.py tests/unit/test_patch_submission_loop.py tests/unit/test_patch_loop_execution_trace.py tests/unit/test_execution_trace.py tests/unit/test_trace_context.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\trace-compat-$PID"`：128 项通过，4.11s。
+- `python -X utf8 -B -m pytest tests/unit/test_patch_execution_index.py tests/unit/test_execution_trace.py tests/unit/test_patch_live_langfuse.py -q --tb=short --basetemp=C:/Users/10160/AppData/Local/Temp/lf-live-query-20260908`：79 项通过，27.45s；其中原生映射/sink 26 项、Trace core 8 项。包含首次 finished、usage 互斥桶、输出过滤、服务失败及有界退出。
+- `python -X utf8 -B -m pytest tests/unit/test_agent_turn_adapters.py -q --tb=short --basetemp=C:/Users/10160/AppData/Local/Temp/lf-live-adapters-20260908`：34 项通过，0.29s。新增已测零与缺失、缓存细分、无效计量区别；原精确 diagnostic 断言随新增字段更新。
+- `test_owned_config_task.py` 本轮 6 项通过：原基线实际编译成功，23 个真实应用进程，原 15 项仍 8 通过/7 预期缺陷；新增计时核对复用这次基线。没有手写正确实现。
+- `python -X utf8 -B -m pytest tests/unit/test_patch_live_trace_cli.py tests/unit/test_external_patch.py tests/unit/test_fresh_planning_continuation.py tests/unit/test_local_entry.py tests/unit/test_workflow_graph.py tests/unit/test_patch_upstream_cli.py tests/unit/test_patch_submission_cli.py tests/unit/test_patch_langfuse.py -q -n 2 --tb=short --basetemp=C:/Users/10160/AppData/Local/Temp/lf-live-integration-20260908`：424 项首跑 404 通过/20 失败。19 个本轮 Graph context 回归以 `test_workflow_graph.py --lf` 修后 19 通过（9.80s）；另 1 项在独立 HEAD archive 中同样失败，不计为本轮通过。
+- 既有失败：`test_runtime_repair_binding_revision_authorizes_current_live_span` 期待 span 错误，但更早触发 source_hash 失配。独立 `0e98602e` archive 一次复现 1 failed/4.35s；证据 `head_runtime_binding_check_001/result.json`、`pytest-output.txt`、`source-comparison.json` 在本任务输出根目录。未为通过而放松原校验。
+- 新文件及本轮新增代码 Ruff 通过。`local_entry.py`/`workflow/graph.py` 分别仍有 HEAD 已存在的 10/2 项 lint；通过 git show HEAD 与当前 JSON lint 结果对照，新增 finding 为 0。没有借此清理无关代码。
+
+**下一轮已确认范围**
+
+原 36 项保持原期待值并单列；全部修改进入完整项目的隔离编译；真实 Configuration/BepInEx ConfigFile 验证默认、键绑定、持久化/重启及开关读取。实际 LiveEdit 的 Unity 调度、Loader/Harmony 加载和游戏 Runtime 分开标注，不能用手动调用重载消费者代替。新增 compile/config 失败应绑定同一份物化代码，交回既有 worker。
+模型能力线同时区分需求/状态理解、Evidence/Planning 与实际修码；冻结评价和独立留出任务，分别评价输入/策略、专项训练和推理配置。截图中的训练/速度数据属于其他项目，不能填成本项目成绩，也不能把弱模型调优设成整条交付链无限前置条件。
 
 ## 1. 结论与范围
 

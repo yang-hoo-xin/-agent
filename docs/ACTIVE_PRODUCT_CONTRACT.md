@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-09-07
+Last updated: 2026-09-08
 
 ## 1. Product
 
@@ -39,6 +39,8 @@ Evaluation, schemas, policies, dashboards, MCP, and retrieval mechanisms serve
 this chain. They are not independent product lines.
 
 ### 1.1 Current Development Selection
+
+Prospective shared-worker tracing is now implemented and accepted offline (reconciliation 0.31): actual sends, tools, materialization, verification and reached Graph stages have measured observations in the original journal/index and a metadata-only native OTLP mapping. New-run Cloud readback is unperformed; no new model or P0 success is claimed. Next selected acceptance also requires complete changed-project compilation and actual configuration-path checks, separately from the original 36 behavior checks. Model quality/performance experiments remain distinct from framework verification.
 
 The selected request is `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.
 Current two-hour checkpoint: P0 014 returned unchanged code and twice 33/36;
