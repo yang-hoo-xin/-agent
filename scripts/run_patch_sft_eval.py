@@ -248,7 +248,7 @@ def prepare_eval(*, manifest_ref, case_id, profile_ref, mode, attempt_id, output
     return {**record, "prepared_ref": save(output / "prepared.json", record)}
 
 
-def execute_prepared(prepared_ref):
+def execute_prepared(prepared_ref, *, execution_trace_configuration=None):
     prepared = read_bound_json(prepared_ref)
     if ref(__file__) != prepared["runner_ref"]:
         raise ValueError("SFT_EVAL_RUNNER_CHANGED")
@@ -265,7 +265,8 @@ def execute_prepared(prepared_ref):
         behavior_evaluator=config.behavior_evaluator(), enable_recovery_loop=config.enable_recovery_loop)
     started = time.perf_counter()
     result = run_fresh_patch_continuation(request, patch_change_factory=adapter,
-        dry_run_factory=make_exact_no_write_dry_run_factory(request.workspace_root), max_model_calls=config.policy.max_total_model_turns)
+        dry_run_factory=make_exact_no_write_dry_run_factory(request.workspace_root), max_model_calls=config.policy.max_total_model_turns,
+        execution_trace_configuration=execution_trace_configuration)
     elapsed = time.perf_counter()-started
     receipt = read_bound_json({"path": result.attempt_receipt["path"], "sha256": result.attempt_receipt["sha256"]}) if result.attempt_receipt else {}
     factory = receipt.get("factory_receipt", {})
@@ -304,11 +305,24 @@ def main(argv=None):
     parser.add_argument("--prepared", type=Path)
     parser.add_argument("--prepared-sha256")
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--langfuse-metadata", action="store_true",
+                        help="Execute only: export metadata via the existing configured Langfuse sink; never source or prompt bodies.")
     args = parser.parse_args(argv)
+    if args.langfuse_metadata and not args.execute:
+        parser.error("--langfuse-metadata requires --execute; preparation cannot enable export.")
     if args.execute:
         if not args.prepared or not args.prepared_sha256:
             parser.error("Execution requires one exact --prepared and --prepared-sha256.")
-        result = execute_prepared({"path":str(args.prepared.resolve()), "sha256":args.prepared_sha256})
+        trace_configuration = None
+        if args.langfuse_metadata:
+            from src.mod_agent.patch_execution_trace import PatchExecutionTraceConfiguration
+            from src.observability.patch_langfuse import LangfuseHttpTransport
+            from src.observability.patch_live_langfuse import PatchLiveLangfuseSink
+
+            trace_configuration = PatchExecutionTraceConfiguration(
+                sink=PatchLiveLangfuseSink(LangfuseHttpTransport.from_environment()))
+        result = execute_prepared({"path":str(args.prepared.resolve()), "sha256":args.prepared_sha256},
+                                  execution_trace_configuration=trace_configuration)
     else:
         if not all((args.manifest,args.manifest_sha256,args.case_id,args.profile,args.profile_sha256,args.mode,args.attempt_id,args.output_root)):
             parser.error("Prepare requires explicit manifest/profile hashes, case, mode, attempt and output root.")

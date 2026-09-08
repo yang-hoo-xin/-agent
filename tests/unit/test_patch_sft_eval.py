@@ -36,10 +36,15 @@ def _fake_execution(root, source, program, tools):
 
 
 def _fixture(tmp_path, monkeypatch):
-    module = data.load_tasks()
-    definition = module.TASKS[0]
+    prefix = "public sealed class Subject\n{\n    public int Count, Total, Last, Published;\n    public void Apply(int sample, bool publish)\n    {\n"
+    original = "        Count++; Total += sample; Last = sample; Published++;"
+    definition = {"case_id": "offline-publication-fixture", "family_id": "offline_fixture", "split": "train",
+        "request": "Honor publish without disabling sample state updates. Preserve enabled behavior.",
+        "sources": {"B0": prefix + original + "\n    }\n}\n",
+                    "C1": prefix + "        if (!publish) return;\n" + original + "\n    }\n}\n",
+                    "C2": prefix + original.replace("Published++;", "if (publish) Published++;") + "\n    }\n}\n"}}
     monkeypatch.setattr(data, "execute_version", _fake_execution)
-    sample, task = data.prepare_one(definition, tmp_path / "task", {}, module.harness(definition["checks"]))
+    sample, task = data.prepare_one(definition, tmp_path / "task", {}, "synthetic checker fixture, never compiled")
     manifest = data.save(tmp_path / "manifest.json", {"tasks": [task]})
     profile = LocalOllamaInitialPatchProfileV1(profile_version=LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
         base_url="http://127.0.0.1:11434", model="offline-sft", context_window=16384, output_budget=4096, timeout_seconds=30)
@@ -91,6 +96,8 @@ def test_preparation_and_shared_worker_transport_reach_review_and_dry_run_withou
     assert result["execution_counts"]["review"] == result["execution_counts"]["dry_run"] == 1
     assert result["execution_counts"]["apply"] == result["execution_counts"]["build"] == result["execution_counts"]["runtime"] == 0
     assert result["preservation_passed"] is True
+    journal = json.loads(Path(result["attempt_ref"]["path"]).read_text(encoding="utf-8"))
+    assert journal["execution_trace"]["mode"] == "local_only"
     first = json.dumps(chats[0])
     assert "hidden_oracle" not in first and "CheckApp" not in first
     assert "if (publish) Published++;" not in first
@@ -117,3 +124,71 @@ def test_duplicate_attempt_output_is_not_overwritten(tmp_path, monkeypatch):
         evaluation.prepare_eval(manifest_ref=manifest, case_id=task["case_id"], profile_ref=profile,
             mode="initial_patch", attempt_id="unique", output_root=output)
     assert hashlib.sha256(original).hexdigest() == prepared["prepared_ref"]["sha256"]
+
+
+def test_explicit_trace_configuration_reaches_real_worker_without_extra_model_calls(tmp_path, monkeypatch):
+    from src.mod_agent.patch_execution_trace import PatchExecutionTraceConfiguration
+
+    task, manifest, profile, _ = _fixture(tmp_path, monkeypatch)
+    chats = _install(monkeypatch)
+    class Sink:
+        def __init__(self):
+            self.rows = []
+            self.shutdown_calls = 0
+        def publish(self, row):
+            self.rows.append(row)
+        def shutdown(self, *, timeout_millis):
+            self.shutdown_calls += 1
+            return {"status": "offline_test", "remote_readback": "not_performed"}
+    sink = Sink()
+    prepared = evaluation.prepare_eval(manifest_ref=manifest, case_id=task["case_id"], profile_ref=profile,
+        mode="initial_patch", attempt_id="explicit-trace", output_root=tmp_path / "attempt")
+    assert not sink.rows and not chats
+    result = evaluation.execute_prepared(prepared["prepared_ref"],
+        execution_trace_configuration=PatchExecutionTraceConfiguration(environment="offline-sft", sink=sink))
+    assert result["task_succeeded"] and len(chats) == 2
+    journal = json.loads(Path(result["attempt_ref"]["path"]).read_text(encoding="utf-8"))
+    assert journal["execution_trace"]["mode"] == "metadata_only"
+    assert journal["execution_trace"]["environment"] == "offline-sft"
+    generation_ids = {row["id"] for row in sink.rows if row["name"] == "patch.generate" and row["kind"] == "generation"}
+    assert len(generation_ids) == 2 and sink.shutdown_calls == 1
+
+
+def test_prepare_rejects_export_before_sink_or_environment_access(monkeypatch):
+    from src.observability.patch_langfuse import LangfuseHttpTransport
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Preparation must not construct a sink or access export credentials.")
+    monkeypatch.setattr(LangfuseHttpTransport, "from_environment", forbidden)
+    monkeypatch.setattr(evaluation, "prepare_eval", forbidden)
+    with pytest.raises(SystemExit) as raised:
+        evaluation.main(["--langfuse-metadata"])
+    assert raised.value.code == 2
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_cli_export_flag_passes_only_explicit_metadata_sink(tmp_path, monkeypatch, enabled):
+    from src.observability import patch_live_langfuse
+    from src.observability.patch_langfuse import LangfuseHttpTransport
+
+    created, calls = [], []
+    transport = object()
+    def from_environment():
+        created.append("transport")
+        return transport
+    def make_sink(value):
+        assert value is transport
+        created.append("sink")
+        return object()
+    monkeypatch.setattr(LangfuseHttpTransport, "from_environment", from_environment)
+    monkeypatch.setattr(patch_live_langfuse, "PatchLiveLangfuseSink", make_sink)
+    monkeypatch.setattr(evaluation, "execute_prepared", lambda ref, **kwargs: calls.append(kwargs) or {"test": True})
+    arguments = ["--execute", "--prepared", str(tmp_path / "prepared.json"), "--prepared-sha256", "a" * 64]
+    if enabled:
+        arguments.append("--langfuse-metadata")
+    assert evaluation.main(arguments) == 0
+    assert created == (["transport", "sink"] if enabled else [])
+    configuration = calls[0]["execution_trace_configuration"]
+    assert (configuration is not None) is enabled
+    if enabled:
+        assert configuration.sink is not None
