@@ -1,6 +1,6 @@
 """Trace context for observability across pipeline stages.
 
-Provides trace_id, trace_type (query/ingestion), per-stage timing,
+Provides trace_id, trace_type (query/ingestion/execution), per-stage timing,
 finish() lifecycle, and to_dict() serialisation for JSON Lines output.
 """
 
@@ -17,23 +17,23 @@ class TraceContext:
 
     Attributes:
         trace_id: Unique identifier for this trace.
-        trace_type: Either ``"query"`` or ``"ingestion"``.
+        trace_type: ``"query"``, ``"ingestion"`` or ``"execution"``.
         started_at: ISO-8601 timestamp when the trace was created.
         finished_at: ISO-8601 timestamp when ``finish()`` was called, or None.
         stages: Ordered list of recorded stage dicts.
         metadata: Arbitrary key/value pairs attached to the trace.
     """
 
-    trace_type: Literal["query", "ingestion"] = "query"
+    trace_type: Literal["query", "ingestion", "execution"] = "query"
     trace_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     started_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     finished_at: Optional[str] = field(default=None)
     stages: List[Dict[str, Any]] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-    # internal monotonic clock for accurate elapsed calculation
-    _start_mono: float = field(default_factory=time.monotonic, repr=False)
-    _finish_mono: Optional[float] = field(default=None, repr=False)
+    # internal high-resolution clock for raw elapsed calculation
+    _start_perf_ns: int = field(default_factory=time.perf_counter_ns, repr=False)
+    _finish_perf_ns: Optional[int] = field(default=None, repr=False)
     _stage_timings: Dict[str, float] = field(default_factory=dict, repr=False)
 
     # ---- recording ---------------------------------------------------
@@ -67,7 +67,7 @@ class TraceContext:
 
     def finish(self) -> None:
         """Mark the trace as finished and record wall-clock end time."""
-        self._finish_mono = time.monotonic()
+        self._finish_perf_ns = time.perf_counter_ns()
         self.finished_at = datetime.now(timezone.utc).isoformat()
 
     # ---- timing helpers -----------------------------------------------
@@ -92,8 +92,12 @@ class TraceContext:
                 raise KeyError(f"Stage '{stage_name}' has no recorded timing")
             return self._stage_timings[stage_name]
 
-        end = self._finish_mono if self._finish_mono is not None else time.monotonic()
-        return (end - self._start_mono) * 1000.0
+        end = (
+            self._finish_perf_ns
+            if self._finish_perf_ns is not None
+            else time.perf_counter_ns()
+        )
+        return (end - self._start_perf_ns) / 1_000_000.0
 
     # ---- serialisation ------------------------------------------------
 
