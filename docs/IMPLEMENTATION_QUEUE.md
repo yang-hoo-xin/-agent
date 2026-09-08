@@ -9,6 +9,8 @@ Completed, frozen, review, and superseded records belong in
 
 ## 1. Current Queue
 
+Current user-selected work: complete an actual bounded repair SFT A/B (not only preparation), using verified diverse owned code revisions, task-family splits, completion-only token masks, checkpoint save/reload and the original worker deployment. Do not make First Shot passing a prerequisite or silently substitute requirement extraction. DPO is optional after appropriate same-input data and comparisons. Also add automatic evidence-based failure summaries to the existing query so module/chain/multi-task failures can be located without manual reference reconstruction. Completed full compilation/configuration and offline DSH Apply work is in 0.32; no real Mod or Runtime success is implied.
+
 Next parallel work after tracing 0.31: (1) complete changed-project isolated compilation and actual configuration integration, retaining the original 36 checks separately and returning new failures to the shared worker; (2) bounded model-quality experiments with fixed task/evaluation and independent holdout, separating requirement/state understanding from code repair, then performance/quantization comparison; (3) continue original product-entry/DSH task lifecycle integration, with explicit approval and applicable execution boundaries. New-run Langfuse readback should accompany an authorized normal task; do not manufacture another model run or rewrite historical times.
 
 Selected request: `ACCURATE-CROSSHAIR-SPREAD-TOGGLE-001`.

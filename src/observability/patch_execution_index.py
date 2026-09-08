@@ -17,6 +17,10 @@ from typing import Any
 from src.mod_agent.artifacts.envelope import ArtifactRef
 from src.mod_agent.artifacts.store import ArtifactStore
 from src.mod_agent.fresh_planning_continuation import _canonical_sha256
+from src.mod_agent.proposal.patch_agent_loop import (
+    PatchAgentLoopError,
+    expand_patch_source_observations,
+)
 
 MAX_FILE_BYTES = 16 * 1024 * 1024
 
@@ -37,6 +41,13 @@ def _fields(value: Mapping[str, Any], *names: str) -> dict[str, Any]:
 
 def _strings(value: Any) -> list[str]:
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+def _digest(value):
+    try:
+        return _canonical_sha256(value)
+    except (ValueError, TypeError, UnicodeError):
+        return None
 
 
 def _journal_checks(journal: Mapping[str, Any]) -> dict[str, Any]:
@@ -144,6 +155,7 @@ def _phases(loop: Mapping[str, Any]):
 
 def _turns(factory: Mapping[str, Any], refs: _References) -> list[dict[str, Any]]:
     result = []
+    loop = _object(factory.get("patch_agent_loop"))
     for turn in _rows(factory.get("worker_turns")):
         row = _fields(turn, "turn_index", "status", "request_sha256", "tool_choice",
                       "tool_action", "error_type")
@@ -160,24 +172,41 @@ def _turns(factory: Mapping[str, Any], refs: _References) -> list[dict[str, Any]
             "hash_basis", "provider_body_sha256", "provider_body_utf8_bytes",
         )
         row["wire_identity_verification"] = "digest_recorded_not_wire_replayed"
-        row["request_ref"] = (refs.check(turn["request_ref"])[0] if "request_ref" in turn
-            else {"integrity": "unverifiable_reference"})
+        row["request_ref"], request_document = (refs.check(turn["request_ref"]) if "request_ref" in turn
+            else ({"integrity": "unverifiable_reference"}, {}))
         row["request_observation"] = (
             "retained_request_identity_verified_not_send_proof"
             if row["request_ref"]["integrity"] == "verified_bytes"
             else "unknown_no_verified_request_reference"
         )
         row["observation_request_links"] = []
+        row["failure_feedback_links"] = []
+        row["normalized_request_identity"] = "unknown_no_verified_request"
         row["observation_delivery"] = (
             "unknown_observation_to_request_link_not_verified"
             if row["request_ref"]["integrity"] == "verified_bytes"
             else "unknown_no_explicit_request_reference"
         )
+        if row["request_ref"]["integrity"] == "verified_bytes":
+            declared = turn.get("request_sha256")
+            row["normalized_request_identity"] = (
+                "matched" if isinstance(declared, str) and _digest(request_document) == declared else
+                "hash_mismatch" if isinstance(declared, str) else "unknown_missing_normalized_request_hash")
+            if row["normalized_request_identity"] == "matched":
+                row["observation_request_links"] = _tool_request_links(request_document, loop)
+                row["failure_feedback_links"] = _failure_feedback_links(request_document, factory, refs)
+            if row["observation_request_links"]:
+                row["observation_delivery"] = (
+                    "verified_retained_tool_payloads_in_request_not_model_understanding"
+                    if all(item["binding_status"] == "matched" for item in row["observation_request_links"])
+                    else "tool_payload_mismatch_or_unknown"
+                )
         response, document = refs.check(turn.get("response_ref"))
         row["response_ref"] = response
         if "original_response_ref" in turn:
             row["original_response_ref"] = refs.check(turn["original_response_ref"])[0]
         verified_response = response["integrity"] == "verified_bytes"
+        row["response_after_request_observed"] = turn.get("status") == "responded" and verified_response
         verified_original = _object(row.get("original_response_ref")).get("integrity") == "verified_bytes"
         row["send_observation"] = "requested_send_unconfirmed"
         if origin in ("live_provider_response", "verified_prior_response"):
@@ -194,6 +223,152 @@ def _turns(factory: Mapping[str, Any], refs: _References) -> list[dict[str, Any]
         } for call in _rows(document.get("tool_calls"))]
         result.append(row)
     return result
+
+
+def _message_object(message):
+    content = message.get("content")
+    if isinstance(content, dict):
+        return content
+    if isinstance(content, str):
+        try:
+            return _object(json.loads(content))
+        except ValueError:
+            pass
+    return {}
+
+
+def _tool_request_links(request, loop):
+    results = [item for exchange in _rows(request.get("historical_tool_exchanges"))
+               for item in _rows(exchange.get("tool_results"))]
+    results.extend(_rows(request.get("tool_results")))
+    source = [item for item in results if item.get("name") == "inspect_plan_binding_source"
+              and isinstance(item.get("output"), dict) and isinstance(item["output"].get("observation_id"), str)]
+    visible_valid = False
+    try:
+        expand_patch_source_observations([item["output"] for item in source])
+        visible_valid = True
+    except (PatchAgentLoopError, ValueError, TypeError, KeyError):
+        pass
+    known = [(phase, item) for phase, execution in _phases(loop) for item in _rows(execution.get("observation_trace"))]
+    links = []
+    for item in source:
+        payload = item["output"]
+        payload_hash = _digest(payload)
+        matches = [(phase, row) for phase, row in known if row.get("observation_id") == payload["observation_id"]
+                   and row.get("binding_id") == payload.get("binding_id")]
+        matched = []
+        for phase, row in matches:
+            expected = row.get("encoded_payload_sha256")
+            content_matches = (payload_hash == expected if isinstance(expected, str) else
+                isinstance(row.get("observation_sha256"), str) and _digest({key: value for key, value in payload.items() if key != "observation_sha256"}) == row["observation_sha256"])
+            if content_matches and visible_valid and payload.get("observation_sha256") == row.get("observation_sha256"):
+                matched.append({"phase": phase, "tool_turn_index": row.get("turn_index")})
+        links.append({"tool_call_id": item.get("call_id"), "observation_id": payload["observation_id"],
+            "observation_sha256": payload.get("observation_sha256"), "payload_sha256": payload_hash,
+            "binding_status": "matched" if matched else "mismatch" if matches else "unknown_no_matching_tool_observation",
+            "visible_source_resolution": "verified" if visible_valid else "unverified",
+            "matched_execution_positions": matched,
+            "claim_scope": "matching_retained_request_content_not_independent_send_or_understanding"})
+    return links
+
+
+def _feedback_core(value):
+    fields = ("failure_owner", "owner_binding_ids", "observations", "generated_changes_sha256", "source_snapshot_sha256")
+    if not all(key in value for key in fields):
+        return None
+    result = {key: value[key] for key in fields}
+    result["observations"] = [dict(row) for row in _rows(value["observations"])]
+    for row in result["observations"]:
+        if isinstance(row.get("result_ref"), dict):
+            row["result_ref"] = {"sha256": row["result_ref"].get("sha256")}
+    return result
+
+
+def _failure_feedback_links(request, factory, refs):
+    evaluations = _rows(_object(factory.get("patch_agent_loop")).get("behavior_evaluations"))
+    related = [row.get("report_ref") for row in evaluations]
+    related.extend(_object(row.get("code_revision")).get("known_failed_report_ref") for row in evaluations)
+    reports = []
+    for reference in related:
+        if reference is None:
+            continue
+        checked, document = refs.check(reference)
+        core = _feedback_core(document)
+        if checked.get("integrity") == "verified_bytes" and core is not None:
+            reports.append((checked, core, document.get("status")))
+    links = []
+    for position, message in enumerate(_rows(request.get("messages"))):
+        value = _message_object(message)
+        feedback = _object(value.get("validator_feedback"))
+        if not feedback:
+            continue
+        core = _feedback_core(feedback)
+        claimed_hash = feedback.get("report_sha256")
+        matches = [(reference, expected, status) for reference, expected, status in reports if reference.get("sha256") == claimed_hash]
+        matching = [reference for reference, expected, status in matches if core is not None and core == expected
+                    and ("status" not in feedback or feedback["status"] == status)]
+        links.append({"message_index": position, "message_type": value.get("message_type"),
+            "report_sha256": claimed_hash, "core_fields_sha256": _digest(core) if core is not None else None,
+            "generated_changes_sha256": feedback.get("generated_changes_sha256"),
+            "source_snapshot_sha256": feedback.get("source_snapshot_sha256"),
+            "failed_check_ids": [row.get("check_id", row.get("case_id")) for row in _rows(feedback.get("observations"))],
+            "failed_check_count": len(_rows(feedback.get("observations"))),
+            "binding_status": "matched" if matching else "core_fields_mismatch" if matches else
+                              "unknown_no_report_hash" if not isinstance(claimed_hash, str) else "unmatched_report_hash",
+            "verified_report_refs": matching,
+            "claim_scope": "F1_core_fields_and_report_hash_in_retained_request_not_model_understanding"})
+    return links
+
+
+def _failure_summary(journal, factory, execution, worker_config_ref):
+    terminal = _object(journal.get("terminal_result"))
+    loop = _object(factory.get("patch_agent_loop"))
+    turns = execution.get("worker_turns", [])
+    evaluations = execution.get("behavior_evaluations", [])
+    native = _object(journal.get("execution_observations"))
+    generations = [row for row in native.values() if isinstance(row, dict)
+        and row.get("kind") == "generation" and row.get("name") == "patch.generate"
+        and _object(row.get("attributes")).get("transport_started") is True]
+    terminations = [{"phase": phase, **_fields(_object(part.get("termination")), "code", "status", "turn_index")}
+                    for phase, part in _phases(loop) if isinstance(part.get("termination"), dict)]
+    counts = _object(terminal.get("execution_counts"))
+    return {
+        "authority": "non_authoritative", "task": _fields(journal, "feature_id", "run_id", "request_id"),
+        "executor_identity": {**_fields(_object(factory.get("qualification_execution_identity")),
+            "implementation_sha256", "worker_policy_sha256", "scope"), "verification": "recorded_not_recomputed"},
+        "configuration": {"worker_ref": worker_config_ref, "profile_sha256": journal.get("worker_profile_sha256"),
+            "profile": _fields(_object(factory.get("profile")), "provider", "model", "profile_version", "output_format_policy")},
+        "stopped_at": {"terminal_stage": terminal.get("terminal_stage"), "status": journal.get("status"),
+            "proposal_admitted": journal.get("proposal_admitted"), "phase_terminations": terminations,
+            "failure": _fields(_object(journal.get("failure")), "code", "failure_class", "stage"),
+            "submission_failure": _fields(_object(_object(factory.get("failure")).get("diagnostics")),
+                "failure_boundary", "failure_classification", "json_error_line", "json_error_column")},
+        "model_requests": {"journal_call_count": journal.get("model_call_count"),
+            "retained_response_count": sum(row.get("response_after_request_observed") is True for row in turns),
+            "transport_started_observation_count": len(generations) if native else None,
+            "transport_count_basis": "native_generation_start_markers_not_independent_network_capture" if native else "unknown_no_native_execution_history",
+            "record_completeness": "not_established_missing_records_do_not_prove_no_send"},
+        "code_and_failure_reports": [{
+            **_fields(row, "evaluation_index", "status", "failure_owner", "model_response_sha256", "generated_changes_sha256", "execution_observation"),
+            "report_ref": row.get("report_ref"), "code_response_refs": row.get("code_response_refs"),
+            "code_response_link": row.get("code_response_link"), "code_comparison": row.get("code_revision"),
+            "failed_check_ids": [check.get("check_id", check.get("case_id")) for check in row.get("checks", [])],
+            "observed_failure_item_count": len(row.get("checks", [])),
+            "recorded_failed_check_count": _object(row.get("verification_summary")).get("failed_checks"),
+            "verification_summary": row.get("verification_summary"),
+        } for row in evaluations],
+        "request_evidence": [{"turn_index": row.get("turn_index"), "request_ref": row.get("request_ref"),
+            "normalized_request_identity": row.get("normalized_request_identity"),
+            "tool_observation_links": row.get("observation_request_links", []),
+            "failure_feedback_links": row.get("failure_feedback_links", []),
+            "response_after_request_observed": row.get("response_after_request_observed"),
+            "send_observation": row.get("send_observation")} for row in turns],
+        "formal_downstream": {name: {"recorded_count": counts.get(name),
+            "observation": "not_executed_by_recorded_counter" if type(counts.get(name)) is int and counts[name] == 0
+                           else "execution_recorded" if type(counts.get(name)) is int and counts[name] > 0 else "unknown"}
+            for name in ("apply", "build", "runtime")},
+        "diagnosis_limit": "Evidence narrows the failure boundary; it does not identify a unique model, prompt, tool or policy root cause.",
+    }
 
 
 def _tools(loop: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -324,7 +499,7 @@ def _evaluations(loop: Mapping[str, Any], refs: _References) -> list[dict[str, A
             "checks", "executions", "failed_checks",
         )
         row["checks"] = [{
-            **_fields(observation, "check_id"),
+            **_fields(observation, "check_id", "case_id"),
             "result_ref": refs.check(observation.get("result_ref"))[0],
         } for observation in _rows(evaluation.get("observations"))]
         row["denominator_scope"] = "reported_local_checks_not_cross_task_eval"
@@ -527,6 +702,7 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
                   "current_snapshot_sha256", "proposal_admitted"),
         "journal_ref": {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest()},
         "journal_identity_checks": _journal_checks(journal),
+        "failure_summary": _failure_summary(journal, factory, execution, worker_config_ref),
         "execution_trace": {
             "availability": "recorded" if "execution_observations" in journal else "not_recorded",
             **_fields(_object(journal.get("execution_trace")), "trace_id", "session_id", "environment", "mode",

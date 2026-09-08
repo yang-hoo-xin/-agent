@@ -1,6 +1,7 @@
 """Human diff view uses exact retained outputs without executing the task."""
 import json
 import socket
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -59,10 +60,11 @@ def test_failed_attempt_does_not_borrow_feature_latest_or_its_parent_diff(case, 
     journal['proposal_admitted'] = False
     journal['repair_context'] = {'parent_proposal': journal['artifacts']['patch_proposal']}
     journal['artifacts'] = {}
-    journal['terminal_result'].update(status='partial', patch_proposal_artifact=None,
+    journal['terminal_result'].update(run_id=journal['run_id'], status='partial', patch_proposal_artifact=None,
         proposal_review_artifact=None, dry_run_artifact=None)
     journal['terminal_result_sha256'] = _canonical_sha256(journal['terminal_result'])
-    (path.parent/'failed-view.json').write_text(json.dumps(journal), encoding='utf-8')
+    locator = sha256(journal['run_id'].encode('utf-8')).hexdigest()[:32] + '.json'
+    (path.parent / locator).write_text(json.dumps(journal), encoding='utf-8')
     before = _snapshot(tmp_path)
     result = review_run(**{**config, 'run_id': journal['run_id']})
     assert result['status'] == 'no_reviewable_diff' and result['unified_diff'] is None

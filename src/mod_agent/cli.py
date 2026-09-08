@@ -923,6 +923,10 @@ def build_parser(
         help="Blocked placeholder for future patch application.",
     )
     apply_parser.add_argument("--confirm", action="store_true", help="Request confirmed apply.")
+    for name in ("artifact-store-root", "workspace-root", "feature-id", "run-id", "isolated-root"):
+        apply_parser.add_argument("--" + name)
+    apply_parser.add_argument("--human-decision-stdin", action="store_true",
+        help="Consume the displayed binding and existing human semantic decision from JSON stdin.")
 
     run_parser = subparsers.add_parser(
         "run-request",
@@ -2108,6 +2112,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if result.status == "terminal" else 2
 
     if args.command == "apply-patch":
+        if args.human_decision_stdin:
+            from src.mod_agent.reviewed_patch_continuation import apply_reviewed_patch
+
+            try:
+                if not args.confirm or not all((args.artifact_store_root, args.workspace_root,
+                        args.feature_id, args.run_id, args.isolated_root)):
+                    raise ValueError("APPLY_EXPLICIT_CONFIGURATION_REQUIRED")
+                request = json.loads(sys.stdin.read(65537))
+                if not isinstance(request, dict) or set(request) != {"displayed_binding", "human_semantic_decision"}:
+                    raise ValueError("APPLY_HUMAN_REQUEST_INVALID")
+                result = apply_reviewed_patch(artifact_store_root=args.artifact_store_root,
+                    workspace_root=args.workspace_root, feature_id=args.feature_id, run_id=args.run_id,
+                    isolated_root=args.isolated_root, **request)
+            except (ValueError, RuntimeError, OSError) as exc:
+                result = {"entry": "apply-patch", "status": "blocked", "run_id": args.run_id,
+                    "feature_id": args.feature_id, "reason": str(exc),
+                    "execution_outcome": "not_confirmed_check_isolated_output_if_created",
+                    "product_source_writes_performed": None, "model_calls_performed": 0,
+                    "builds_performed": 0, "runtime_executions_performed": 0, "stopped_before": "build"}
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
         decision = PermissionModel().decide("confirmed_write")
         print(
             json.dumps(

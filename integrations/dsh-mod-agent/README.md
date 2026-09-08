@@ -1,11 +1,12 @@
-# DSH request preparation and product queries
+# DSH request preparation, review and isolated application
 
 This plugin uses DSH for the browser interface, interaction session and plugin
 host. The original Python journal and ArtifactStore remain the product facts.
 It can submit natural-language intake to the existing deterministic planner and
-save its two planning Artifacts. It does not run a model/verifier, approve,
-Apply, Build or launch a game. Cancelling a query cancels its child reader,
-not a product task.
+save its two planning Artifacts. With an administrator-configured isolation root,
+a human can approve an already reviewed exact diff; the original backend then
+copies the configured source tree, repeats Dry-run, and applies only inside that
+new directory. It stops before Build. No DSH model or game operation runs.
 
 The tested host is official `@deepseek-ai/dsh` **0.1.2-rc.1**, on Node 24.19.0.
 The host includes the pinned peer modules; no replacement Agent or renderer is
@@ -22,6 +23,11 @@ Commands are human commands, not model tools:
 - `/mod-submit <request text>` prepares a new request using the existing
   `plan-request` implementation, with its original ambiguity and evidence-gap
   decisions. It stops before `feature_spec`; no implementation Plan is generated.
+- `/mod-approve <reviewer name>` approves the exact diff and isolation target most
+  recently displayed by `/mod-review` in this live session. It sends the existing
+  `human_semantic_decision_v1` binding to the original `apply-patch` CLI and Graph.
+- `/mod-reject <reviewer name>` rejects that displayed action without copying or
+  writing source or Artifacts. A different session cannot consume the binding.
 
 The query commands call the existing engineering-cognition `verification-claims` /
 `patch-execution` query with fixed arguments and `shell: false`. Deployment
@@ -39,7 +45,7 @@ An unconfigured `/mod-submit` reports `SUBMIT_NOT_CONFIGURED`.
 
 Review also requires the configured `workspaceRoot`; without it `/mod-review`
 returns `REVIEW_NOT_CONFIGURED`. Its fixed `scripts.dsh_review_run` bridge uses
-the existing execution index and immutable Store reads. It selects only refs
+the canonical Patch journal, its verified terminal-result hash, and immutable Store reads. It selects only refs
 recorded by the requested run, verifies Proposal→Review→Dry-run lineage and
 original diff identity, and never substitutes the Feature's latest result or
 the run's parent Proposal. A failed run without a new Proposal explicitly has
@@ -53,6 +59,28 @@ execute behavior checks or prove freshness of every supporting file. Historical
 Review and behavior results remain separate from this source check. The command
 does not perform semantic review, create exact approval, Apply, Build or Runtime;
 those actions still need their existing independent product entry and authority.
+
+For the new approval path, configure `isolatedRoot` as an existing absolute
+directory disjoint from both `workspaceRoot` and `artifactStoreRoot`. Review then
+also shows the concrete new isolation target and original semantic-decision
+binding. The human supplies only a decision and reviewer identity; all references
+come from that displayed result and are revalidated by the backend. The source
+root is explicitly configured and verified against the retained baseline, not
+guessed from edit paths. Copying retains the source tree while excluding the
+existing `bin`, `obj`, `.git`, `.idea` directories; external links are rejected.
+
+The backend reuses original Feature/Evidence/Plan admission, immutable successful
+Proposal/Review/Dry-run artifacts, and `ExactTextPatchApplier`. It seeds the same
+Graph after the verified Review, repeats its real Dry-run and isolated Apply,
+then interrupts before `build`. This does not claim compilation, Runtime or
+complete task delivery. The original source workspace remains unchanged.
+
+Approval consumes the live session's displayed binding once. Host restart or a
+different session requires reviewing again; this is not durable approval-resume
+acceptance. A source, artifact, diff or destination change invalidates the action.
+An already aborted command never dispatches Apply. Interrupting a started child
+is not transactional cancellation or rollback; inspect the isolated output and
+original `isolated_apply_result` before deciding what to do next.
 
 Submission uses the fixed `scripts.dsh_prepare_request` bridge with UTF-8 stdin,
 not shell interpolation or user-selected options. The bridge calls
@@ -125,5 +153,7 @@ text and unchanged source checks. Actual official-host submission acceptance is
 separate from those automated checks; the historical browser run above covered
 querying only.
 
-Automatic execution after submission, diff approval, task cancellation, product
-execution resume, delivery and a polished end-user workflow remain unfinished.
+Automatic execution after submission, durable approval recovery, transactional
+task cancellation, Build/Runtime continuation, delivery and a polished end-user
+workflow remain unfinished. Approval-to-isolated-Apply has subprocess acceptance
+with synthetic explicit human decisions; real Mod approval is not inferred.

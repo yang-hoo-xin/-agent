@@ -81,6 +81,15 @@ def _request_from_document(value):
     return PatchContinuationInputV1(**value)
 
 
+def _checked_profile(profile):
+    from src.mod_agent.local_entry import LocalOllamaInitialPatchProfileV1
+    parsed = LocalOllamaInitialPatchProfileV1(**{key: profile[key] for key in (
+        "profile_version", "base_url", "model", "context_window", "output_budget", "timeout_seconds")})
+    if parsed.to_dict() != profile:
+        raise ValueError("PATCH_EVAL_PROFILE_INVALID")
+    return parsed.to_dict()
+
+
 def _checked_suite(suite_ref):
     suite = read_bound_json(suite_ref)
     if suite.get("schema_version") != SUITE_SCHEMA or not isinstance(suite.get("cases"), list):
@@ -90,16 +99,11 @@ def _checked_suite(suite_ref):
             or len({case["feature_spec_ref"]["feature_id"] for case in cases}) != len(cases)
             or len({case["feature_spec_ref"]["artifact_hash"] for case in cases}) != len(cases)):
         raise ValueError("PATCH_EVAL_DISTINCT_TASK_DENOMINATOR_INVALID")
-    from src.mod_agent.local_entry import LocalOllamaInitialPatchProfileV1
-    profile = suite["execution_profile"]
-    parsed = LocalOllamaInitialPatchProfileV1(**{key: profile[key] for key in (
-        "profile_version", "base_url", "model", "context_window", "output_budget", "timeout_seconds")})
-    if parsed.to_dict() != profile:
-        raise ValueError("PATCH_EVAL_PROFILE_INVALID")
+    _checked_profile(suite["execution_profile"])
     return suite
 
 
-def select_patch_task(*, suite_ref, case_id, attempt_id):
+def select_patch_task(*, suite_ref, case_id, attempt_id, execution_profile=None):
     suite = _checked_suite(suite_ref)
     matches = [case for case in suite["cases"] if case["case_id"] == case_id]
     if len(matches) != 1:
@@ -130,6 +134,13 @@ def select_patch_task(*, suite_ref, case_id, attempt_id):
     evaluator = configuration.behavior_evaluator()
     if evaluator is None or evaluator.verification_identity() != case["verification_identity"]:
         raise ValueError("PATCH_EVAL_VERIFIER_IDENTITY_MISMATCH")
+    if execution_profile is not None:
+        selected_profile = _checked_profile(execution_profile)
+        if ({k: v for k, v in selected_profile.items() if k != "model"}
+                != {k: v for k, v in suite["execution_profile"].items() if k != "model"}):
+            raise ValueError("PATCH_EVAL_COMPARISON_PROFILE_DRIFT")
+        request = replace(request, worker_profile_sha256=canonical_hash(selected_profile))
+        preflight_patch_continuation(request)
     return request
 
 
@@ -152,10 +163,11 @@ def preflight_patch_suite(suite_ref):
             "admitted": all(row["input_preflight"] == "admitted" for row in results)}
 
 
-def task_cli_arguments(*, suite_ref, case_id, attempt_id):
-    request = select_patch_task(suite_ref=suite_ref, case_id=case_id, attempt_id=attempt_id)
+def task_cli_arguments(*, suite_ref, case_id, attempt_id, execution_profile=None):
+    request = select_patch_task(suite_ref=suite_ref, case_id=case_id, attempt_id=attempt_id,
+                                execution_profile=execution_profile)
     suite = _checked_suite(suite_ref)
-    profile = suite["execution_profile"]
+    profile = suite["execution_profile"] if execution_profile is None else _checked_profile(execution_profile)
     arguments = ["continue-fresh-patch", "--artifact-root", request.artifact_store_root,
         "--workspace-root", request.workspace_root, "--feature-id", request.feature_spec_ref.feature_id]
     for name, flag in (("feature_spec_ref", "feature-spec"), ("evidence_pack_ref", "evidence-pack"),

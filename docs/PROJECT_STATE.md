@@ -7,6 +7,8 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
+014 unchanged model bytes now passed whole-project compilation (all 10 source files) and 13 real BepInEx configuration checks; the prior 33/36 behavior failure remains. Complete-check feedback and DSH exact approval to isolated Apply were accepted offline (0.32); no real Mod Apply/Runtime. The user now selected an actual repair-focused SFT A/B, with First Shot retained as exposed difficult regression rather than prerequisite or independent holdout. Training preparation is not a trained checkpoint or quality result.
+
 New shared Patch/Repair execution tracing is implemented and accepted through the public entry offline (0.31). Historical Cloud imports remain unchanged; a new real task has not yet been verified in Cloud. Original journals and read-only queries carry measured model/tool/verification stages; explicit export is metadata-only. Full changed-project compilation and real configuration checks are now selected to complement the partial 36-check domain matrix. P0 is still unresolved.
 
 P0 remains unresolved: 014 executed two 33/36 matrices on unchanged code; 015

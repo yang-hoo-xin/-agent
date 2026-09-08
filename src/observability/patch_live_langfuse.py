@@ -29,7 +29,7 @@ _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]{0,95}\Z")
 _METADATA_LABELS = frozenset({"provider", "response_origin", "tool_name", "source_kind", "status",
     "workflow_node", "workflow_status", "terminal_stage", "failure_code", "verification_status", "failure_owner", "execution_origin",
     "admission_result", "result_code", "timing_scope", "validator", "exception_type"})
-_METADATA_NUMBERS = frozenset({"turn_index", "response_received", "usage_available", "byte_count", "reused",
+_METADATA_NUMBERS = frozenset({"turn_index", "response_received", "response_complete", "http_status", "usage_available", "byte_count", "reused",
     "evaluation_index", "checks_run", "checks_failed", "transport_started", "request_bytes", "file_count",
     "proposal_admitted", "callback_invoked", "tool_dispatch_performed", "encoded_payload_bytes", "observation_queued",
     "model_consumption_proven", "read_cost", "prepared_before_dispatch", "dispatch_started", "request_registered",

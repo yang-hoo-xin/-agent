@@ -35,7 +35,7 @@ const event = (seq, type, data) => ({ seq, type, data, time: '2026-09-07T00:00:0
 const run = event(1, 'command/run', { commandId: 'query-one', name: 'mod-status', args: 'run-013', source: { kind: 'user' } });
 const done = event(2, 'command/done', { commandId: 'query-one', kind: 'success', text: '{\n  "status": "blocked"\n}' });
 
-for (const name of ['mod-submit', 'mod-review']) test(`${name} result activates the existing conversation without a fake model message`, () => {
+for (const name of ['mod-submit', 'mod-review', 'mod-approve', 'mod-reject']) test(`${name} result activates the existing conversation without a fake model message`, () => {
   const plugin = loadBundle(clientPath);
   const captured = capture(plugin);
   const definition = captured.events[0];

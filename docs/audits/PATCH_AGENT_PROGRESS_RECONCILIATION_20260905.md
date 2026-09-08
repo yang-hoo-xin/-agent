@@ -6,6 +6,11 @@
 
 ## 0. 最新状态快照
 
+**2026-09-08 完整验证与操作续接（0.32）：014 原模型代码的完整项目编译通过（10 个源文件全部进入编译），真实配置 13/13 通过；旧 First Shot 三项失败仍保留。**
+新增验证经原回调进入同一 worker 的修订分支已有离线验收。DSH 的精确 diff→明确批准→原 Graph/Applier 隔离写入→Build 前停止通过离线验收，尚未据此执行真实 Mod Apply。
+用户已选择开展面向失败反馈与代码修订的真实 SFT A/B；当前完成三任务六组合准备、独立训练环境/官方权重准备及监督样本核对，尚无正式训练后成绩。
+First Shot 是已暴露的困难回归，不是必须先通过的训练门槛，也不是独立留出任务。训练与验证进展随后单列，不用其他项目截图的数字充成本项目结果。
+
 **2026-09-08 新运行追踪接线（0.31）：共享 Patch/Repair worker 已自动记录模型发送、工具、提交、物化、验证、Review/Dry-run 的真实时序；原 Store 查询可读。**
 公开入口离线执行树及真实 OTLP 映射通过；新运行 Cloud 回查尚未执行，本轮没有新增真实模型调用或历史导入。
 OwnedConfigService 原基线的真实编译与 23 个进程已产生分段计时；这是基线验证，不是新的模型成功。
@@ -1414,6 +1419,55 @@ SHA严格回到`8de69acdafa7eb3ce8cfcd06d5919d0daea7e1f2872730307bab60efd23886bd
 
 原 36 项保持原期待值并单列；全部修改进入完整项目的隔离编译；真实 Configuration/BepInEx ConfigFile 验证默认、键绑定、持久化/重启及开关读取。实际 LiveEdit 的 Unity 调度、Loader/Harmony 加载和游戏 Runtime 分开标注，不能用手动调用重载消费者代替。新增 compile/config 失败应绑定同一份物化代码，交回既有 worker。
 模型能力线同时区分需求/状态理解、Evidence/Planning 与实际修码；冻结评价和独立留出任务，分别评价输入/策略、专项训练和推理配置。截图中的训练/速度数据属于其他项目，不能填成本项目成绩，也不能把弱模型调优设成整条交付链无限前置条件。
+
+### 0.32 完整编译、真实配置、同 worker 反馈与 DSH 审批操作（2026-09-08）
+
+本轮承接 a4a2780，不重新建设历史导入或 Trace。新增字段 `response_complete/http_status` 保留传输与解析区别。
+六个原有文档 WIP 不计本轮修改，未动其字节。以下均不宣称 First Shot 修复或完整自然语言→Mod交付。
+
+**完整编译与配置实际结果**
+
+- 新 `FullProjectCompilationChecker` 消费现有 materializer、GameFolder 绑定/副本、NuGet 隔离 profile 和 BuildAdapter。对完整源树副本编译，MSBuild `@(Compile)` 捕获清单须覆盖实际源文件及字节；不是仅检查修改范围身份。
+- 原 B0 的全项目 restore/build 均为 0，2,968ms；165 份依赖、93,306,153 字节通过既有复制/快照核验。
+- 014 原响应/五项绑定物化字节未改，仅从原 provenance 补其已绑定 c760 ref。复用本轮已核验 B0，changed 全项目 restore/build 为 0，2,121ms；10 个 Mod 源文件全部进入编译，含此前局部矩阵省略的 Configuration.cs、Loader.cs、ColorCrosshairDependency.cs。
+- B0 DLL：`d360c00dd16be528eaf6ab580f30d93cd4f08591ea96bf410ca894d1f50fe54b`；014 DLL：`34ba3f2822549ea2da0697b3f5714dc0fc0aaab4efd3a62cd8ca994436a43836`。
+- 编译报告位于 `C:/Users/10160/AppData/Local/Temp/accompile-qn66mwam/check/baseline/report.json`（SHA `433b4b1177f76792d6dc1ea1f9ff676b3ad760fdc7307f47e50c643e54024bb6`）和 `version-001/report.json`（SHA `48fa7d202be9a6a2854238e699628cd1509321b9cd6746f14e5a661d231490db`）。它们记录实际执行时 checker identity，不回写为稍后目录防冲突修订的“新执行”。
+- 新 C# probe 加载上述真实完整 DLL 与实际 BepInEx.Core，在独立目录执行 Configuration 静态初始化、ConfigFile 的默认值/完整键集合、持久化与新进程加载、手动触发原 reload 消费者及 OnReload。没有用假 Configuration 赋值。
+- B0 的 5 个配置进程真实检出缺少新开关；014 的 5 个进程、13 项配置检查全过。最终 probe-v2 报告：任务输出根 `accurate_config_001/final-014-checks/configuration_1/report.json`，SHA `e0f1cfdc649017707bd3e82ff9b4578aa018e08be2b8a6a18f948d642c70f30e`；旧 probe/结果保留。
+- 实际 BepInEx.Core SHA `521055ed30495b39cff2327f534e83938fdaa912ce6a534deecca324508a6ae5`。Paths.SetExecutablePath 的参数用途通过绑定程序集 IL 核对；config I/O 没有写到依赖副本或游戏目录。
+- 固定配置读取面目前包含实际已观察的 `AccurateSpreadEnabled`。键存在但读取面不同会标 `needs_evidence`/验证器需适配，不强迫模型改成指定名字或据此认定业务代码错误。实际自动 LiveEdit/Unity 调度、Loader/Harmony 加载、游戏 Runtime 均未执行。
+
+**组合反馈与测试**
+
+`CompleteCrosshairVerification` 使用原 worker factory_ref/factory_name/kwargs 接口组合完整编译→真实配置→原 36 项冷启动矩阵；各项分开汇总。前置未通过时后项标 not_executed，不伪造 36 项运行；Runtime 始终独立。编译的实际 CS 错误与配置错误携带相同 C1 身份回同一个 worker；restore、进程、超时归环境，漏编清单或未支持的读取面归验证器。
+
+- 完整编译 checker 14 项初验通过，20.38s；之后增加执行中身份漂移，与正向定点 2 项通过。adopt 后已有旧 version-001 的防覆盖定点 1 项通过，2.35s；实际目录新增系统 UUID，逻辑版本名保留，不扫描目录推断预算。
+- `python -X utf8 -B -m pytest tests/unit/test_actual_crosshair_configuration.py tests/unit/test_complete_crosshair_verification.py -q --tb=short --basetemp=C:/Users/10160/AppData/Local/Temp/config-complete-final-20260908`：14 项通过，6.08s。
+- 其中组合 9 项复用公开入口，证明 compile/config 失败实际进入同一 worker 修订；这是替身响应/检查驱动的工程验收。矩阵调用失败或未完成时沿用其真实 execution_origin，不因调用过对象就写 executed。
+- `dotnet build scripts/accurate_crosshair_config_probe/accurate_crosshair_config_probe.csproj --configfile scripts/accurate_crosshair_config_probe/NuGet.Config -c Release --nologo -v quiet` 与最终 `--no-restore` 构建均成功，0警告/0错误。辅助工具构建不是整 Mod 的正式 Build 阶段。
+- 当前四列结论分别为：旧原矩阵 33/36；新增全项目编译通过；新增真实配置 13/13；游戏 Runtime 未执行。没有新模型调用或代码修订，不能把它相加包装成新的 Mod 成功率。
+
+**DSH 操作链**
+
+- 新薄 `reviewed_patch_continuation` owner 复用原 Store、现有 human_semantic_decision_v1、Graph checkpoint API 和 ExactTextPatchApplier；旧 `apply-patch` CLI 转接原后半程，不在插件另造 Apply 逻辑。
+- `/mod-review` 展示完整 diff 和管理员配置的具体隔离目标，绑定官方命令会话。`/mod-approve` 与 `/mod-reject` 接收人明确决定/身份，系统组装原精确引用；不使用 latest 回退。
+- 源根来自管理员明确配置，再核原 Plan/基线/hash；旧 journal 没有原 caller.workspace_root，不能伪称从历史解析了该路径。
+- 复制完整配置源树并排除 bin/obj/.git/.idea，原工作区不写。Graph 从已核验的 Review 装配，重跑 Dry-run，执行原 isolated_apply，停在 next_nodes=['build']。
+- 跨会话借用、重复批准、代码/项目文件漂移、伪造 diff 决定被阻止；拒绝不创建副本或写 Store。中断不声称事务回滚。
+- 新 Apply 段复用实时 Trace，同 Feature/Store session、独立 trace，真实 Dry-run/Apply 起止、无 generation；最终结果与观测一次写原 reviewed-apply-result.json。拒绝不写；BaseException 关闭 trace 后原样抛。
+- DSH Node 20 项通过（20.15s），Python 原 owner/review/CLI 共 13 个唯一检查通过；新追踪加入后的正向/拒绝/中断 3 项定点通过（4.33s）。Ruff 通过。未在真实页面执行新的批准，宿主仍需配置 isolatedRoot 并重启；未执行真实 Mod Apply/Build/Runtime，未证明持久审批恢复。
+
+**联合依赖与自动故障摘要收尾**
+
+DSH Apply owner 最初反向依赖非 authority 执行索引，被原架构守卫实际拦住；现已直接核验原 canonical journal/terminal hash/Store 六类 refs，守卫没有放宽。实验准备模块作为只读观察消费者移到 `src/observability/evaluation/patch_model_experiment.py`，不再位于产品执行包；原六组合准备记录保留其创建时事实，后续使用需重新核准备实现身份。移动后的14项实验检查加架构守卫15项通过（36.76s）。
+
+原 execution index 新增 `failure_summary`：已核验请求 bytes/normalized hash后，核对工具正文/引用链与F1核心内容实际进入哪个保存请求，汇总代码/报告关联、记录的同代码比较和未执行下游。旧记录缺少 native transport 证据时保留未知；不把内容匹配当成模型理解，不推断唯一根因。5项新公开worker/负例通过；相关索引组先49通过/1架构守卫失败，该守卫随后在上述修复中通过。无新数据库或执行路由。
+
+**实验准备与用户新选择**
+
+现有 peval7 三个任务经原准入全部通过。新增多模型实验准备固定 task/check/worker/verifier/profile/预算及家族划分，3×2 共 6 个 cell 全部 not_run；这两配置是原本地 30B/27B，不是 SFT A/B。新/旧准备测试18项通过（28.58s），另实际公开 CLI→原序列化器的仅 model 轴对照1项通过（7.62s）。原第3任务虽在holdout分区，仍明确共享源码/调优独立性未证明。
+
+用户随后明确选择真实“失败反馈→代码修订”SFT A/B，而非只训练需求提取。SFT数据、checkpoint、原部署worker前后结果与采用决定分别验收；错误历史只作输入，监督仅正确后续；DPO同输入配对作为后续选择，不默认训练。三层验收继续区分模块、整链、独立多任务，Langfuse展示不代替Graph编排或实际完成任务。
 
 ## 1. 结论与范围
 

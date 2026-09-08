@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { stat } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 
@@ -14,7 +15,7 @@ function requiredText(value, label, max = 300) {
 
 export function validateConfig(config) {
   const keys = ['pythonExecutable', 'repositoryRoot', 'artifactStoreRoot', 'featureId', 'timeoutMs', 'maxOutputBytes',
-    'workspaceRoot', 'targetMod'];
+    'workspaceRoot', 'targetMod', 'isolatedRoot'];
   if (!config || Object.keys(config).some(key => !keys.includes(key))) throw new Error('INVALID_CONFIG');
   for (const key of keys.slice(0, 3)) {
     requiredText(config[key], key, 4096);
@@ -26,6 +27,11 @@ export function validateConfig(config) {
     requiredText(config.workspaceRoot, 'WORKSPACE_ROOT', 4096);
     if (!isAbsolute(config.workspaceRoot)) throw new Error('ABSOLUTE_WORKSPACE_ROOT_REQUIRED');
     requiredText(config.targetMod, 'TARGET_MOD');
+  }
+  if (config.isolatedRoot !== undefined) {
+    if (config.workspaceRoot === undefined) throw new Error('APPLY_CONFIG_INCOMPLETE');
+    requiredText(config.isolatedRoot, 'ISOLATED_ROOT', 4096);
+    if (!isAbsolute(config.isolatedRoot)) throw new Error('ABSOLUTE_ISOLATED_ROOT_REQUIRED');
   }
   const result = { timeoutMs: 30000, maxOutputBytes: 2 * 1024 * 1024, ...config };
   if (!Number.isInteger(result.timeoutMs) || result.timeoutMs < 1 || result.timeoutMs > 120000
@@ -91,15 +97,18 @@ export async function queryBackend(config, { runId, signal } = {}) {
   return data;
 }
 
-export function reviewArguments(config, runId) {
+export function reviewArguments(config, runId, operationId) {
   if (config.workspaceRoot === undefined) throw new Error('REVIEW_NOT_CONFIGURED');
-  return ['-B', '-m', 'scripts.dsh_review_run', `--workspace-root=${config.workspaceRoot}`,
+  const argv = ['-B', '-m', 'scripts.dsh_review_run', `--workspace-root=${config.workspaceRoot}`,
     `--artifact-store-root=${config.artifactStoreRoot}`, `--feature-id=${config.featureId}`,
     `--run-id=${requiredText(runId, 'RUN_ID')}`];
+  if (config.isolatedRoot !== undefined) argv.push(`--isolated-root=${config.isolatedRoot}`,
+    `--operation-id=${requiredText(operationId, 'OPERATION_ID')}`);
+  return argv;
 }
 
-export async function reviewBackend(config, { runId, signal }) {
-  const argv = reviewArguments(config, runId);
+export async function reviewBackend(config, { runId, signal, operationId }) {
+  const argv = reviewArguments(config, runId, operationId);
   await stat(join(config.repositoryRoot, 'scripts', 'dsh_review_run.py'));
   const result = JSON.parse(await runBackend(config, argv, { signal, operation: 'REVIEW' }));
   if (result?.entry !== 'review-run' || result?.read_only !== true || result?.run_id !== runId
@@ -111,6 +120,36 @@ export async function reviewBackend(config, { runId, signal }) {
       || (result.status === 'reviewable_diff' && typeof result.unified_diff !== 'string')) {
     throw new Error('REVIEW_CONTRACT_INVALID');
   }
+  return result;
+}
+
+export function approvalArguments(config, runId) {
+  if (config.isolatedRoot === undefined) throw new Error('APPLY_NOT_CONFIGURED');
+  return ['-B', '-m', 'src.mod_agent.cli', 'apply-patch', '--confirm', '--human-decision-stdin',
+    `--workspace-root=${config.workspaceRoot}`, `--artifact-store-root=${config.artifactStoreRoot}`,
+    `--feature-id=${config.featureId}`, `--run-id=${requiredText(runId, 'RUN_ID')}`,
+    `--isolated-root=${config.isolatedRoot}`];
+}
+
+export async function approveBackend(config, { runId, binding, decision, reviewerIdentity, signal }) {
+  if (!['approve', 'reject'].includes(decision)) throw new Error('HUMAN_DECISION_INVALID');
+  requiredText(reviewerIdentity, 'REVIEWER_IDENTITY', 200);
+  if (!binding || binding.run_id !== runId || binding.feature_id !== config.featureId
+      || !binding.human_semantic_decision_binding) throw new Error('DISPLAYED_BINDING_REQUIRED');
+  const input = JSON.stringify({ displayed_binding: binding, human_semantic_decision: {
+    ...binding.human_semantic_decision_binding, decision, reviewer_identity: reviewerIdentity,
+  } });
+  const result = JSON.parse(await runBackend(config, approvalArguments(config, runId),
+    { signal, input, operation: 'APPLY' }));
+  if (result?.entry !== 'apply-patch' || result.run_id !== runId || result.feature_id !== config.featureId
+      || result.model_calls_performed !== 0 || result.builds_performed !== 0
+      || result.runtime_executions_performed !== 0 || result.stopped_before !== 'build'
+      || !['applied_in_isolation', 'rejected', 'blocked'].includes(result.status)) throw new Error('APPLY_CONTRACT_INVALID');
+  if (result.status === 'applied_in_isolation' && (result.product_source_writes_performed !== true
+      || result.source_workspace_written !== false || result.diff_hash !== binding.diff_hash
+      || result.isolated_workspace !== binding.isolated_workspace)) throw new Error('APPLY_CONTRACT_INVALID');
+  if (result.status === 'rejected' && (result.product_source_writes_performed !== false
+      || result.artifact_writes_performed !== false || result.isolated_workspace_created !== false)) throw new Error('APPLY_CONTRACT_INVALID');
   return result;
 }
 
@@ -194,6 +233,7 @@ export function renderResult(data, runId) {
 
 export function apply(ctx, configuration) {
   const config = validateConfig(configuration);
+  const displayed = new WeakMap();
   // DSH's stock loop provides the session factory. Keep that factory while
   // rejecting its model steps; human commands use the separate commands path.
   ctx.on('agent/pre-step', async () => ({ kind: 'reject' }));
@@ -219,16 +259,54 @@ export function apply(ctx, configuration) {
   ctx.commands.register({ name: 'mod-review',
     description: '查看该run_id自己的待审diff、原验证和当前源码差异；不批准或执行。',
     input: { hint: '<run_id>' },
-    async handler({ rawInput, signal }) {
+    async handler({ rawInput, signal, agent }) {
       try {
         const runId = requiredText(rawInput.trim(), 'RUN_ID');
-        return { kind: 'success', text: renderReview(await reviewBackend(config, { runId, signal })) };
+        if (config.isolatedRoot !== undefined && (!agent || typeof agent !== 'object')) throw new Error('REVIEW_SESSION_REQUIRED');
+        const pending = { operationId: randomUUID() };
+        if (agent && typeof agent === 'object') displayed.set(agent, pending);
+        const result = await reviewBackend(config, { runId, signal, operationId: pending.operationId });
+        if (agent && displayed.get(agent) !== pending) throw new Error('REVIEW_SUPERSEDED');
+        const text = renderReview(result);
+        if (agent && displayed.get(agent) === pending && result.apply_preparation?.binding) {
+          displayed.set(agent, { runId, binding: structuredClone(result.apply_preparation.binding) });
+        }
+        return { kind: 'success', text };
       } catch (error) {
         const code = /^[A-Z_]+$/u.test(error.message) ? error.message : 'REVIEW_FAILED';
         return { kind: 'error', text: `${code}：未取得本次运行的可审查diff；未批准、未执行。` };
       }
     },
   });
+  for (const decision of ['approve', 'reject']) {
+    ctx.commands.register({ name: `mod-${decision}`,
+      description: decision === 'approve'
+        ? '批准本会话刚显示的精确diff与隔离目标，原后端重新核验后仅执行隔离Apply，停在Build前。'
+        : '拒绝本会话刚显示的精确diff，不写源码或创建隔离副本。',
+      input: { hint: '<你的审查人姓名>' },
+      async handler({ rawInput, signal, agent }) {
+        try {
+          if (config.isolatedRoot === undefined) throw new Error('APPLY_NOT_CONFIGURED');
+          const selected = agent && displayed.get(agent);
+          if (!selected?.binding) throw new Error('REVIEW_THIS_SESSION_FIRST');
+          const reviewerIdentity = requiredText(rawInput.trim(), 'REVIEWER_IDENTITY', 200);
+          if (signal?.aborted) throw new Error('APPLY_CANCELLED_BEFORE_START');
+          displayed.delete(agent);
+          const result = await approveBackend(config, { ...selected, decision, reviewerIdentity, signal });
+          return { kind: result.status === 'blocked' ? 'error' : 'success', text: JSON.stringify({
+            display_notice: result.status === 'applied_in_isolation'
+              ? '批准的代码已写入显示的隔离目录；原源码未写，Build和Runtime尚未执行。'
+              : result.status === 'rejected' ? '已拒绝本次diff；没有创建副本或写入源码。'
+                : '本次受控Apply未确认完成，请查看原后端原因和已创建的隔离输出；重新查看diff后才可再次决定。',
+            ...result,
+          }, null, 2) };
+        } catch (error) {
+          const code = /^[A-Z_]+$/u.test(error.message) ? error.message : 'APPLY_FAILED';
+          return { kind: 'error', text: `${code}：未确认隔离Apply完成；中断不等于回滚。原后端输出需核对，Build未启动。` };
+        }
+      },
+    });
+  }
   ctx.commands.register({ name: 'mod-submit',
     description: '提交自然语言需求，保存原后端准备结果与澄清项；不调用模型、不执行修改。',
     input: { hint: '<需求正文>' },
