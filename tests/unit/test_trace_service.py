@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 import pytest
 
+from src.observability.dashboard.services import trace_service
 from src.observability.dashboard.services.trace_service import TraceService
 
 
@@ -61,6 +62,29 @@ def traces_file(tmp_path: Path) -> Path:
 
 
 class TestTraceService:
+
+    @pytest.mark.parametrize("host_path", [PurePosixPath, PureWindowsPath])
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (r"C:\Users\alice\private\design.txt", "[redacted_path:design.txt]"),
+            ("C:/Users/alice/private/design.txt", "[redacted_path:design.txt]"),
+            ("/work/private/build/output.log", "[redacted_path:output.log]"),
+            (r"\\server\private\chunk.txt", "[redacted_path:chunk.txt]"),
+            (r"private\chunk.txt", "[redacted_path:chunk.txt]"),
+            (r"/work/private/file\name.txt", r"[redacted_path:file\name.txt]"),
+            ("/", "[redacted_path]"),
+            ("C:\\", "[redacted_path]"),
+            ("design.txt", "[redacted_path]"),
+            ("", "[redacted_path]"),
+        ],
+    )
+    def test_path_redaction_is_independent_of_host_path_flavour(
+        self, monkeypatch, host_path, value, expected
+    ):
+        monkeypatch.setattr(trace_service, "Path", host_path)
+
+        assert TraceService._redact_path(value) == expected
 
     def test_list_all(self, traces_file):
         svc = TraceService(traces_file)

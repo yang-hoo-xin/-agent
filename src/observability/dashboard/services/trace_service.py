@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Dict, List, Optional
 
 from src.core.settings import resolve_path
@@ -191,7 +191,12 @@ class TraceService:
 
     @staticmethod
     def _redact_path(value: str) -> str:
-        name = Path(value).name
+        # Recorded path syntax is independent of the dashboard host OS.
+        windows_path = PureWindowsPath(value)
+        if not value.startswith("/") and (windows_path.drive or "\\" in value):
+            name = windows_path.name
+        else:
+            name = PurePosixPath(value).name
         if not name or name == value:
             return "[redacted_path]"
         return f"[redacted_path:{name}]"
