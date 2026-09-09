@@ -32,6 +32,7 @@ def _implementation_payload() -> dict[str, object]:
                     "evidence_id": "ev_001",
                     "canonical_target_path": "mods/BetterHitFeedback/Plugin.cs",
                     "source_type": "target_source",
+                    "source_hash": "sha256:source",
                     "target_symbol": "Load",
                     "target_span": {"start_line": 10, "end_line": 18},
                     "declaring_type": "Plugin",
@@ -84,7 +85,7 @@ def _evidence_pack() -> dict[str, object]:
                 "document_id": "doc_001",
                 "source_ref": "source_001",
                 "source_hash": "sha256:source",
-                "file_hash": "sha256:file",
+                "file_hash": "sha256:source",
                 "doc_hash": "sha256:doc",
             }
         ]

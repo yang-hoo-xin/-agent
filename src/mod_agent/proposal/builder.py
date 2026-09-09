@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from src.mod_agent.bindings import BindingResolver
@@ -25,6 +26,29 @@ def _not_configured_git_binding() -> dict[str, Any]:
 
 class PatchProposalBuilder:
     """Convert an implementation plan into patch intent without editing files."""
+
+    @staticmethod
+    def required_source_snippet_char_limit(
+        implementation_plan: Mapping[str, Any],
+        evidence_pack: Mapping[str, Any],
+    ) -> int:
+        """Size review excerpts for exactly the Plan's already-admitted refs."""
+        evidence_by_id = {
+            str(item["evidence_id"]): item
+            for item in evidence_pack.get("items") or []
+            if isinstance(item, Mapping) and item.get("evidence_id")
+        }
+        return max(
+            1,
+            sum(
+                len(excerpt)
+                for evidence_id in implementation_plan.get("evidence_refs") or []
+                if isinstance(
+                    excerpt := evidence_by_id.get(str(evidence_id), {}).get("excerpt"),
+                    str,
+                )
+            ),
+        )
 
     def build(
         self,

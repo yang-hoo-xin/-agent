@@ -2875,21 +2875,10 @@ def _patch_first_failure(state: Mapping[str, Any]) -> dict[str, str] | None:
 
 
 def _proposal_source_snippet_char_limit(admitted: _AdmittedPatchInputs) -> int:
-    evidence_by_id = {
-        str(item["evidence_id"]): item
-        for item in admitted.evidence_pack.get("items") or []
-        if isinstance(item, Mapping) and item.get("evidence_id")
-    }
-    return max(
-        1,
-        sum(
-            len(excerpt)
-            for evidence_id in admitted.implementation_plan.get("evidence_refs") or []
-            if isinstance(
-                excerpt := evidence_by_id.get(str(evidence_id), {}).get("excerpt"),
-                str,
-            )
-        ),
+    from src.mod_agent.proposal import PatchProposalBuilder
+
+    return PatchProposalBuilder.required_source_snippet_char_limit(
+        admitted.implementation_plan, admitted.evidence_pack,
     )
 
 

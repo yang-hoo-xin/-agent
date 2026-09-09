@@ -1109,7 +1109,9 @@ def build_graph(
                 proposal_git_binding_factory=effective_proposal_git_binding_factory,
                 patch_change_factory=(patch_replanning_context.factory if patch_replanning_context is not None else patch_change_factory),
                 source_snippet_char_limit=(patch_replanning_context.source_snippet_char_limit
-                    if patch_replanning_context is not None else proposal_source_snippet_char_limit),
+                    if patch_replanning_context is not None else (
+                        None if validated_product_execution_mode is not None
+                        else proposal_source_snippet_char_limit)),
                 patch_continuation_mode=(patch_replanning_context.request if patch_replanning_context is not None else validated_patch_continuation_mode),
                 patch_continuation_attempt_recorder=(
                     patch_replanning_context.record if patch_replanning_context is not None else patch_continuation_attempt_recorder
@@ -2446,7 +2448,7 @@ def _run_generate_patch_proposal(
     *,
     proposal_git_binding_factory: ProposalGitBindingFactory | None = None,
     patch_change_factory: PatchChangeFactory | None = None,
-    source_snippet_char_limit: int = 6000,
+    source_snippet_char_limit: int | None = 6000,
     patch_continuation_mode: PatchContinuationInputV1 | None = None,
     patch_continuation_attempt_recorder: (
         PatchContinuationAttemptRecorder | None
@@ -2480,7 +2482,11 @@ def _run_generate_patch_proposal(
                 implementation, evidence_pack=evidence_pack,
                 artifact_hashes={key: value for key, value in state["artifact_hashes"].items()
                     if key in {"feature_spec", "evidence_pack", "implementation_plan"}},
-                require_git_binding=False, source_snippet_char_limit=source_snippet_char_limit,
+                require_git_binding=False,
+                source_snippet_char_limit=(
+                    PatchProposalBuilder.required_source_snippet_char_limit(implementation, evidence_pack)
+                    if source_snippet_char_limit is None else source_snippet_char_limit
+                ),
             )
         else:
             proposal = RepairPatchProposalBuilder().build(repair_plan, implementation_plan=implementation)
@@ -2544,7 +2550,10 @@ def _run_generate_patch_proposal(
                 else None
             ),
             require_git_binding=proposal_git_binding_factory is not None,
-            source_snippet_char_limit=source_snippet_char_limit,
+            source_snippet_char_limit=(
+                PatchProposalBuilder.required_source_snippet_char_limit(implementation, evidence_pack)
+                if source_snippet_char_limit is None else source_snippet_char_limit
+            ),
         )
         upstream_refs = [
             _artifact_ref_from_state(state, "implementation_plan"),

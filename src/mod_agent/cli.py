@@ -1610,6 +1610,13 @@ def _write_fresh_coverage_progress(event: dict[str, object]) -> None:
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the local controlled-development CLI."""
 
+    # JSON results and exact diff displays must preserve every source character,
+    # including when redirected under a Windows legacy console encoding.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8")
+
     selected_argv = tuple(sys.argv[1:] if argv is None else argv)
     prepare_continuation = (
         "prepare-sealed-entry-preflight" in selected_argv
