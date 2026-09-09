@@ -18,13 +18,13 @@ Completed, frozen, review, and superseded records belong in
 - 首个接缝：原 `run_local_request` 的重复Patch装配迁移到已有共享worker，并接入本次上游产物、journal、失败上下文、实际effect与全任务/阶段累计预算。
 - 后段：保留原Review/完整diff/精确批准/隔离Apply；仅在任务适用且有效授权时续接原Build/Runtime。Build消费实际Apply工程，Runtime消费本次Build产物；新代码重新Review/批准。本回执不批准尚未生成的diff或具体游戏操作。
 - 文件归属已由原页面确认：整合页负责 `local_entry.py`、`product_executor.py`、`workflow/graph.py`、`cli.py`、`reviewed_patch_continuation.py`及对应整链测试、本Queue块。原页面拥有训练数据、SFT/checkpoint/部署/worker A/B及其脚本测试；其A/B在独立 `sft-ab-frozen` 工作树固定0f59a0c。保护其现有六份文档WIP及训练测试改动。
-- 直接复用：完整编译/真实配置、DSH批准与隔离Apply、失败摘要/执行索引/Langfuse；不重建。实际模型运行前固定集成版本并协调GPU，当前未选择本任务真实运行profile/预算，未开始模型发送。
+- 直接复用：完整编译/真实配置、DSH批准与隔离Apply、失败摘要/执行索引/Langfuse；不重建。首Actual的固定版本、模型和累计预算见本块下方；第二Actual未启动。后续真实运行先固定接入Repair后的版本并协调GPU。
 - 验证与报告分四层：公开入口工程贯穿；真实模型任务结果；获准后实际到达交付阶段；同任务统一查询与阻断。历史FirstShot、OwnedConfigService及其他任务局部成功不合并成本任务成功。
 - 31组覆盖清单保留为总目标；旧文档RAG/PDF/图片/RAGAS/Dense/RRF独立验收，仅任务实际需要时接入。首任务使用其自身配置判定，不套FirstShot36项或改变原FirstShot要求。
 - 本页实施进展：已移除 `run_local_request` 中约30KB重复生成/格式修复/旧span生成装配，改为原共享worker；无人工target输入的模型Planning工程场景已进入同一worker。当前只是传输/编译器替身的工程贯穿，不是实际模型或Mod成功。
 - P1聚焦：`python -X utf8 -B -m pytest tests/unit/test_run_request_shared_worker.py -q --tb=short --basetemp=C:/Users/10160/AppData/Local/Temp/p1-natural-20260908`，先复现旧路径绕过worker，迁移后2项通过（3.74s）；两项分别覆盖兼容人工target和未传target的真实生产Planning装配，模型传输为明确替身。
 - P2：原Apply checkpoint→显式批准Build→原Build/Runtime checkpoint后段及公开 `apply-patch --continue-build` 已实现，原Apply默认仍停Build前。owner22项通过（30.23s），CLI+BuildAdapter30项通过（12.99s）；均工程替身。P2小checkpoint46通过/1旧Repair fixture失败，串行仍失败；该fixture缺当前source identity，不是本次真实运行。
-- 本任务验证器：显式CONFIG_CASE选自身5项义务，复用原完整编译/真实配置，保留旧FirstShot语义；聚焦34通过/2真实.NET项未选（16.37s），有界checkpoint102通过（31.04s）。真实run-request的项目根/Plan根坐标仍待适配，不据此宣称本任务实际已验收。
+- 本任务验证器：显式CONFIG_CASE选自身5项义务，复用原完整编译/真实配置，保留旧FirstShot语义；聚焦34通过/2真实.NET项未选（16.37s），有界checkpoint102通过（31.04s）。项目根/Plan根坐标已在后续集成中适配；首Actual未进入新代码验证，不据此宣称本任务实际已验收。
 - 新Product journal入口复用原receipt/Store引用；与Fresh不同的run_root/a布局已复现修复，11项聚焦通过（5.10s）；较早Fresh/index兼容checkpoint91通过（26.28s）。
 - 集成结果：postApply失败的Graph当前源重绑定/窄span及worker修订消费、原checkpoint持久待审批/同工程Apply/Build续接、原manifest等待状态、项目根与Plan根分离、同段查询与DSH审阅投影已集成。自然语言初始状态不伪造Repair；两种合法入口共用原worker，外部Qwen以显式现有profile保留原披露边界，无旧generator fallback。
 - 唯一集成checkpoint：`.venv/Scripts/python.exe -B -m pytest tests/unit/test_run_request_shared_worker.py tests/unit/test_run_request_external_worker.py tests/unit/test_product_patch_journal.py tests/unit/test_request_patch_repair_context.py tests/unit/test_product_patch_outcome.py tests/unit/test_product_repair_reanchoring.py tests/unit/test_deferred_product_approval.py tests/unit/test_reviewed_patch_continuation.py tests/unit/test_reviewed_patch_cli.py tests/unit/test_actual_crosshair_configuration.py tests/unit/test_complete_crosshair_verification.py tests/unit/test_full_project_compilation.py tests/unit/test_accurate_crosshair_eval.py tests/unit/test_product_execution.py::test_public_product_executor_preserves_repair_attempt_prefixes tests/unit/test_product_execution.py::test_product_repair_review_uses_ephemeral_review_context_only_on_repair tests/unit/test_product_execution.py::test_public_product_executor_returns_repair_budget_exhaustion_result tests/unit/test_product_execution.py::test_public_product_executor_runs_exact_runtime_terminal_chain -k 'not original_source_exposes' -q --tb=short -n 2 --dist=loadfile --basetemp=C:/Users/10160/AppData/Local/Temp/jointcp0908`：157 passed，83.18s。后续仅新增公开timeout穿透，`test_run_request_shared_worker.py`定点3 passed，4.51s；未重复大组。
@@ -34,7 +34,7 @@ Completed, frozen, review, and superseded records belong in
 - `nlcfg_001` 实际结果：原工程基线构建通过；需求投影/Findings各1次模型响应，共2次。Coverage把合并的pre_patch_evidence判缺失，模型Planning/Patch均0，生成了blocked Plan记录而非模型Plan。无新代码/Review/diff/Apply/正式Build/配置检查/游戏Runtime。总额剩12，GPU已归还；没有自动重试。[唯一验收摘要](C:/Users/10160/.codex/visualizations/2026/09/08/01a07fb9-9dfe-7a20-a345-de16b4ab1892/joint_configuration_001/acceptance-summary.json)绑定原始公开结果、输入、进程回执和Artifact路径。
 - 第一失败定位：模型以当前BindAll源码支持change，同时把通用“target source or API evidence”判missing。实际检索已命中配置代码。Findings父视图丢掉了合并requirement关联的其余input_obligations；本次仅修无损父义务投影，7条prompt规则/Coverage标准/旧Actual字节不变，不翻转missing。新9项及已有语义caller/负例19 passed（4.99s），旧missing离线仍阻塞。该修复只证明输入完整，最多一个新Actual接受；若同签名再现停止继续加prompt/schema补丁。
 - 原summary的`canonical_source_unchanged=False`实际来自typed owner的`not_applicable`布尔映射，不是源码改动事实；独立读回13个完整项目文件与冻结输入全部相同。保留旧结果不改，未来summary将not_applicable保留为unknown/null并带原状态。
-- 当前查询限制：原patch-execution查询在此run返回missing_cr_directory/match_count0，因为它止于worker之前；这不代表没有模型调用。原run_result、Artifact和验收摘要可查，不能宣称统一Patch索引已覆盖全部上游失败。
+- 当前查询：原patch-execution在此run仍返回missing_cr_directory/match_count0，因为它止于worker之前。新增只读product-execution显式消费run_manifest的terminal_record及原Artifact引用；本次集成已实际查询旧nlcfg_001，保留2次记录、两份上游响应、Planning/Patch为0及14/2/12预算，native_send_count为null；typed结果与文件字节验证通过，not_applicable未误报为源代码变化。查询未运行模型或重写Actual，也不把两个入口的次数相加。
 - 并行CI实证另行处理：f976a59的13项失败分为旧fixture未执行真实Apply、外部profile/native transport前置未适配，以及null响应投影和BlockedReport写失败语义两处生产接缝；它们与本Actual的Findings输入缺失分开。仅有界修复相应owner/fixture，不扩大全仓QA。第二Actual若启动，沿同一逻辑任务继承已用2次，仅使用剩余总额12及projection1/findings1/planning2/initial4/repair4，不重新领14次。
 
 - 用户随后要求同时解释Mod与SFT持续未修复的原因，本次按只读路线复核：First Shot 009/014的真实修订请求均保留当前失败代码及三个反例的输入/预期/实际/状态，模型响应与第二次矩阵确实发生，但五处代码均未改变，仍33/36；这两次不能归因于反馈未发送或预算提前拒绝。SFT三个checkpoint的validation均0/2，选定e1与Base的holdout各模式仍0/4；部分代码有变化但无有效修复，上游record-and-stop不等于执行重规划。本页nlcfg_001则在Findings后阻断，未进入Patch。现有证据支持分别定位语义修订无效、上游执行停止和输入投影缺口；未证明一个可解释全部失败的单一原因，也未证明本页投影修复能消除First Shot/SFT失败。本次诊断未启动新模型、训练或Actual。
@@ -46,6 +46,33 @@ Completed, frozen, review, and superseded records belong in
 - 同次只读核对上游边界：当前Graph经上游评估后重新执行Planning、写入Plan并重装worker；没有明确的“评估确认无需修改、保留原Plan身份直接返回”分支。但现有准入也不强制Plan语义或新旧hash必须变化，不能把重新执行Planning表述成必须修改Plan内容。精确接缝为`workflow/graph.py`的Planning/Plan写入及`fresh_planning_continuation.py`的`prepare_replanned_patch_input`/`make_replanned_adapter`；该显式无修改返回能力交原页面独立Repair工作树，本次只读核对未执行测试或模型。
 
 - 原页面后续进度回执：独立`codex/repair-feedback-loop`工作树已复现旧单次行为纠正反例，报告三份代码/三次调用经原Graph/Review/Dry-run的scripted场景通过，并接入累计预算、最新修订记录及可纠正提交回流。当前被测源码视图、实际反例操作input和`retain_current_plan`仍在补充。本页仅接收进度，未独立执行其验证，未合并运行中的代码；暂无该轮真实模型或重训结果。等待其最终commit、改动清单和聚焦收据后，对齐本页共享文件WIP；Findings独立归属及旧Actual边界保持。
+
+#### 2026-09-09 固定 Repair 提交接入结果
+
+本页在独立 `codex/integrate-repair-continuation` 工作树，将15份本页改动保存为 `9120291`，再合并 `6b3b92eb2f911e0b3c4c8fe5dfa9b9a2dc76ae83`（包含其 `b1bc71f` 前置）。三个重叠文件 `local_entry.py`、`request_patch_execution.py`、`patch_execution_index.py` 自动合并；连续恢复的完整序列与本页空响应处理、产品终止查询及源状态三态保留。原六份文档WIP不进入集成提交；同步主线前21份原始文件hash全部未变。
+
+入口首次验证暴露真实导入顺序回归：6b3将 `artifact_semantics` 放在 `artifacts` 初始化之前，冷进程导入及最先收集的公开入口测试失败；原主树同样的冷导入通过。仅恢复本地入口必要的包初始化顺序，加入冷进程回归，未修改任何Artifact合同或Repair判定。
+
+本次验证结果：
+
+- 入口/外部worker/待批准：首次收集1 error；修后含新冷进程回归 **22 passed，22.58s**。
+- 当前代码/失败绑定与共享累计预算：**31 passed，25.03s**。临时源Apply由测试实际执行，Build/模型为替身。
+- Patch与Product两个只读查询：**59 passed，44.58s**；另已读回原nlcfg_001，保留实际阶段、预算及unknown，不新增模型调用。
+- 唯一联合checkpoint：**223 passed，186.23s**，覆盖连续恢复、静态提交回流、明确沿用原Plan、审批后续接、产品执行及Findings父义务；原有通过选集未再整体重跑。
+- 变动Python文件的Ruff `E9,F63,F7,F821` 与 `git diff --check` 通过；未宣称全仓或托管CI通过。
+
+准确命令（cwd为本页输出根的 `integration-repair-6b3b92e`，下列解释器路径为实际使用的原环境）：
+
+```powershell
+$integrationPython = 'C:/Users/10160/.codex/visualizations/2026/08/11/019ff15f-9eac-7b13-aad5-faffde4b36b7/rag_capability_mainline/.venv/Scripts/python.exe'
+& $integrationPython -B -m pytest tests/unit/test_run_request_shared_worker.py tests/unit/test_run_request_external_worker.py tests/unit/test_deferred_product_approval.py -q --tb=short --basetemp=C:/Users/10160/AppData/Local/Temp/ri-entryfix-0909 --junitxml=C:/Users/10160/.codex/visualizations/2026/09/08/01a07fb9-9dfe-7a20-a345-de16b4ab1892/repair-integration-entry-fixed.xml
+& $integrationPython -B -m pytest tests/unit/test_request_patch_repair_context.py tests/unit/test_product_patch_journal.py tests/unit/test_product_patch_outcome.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\irbudget-$PID" -o cache_dir=.pytest-irbudget
+& $integrationPython -B -m pytest tests/unit/test_product_execution_query.py tests/unit/test_patch_execution_index.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\iqc0909-$PID" -o cache_dir="$env:TEMP\iqcache0909-$PID"
+& $integrationPython -B -m pytest tests/unit/test_continuous_behavior_repair.py tests/unit/test_patch_submission_static_loop.py tests/unit/test_patch_upstream_unchanged_plan.py tests/unit/test_patch_working_view.py tests/unit/test_repair_review_regressions.py tests/unit/test_product_repair_reanchoring.py tests/unit/test_reviewed_patch_continuation.py tests/unit/test_reviewed_patch_cli.py tests/unit/test_product_execution.py tests/unit/test_findings_parent_obligations.py tests/unit/test_run_request_shared_worker.py -q --tb=short -n 2 --dist=loadfile --basetemp=C:/Users/10160/AppData/Local/Temp/ri-final-0909 --junitxml=C:/Users/10160/.codex/visualizations/2026/09/08/01a07fb9-9dfe-7a20-a345-de16b4ab1892/repair-integration-checkpoint.xml
+& $integrationPython -B -m scripts.engineering_cognition --view verification-claims --query product-execution --run-root C:/Users/10160/AppData/Local/Temp/nlcfg-20260908/runs/nlcfg_001 --pretty
+```
+
+这是工程集成与旧记录的只读验证，不是新真实模型验收。沿用原Plan的公开CLI场景从既有Fresh恢复入口开始，不据此宣称自然语言全链已经执行该分支；模型生成的下一份代码仍需原Review和精确批准。本页首配置Actual仍停于Findings；第二Actual、First Shot原36项通过、真实Mod Apply/正式Build/Runtime及独立多任务稳定性均未由本轮证明。原页面Repair实现细节与376项历史验证只引用 [Repair记录](audits/REPAIR_CONTINUATION_20260909.md)，不并入本页实测成功数量。
 
 ### 并行训练与既有产品工作
 

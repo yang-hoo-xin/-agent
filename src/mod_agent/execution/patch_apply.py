@@ -265,6 +265,30 @@ def materialize_exact_text_patch(
     )
 
 
+def validate_materialized_patch_submission(materialized: MaterializedPatchBytes) -> None:
+    """Check the existing diff whitespace rule without altering or writing bytes.
+
+    Call only after exact materialization has checked live source authority.
+    This is submission feedback, not Review, Dry-run or semantic approval.
+    """
+    # Proposal imports execution consumers during package initialization.
+    from src.mod_agent.proposal.code_generator import PatchSubmissionValidationError
+
+    count = _added_trailing_whitespace_count(
+        original_by_target=materialized.baseline_files, staged=materialized.files,
+    )
+    if count:
+        raise PatchSubmissionValidationError(
+            "Unified diff introduces trailing whitespace on "
+            f"{count} added line(s).",
+            diagnostics={
+                "failure_boundary": "deterministic_patch_validation",
+                "failure_classification": "added_diff_trailing_whitespace",
+                "added_trailing_whitespace_count": count,
+            },
+        )
+
+
 class ExactTextPatchApplier:
     """Validate exact replacements and optionally write them inside one workspace."""
 
@@ -859,8 +883,8 @@ def _unified_diff_stats(unified_diff: str) -> dict[str, int]:
 
 def _added_trailing_whitespace_count(
     *,
-    original_by_target: Mapping[Path, bytes],
-    staged: Mapping[Path, bytes],
+    original_by_target: Mapping[Path | str, bytes],
+    staged: Mapping[Path | str, bytes],
 ) -> int:
     count = 0
     for target, after_bytes in staged.items():

@@ -3,6 +3,8 @@
 Preparation never calls a model. fixed_failure consumes a labelled teacher C1,
 not invented provider history. initial_patch starts at its given operator Plan.
 Neither mode proves natural-language planning or Runtime delivery.
+External execution requires --source-disclosure and --source-disclosure-sha256;
+preparation records the disclosure requirements without creating consent.
 """
 from __future__ import annotations
 
@@ -12,13 +14,19 @@ import json
 import subprocess
 import time
 from copy import deepcopy
-from dataclasses import asdict, replace
+from dataclasses import asdict, fields, replace
 from pathlib import Path
 
 from scripts.prepare_patch_sft_data import execute_version, ref, save, toolchain
 from src.libs.llm import ChatResponse
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.execution.patch_apply import ExactTextPatchApplier, materialize_exact_text_patch
+from src.mod_agent.external_patch import (
+    EXTERNAL_PATCH_PROFILE_VERSION,
+    PATCH_FEEDBACK_DATA_CLASSES,
+    ExternalQwenPatchProfile,
+    run_external_patch_continuation,
+)
 from src.mod_agent.fresh_planning_continuation import (
     PatchContinuationInputV1,
     _csharp_source_snapshot,
@@ -27,6 +35,7 @@ from src.mod_agent.fresh_planning_continuation import (
     run_fresh_patch_continuation,
 )
 from src.mod_agent.local_entry import (
+    LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
     LocalOllamaInitialPatchAdapter,
     LocalOllamaInitialPatchProfileV1,
     _external_evidence_items,
@@ -36,6 +45,7 @@ from src.mod_agent.local_entry import (
 )
 from src.mod_agent.model_qualification import canonical_hash, read_bound_json
 from src.mod_agent.patch_worker_configuration import PatchWorkerConfiguration
+from src.mod_agent.product_executor import SOURCE_DISCLOSURE_DATA_CLASSES
 from src.mod_agent.proposal import LLMExactPatchGenerator, PatchProposalBuilder, ProposalReviewer
 from src.mod_agent.proposal.patch_agent_loop import PatchAgentLoopPolicy, PlanBoundSourceInspector
 
@@ -70,6 +80,14 @@ def _contract(request):
         required_change_units=obligations["required_change_units"],
         required_validation_by_binding={row["edit_binding_id"]: row["expected_validation"] for row in obligations["required_change_units"]})
     return admitted, generator, prepared
+
+
+def _observation_input(check, *, case_id):
+    """Preserve explicitly recorded inputs; labels cannot reconstruct execution."""
+    if check.get("input") is not None:
+        return deepcopy(check["input"])
+    return {"case_id": case_id, "group": check["group"],
+            "execution_context_status": "unknown"}
 
 
 def _teacher_parent(request, task, output):
@@ -119,7 +137,7 @@ def _teacher_parent(request, task, output):
     failure = {"status": "behavior_failed", "failure_owner": "patch_implementation",
         "owner_binding_ids": list(inspector.available_binding_ids), "generated_changes_sha256": canonical_hash(generated.changes),
         "source_snapshot_sha256": inspector.source_snapshot_sha256,
-        "observations": [{"check_id": row["check"], "input": {"case_id": task["case_id"], "group": row["group"]},
+        "observations": [{"check_id": row["check"], "input": _observation_input(row, case_id=task["case_id"]),
             "expected": row["expected"], "observed": row["observed"], "result_ref": task["version_reports"]["C1"]}
             for row in measured["checks"] if not row["passed"]],
         "verification_ref": task["version_reports"]["C1"], "execution_origin": "unknown",
@@ -171,7 +189,7 @@ class OwnedSftOracle:
             matrix_verified = True
             failed = [row for row in matrix["checks"] if not row["passed"]]
             status, owner = ("behavior_failed", "patch_implementation") if failed else ("passed", None)
-            observations = [{"check_id": row["check"], "input": {"case_id": self.task["case_id"], "group": row["group"]},
+            observations = [{"check_id": row["check"], "input": _observation_input(row, case_id=self.task["case_id"]),
                 "expected": row["expected"], "observed": row["observed"]} for row in failed]
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             compilation_path = run / "execution/compilation.json"
@@ -205,13 +223,23 @@ def make_evaluator(**kwargs):
     return OwnedSftOracle(**kwargs)
 
 
+def _profile(document):
+    profile_type = {
+        LOCAL_OLLAMA_PATCH_PROFILE_VERSION: LocalOllamaInitialPatchProfileV1,
+        EXTERNAL_PATCH_PROFILE_VERSION: ExternalQwenPatchProfile,
+    }.get(document.get("profile_version"))
+    if profile_type is None:
+        raise ValueError("SFT_EVAL_PROFILE_VERSION_UNSUPPORTED")
+    # Both existing to_dict projections contain derived identity fields.
+    return profile_type(**{field.name: document[field.name] for field in fields(profile_type)
+                           if field.name in document})
+
+
 def prepare_eval(*, manifest_ref, case_id, profile_ref, mode, attempt_id, output_root):
     if mode not in ("fixed_failure", "initial_patch") or not attempt_id:
         raise ValueError("SFT_EVAL_MODE_AND_ATTEMPT_REQUIRED")
     task = _case(manifest_ref, case_id)
-    profile_data = read_bound_json(profile_ref)
-    profile = LocalOllamaInitialPatchProfileV1(**{key: profile_data[key] for key in
-        ("profile_version", "base_url", "model", "context_window", "output_budget", "timeout_seconds")})
+    profile = _profile(read_bound_json(profile_ref))
     output = Path(output_root).resolve()
     output.mkdir(parents=True, exist_ok=False)
     request = replace(_request(read_bound_json(task["continuation_input_ref"])), attempt_id=attempt_id)
@@ -231,42 +259,64 @@ def prepare_eval(*, manifest_ref, case_id, profile_ref, mode, attempt_id, output
         repair_ref = save(output / "repair-inputs.json", {key: asdict(getattr(request,key)) if key in
             ("repair_parent_proposal_ref", "repair_parent_review_ref") else dict(getattr(request,key)) for key in
             ("repair_parent_proposal_ref", "repair_parent_review_ref", "repair_failure_report_ref", "repair_parent_response_ref", "repair_parent_attempt_ref")})
-    argv = ["continue-fresh-patch", "--artifact-root", request.artifact_store_root, "--workspace-root", request.workspace_root,
-        "--feature-id", request.feature_spec_ref.feature_id, "--feature-spec-path", request.feature_spec_ref.path,
-        "--feature-spec-hash", request.feature_spec_ref.artifact_hash, "--evidence-pack-path", request.evidence_pack_ref.path,
-        "--evidence-pack-hash", request.evidence_pack_ref.artifact_hash, "--implementation-plan-path", request.implementation_plan_ref.path,
-        "--implementation-plan-hash", request.implementation_plan_ref.artifact_hash, "--ollama-model", profile.model,
-        "--ollama-base-url", profile.base_url, "--ollama-context-window", str(profile.context_window), "--ollama-output-budget", str(profile.output_budget),
-        "--ollama-timeout-seconds", str(profile.timeout_seconds), "--patch-worker-config", worker_ref["path"], "--attempt-id", attempt_id]
-    if repair_ref:
-        argv.extend(["--repair-inputs", repair_ref["path"]])
+    argv = None
+    if isinstance(profile, LocalOllamaInitialPatchProfileV1):
+        argv = ["continue-fresh-patch", "--artifact-root", request.artifact_store_root, "--workspace-root", request.workspace_root,
+            "--feature-id", request.feature_spec_ref.feature_id, "--feature-spec-path", request.feature_spec_ref.path,
+            "--feature-spec-hash", request.feature_spec_ref.artifact_hash, "--evidence-pack-path", request.evidence_pack_ref.path,
+            "--evidence-pack-hash", request.evidence_pack_ref.artifact_hash, "--implementation-plan-path", request.implementation_plan_ref.path,
+            "--implementation-plan-hash", request.implementation_plan_ref.artifact_hash, "--ollama-model", profile.model,
+            "--ollama-base-url", profile.base_url, "--ollama-context-window", str(profile.context_window), "--ollama-output-budget", str(profile.output_budget),
+            "--ollama-timeout-seconds", str(profile.timeout_seconds), "--patch-worker-config", worker_ref["path"], "--attempt-id", attempt_id]
+        if repair_ref:
+            argv.extend(["--repair-inputs", repair_ref["path"]])
     record = {"manifest_ref": dict(manifest_ref), "case_id": case_id, "family_id": task["family_id"], "split": task["split"],
         "mode": mode, "profile_ref": dict(profile_ref), "profile": profile.to_dict(), "attempt_id": attempt_id,
         "request_ref": request_ref, "worker_ref": worker_ref, "runner_ref": ref(__file__), "output_root": str(output),
         "cli_arguments": argv, "prepared_only": True, "model_calls": 0,
         "scope": "given_operator_Plan_not_natural_language_to_Runtime", "teacher_parent_is_model_history": False}
+    if isinstance(profile, ExternalQwenPatchProfile):
+        record.update(execution_entry="run_external_patch_continuation",
+            source_files=dict(_csharp_source_snapshot(Path(request.workspace_root))),
+            disclosure_requirements={
+                "destination": {"provider": "qwen_chat", "model": profile.model, "base_url": profile.base_url,
+                                "request_url": profile.base_url + "/chat/completions"},
+                "required_data_classes": [*SOURCE_DISCLOSURE_DATA_CLASSES, *PATCH_FEEDBACK_DATA_CLASSES],
+                "subsequent_feedback_data_classes": list(PATCH_FEEDBACK_DATA_CLASSES),
+                "source_scope": "independent_owned_CSharp_only",
+            })
     return {**record, "prepared_ref": save(output / "prepared.json", record)}
 
 
-def execute_prepared(prepared_ref, *, execution_trace_configuration=None):
+def execute_prepared(prepared_ref, *, execution_trace_configuration=None, source_disclosure_ref=None):
     prepared = read_bound_json(prepared_ref)
     if ref(__file__) != prepared["runner_ref"]:
         raise ValueError("SFT_EVAL_RUNNER_CHANGED")
     read_bound_json(prepared["profile_ref"])
     request = _request(read_bound_json(prepared["request_ref"]))
+    profile = _profile(prepared["profile"])
+    disclosure = None
+    if isinstance(profile, ExternalQwenPatchProfile):
+        if source_disclosure_ref is None:
+            raise ValueError("SFT_EVAL_EXTERNAL_DISCLOSURE_REQUIRED")
+        disclosure = read_bound_json(source_disclosure_ref)
+    elif source_disclosure_ref is not None:
+        raise ValueError("SFT_EVAL_LOCAL_DISCLOSURE_UNSUPPORTED")
     output = Path(prepared["output_root"]) / "actual"
     output.mkdir(exist_ok=False)
-    profile_data = prepared["profile"]
-    profile = LocalOllamaInitialPatchProfileV1(**{key:profile_data[key] for key in
-        ("profile_version", "base_url", "model", "context_window", "output_budget", "timeout_seconds")})
     config = PatchWorkerConfiguration.load(prepared["worker_ref"]["path"])
-    adapter = LocalOllamaInitialPatchAdapter(profile=profile, artifact_store=ArtifactStore(request.artifact_store_root),
-        workspace_root=request.workspace_root, patch_agent_loop_policy=config.policy,
-        behavior_evaluator=config.behavior_evaluator(), enable_recovery_loop=config.enable_recovery_loop)
     started = time.perf_counter()
-    result = run_fresh_patch_continuation(request, patch_change_factory=adapter,
-        dry_run_factory=make_exact_no_write_dry_run_factory(request.workspace_root), max_model_calls=config.policy.max_total_model_turns,
-        execution_trace_configuration=execution_trace_configuration)
+    if isinstance(profile, ExternalQwenPatchProfile):
+        result = run_external_patch_continuation(request, profile=profile, worker_configuration=config,
+            source_disclosure=disclosure, approved_source_files=prepared["source_files"],
+            execution_trace_configuration=execution_trace_configuration)
+    else:
+        adapter = LocalOllamaInitialPatchAdapter(profile=profile, artifact_store=ArtifactStore(request.artifact_store_root),
+            workspace_root=request.workspace_root, patch_agent_loop_policy=config.policy,
+            behavior_evaluator=config.behavior_evaluator(), enable_recovery_loop=config.enable_recovery_loop)
+        result = run_fresh_patch_continuation(request, patch_change_factory=adapter,
+            dry_run_factory=make_exact_no_write_dry_run_factory(request.workspace_root), max_model_calls=config.policy.max_total_model_turns,
+            execution_trace_configuration=execution_trace_configuration)
     elapsed = time.perf_counter()-started
     receipt = read_bound_json({"path": result.attempt_receipt["path"], "sha256": result.attempt_receipt["sha256"]}) if result.attempt_receipt else {}
     factory = receipt.get("factory_receipt", {})
@@ -288,6 +338,8 @@ def execute_prepared(prepared_ref, *, execution_trace_configuration=None):
             "correction_status": factory.get("patch_agent_loop", {}).get("behavior_correction", {}).get("status")},
         "token_usage": [{"turn_index": turn.get("turn_index"), "usage": turn.get("usage")} for turn in factory.get("worker_turns",[])],
         "natural_language_to_runtime_proven": False, "runtime_performed": False}
+    if source_disclosure_ref is not None:
+        summary["source_disclosure_ref"] = dict(source_disclosure_ref)
     save(output / "result.json", result.to_dict())
     return {**summary, "summary_ref": save(output / "summary.json", summary)}
 
@@ -305,11 +357,17 @@ def main(argv=None):
     parser.add_argument("--prepared", type=Path)
     parser.add_argument("--prepared-sha256")
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--source-disclosure", type=Path,
+                        help="External execution only: this attempt's explicit existing source disclosure record.")
+    parser.add_argument("--source-disclosure-sha256", help="Exact SHA-256 of --source-disclosure.")
     parser.add_argument("--langfuse-metadata", action="store_true",
                         help="Execute only: export metadata via the existing configured Langfuse sink; never source or prompt bodies.")
     args = parser.parse_args(argv)
     if args.langfuse_metadata and not args.execute:
         parser.error("--langfuse-metadata requires --execute; preparation cannot enable export.")
+    if args.source_disclosure or args.source_disclosure_sha256:
+        if not args.execute or not (args.source_disclosure and args.source_disclosure_sha256):
+            parser.error("Source disclosure requires --execute and both --source-disclosure and --source-disclosure-sha256.")
     if args.execute:
         if not args.prepared or not args.prepared_sha256:
             parser.error("Execution requires one exact --prepared and --prepared-sha256.")
@@ -321,8 +379,12 @@ def main(argv=None):
 
             trace_configuration = PatchExecutionTraceConfiguration(
                 sink=PatchLiveLangfuseSink(LangfuseHttpTransport.from_environment()))
+        execution_options = {"execution_trace_configuration": trace_configuration}
+        if args.source_disclosure:
+            execution_options["source_disclosure_ref"] = {
+                "path": str(args.source_disclosure.resolve()), "sha256": args.source_disclosure_sha256}
         result = execute_prepared({"path":str(args.prepared.resolve()), "sha256":args.prepared_sha256},
-                                  execution_trace_configuration=trace_configuration)
+                                  **execution_options)
     else:
         if not all((args.manifest,args.manifest_sha256,args.case_id,args.profile,args.profile_sha256,args.mode,args.attempt_id,args.output_root)):
             parser.error("Prepare requires explicit manifest/profile hashes, case, mode, attempt and output root.")

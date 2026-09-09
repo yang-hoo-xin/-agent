@@ -1,6 +1,9 @@
 """Public-entry migration checks; transport and compiler doubles are explicit."""
 
 import json
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +14,20 @@ from tests.unit import test_mod_agent_cli as public_entry_tests
 from tests.unit.test_mod_agent_cli import (
     test_cli_run_request_real_public_product_executor_compile_success as _public_compile_scenario,
 )
+
+
+def test_public_request_entry_imports_in_a_fresh_process():
+    result = subprocess.run(
+        [sys.executable, "-B", "-c",
+         "from pathlib import Path; from src.mod_agent import local_entry; "
+         "assert Path(local_entry.__file__).resolve() == "
+         "Path('src/mod_agent/local_entry.py').resolve()"],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("operator_targets,defer_approval", [(True, False), (False, False), (False, True)])

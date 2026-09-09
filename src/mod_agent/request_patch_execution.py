@@ -16,7 +16,11 @@ from typing import Any
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.patch_execution_trace import PatchExecutionTraceConfiguration
-from src.mod_agent.proposal.patch_agent_loop import PatchAgentLoopPolicy, normalize_upstream_effects
+from src.mod_agent.proposal.patch_agent_loop import (
+    PatchAgentLoopPolicy,
+    iter_patch_recovery_revisions,
+    normalize_upstream_effects,
+)
 
 
 def _validate_applied_source_chain(workspace_root, changes, original_bindings, expected_binding_ids):
@@ -334,9 +338,8 @@ class RequestPatchExecution:
         finally:
             receipt = worker.patch_attempt_receipt()
             loop = receipt.get("patch_agent_loop") or {}
-            phases = [loop, *(value["execution"] for name in ("validator_correction", "behavior_correction")
-                             if isinstance(value := loop.get(name), Mapping)
-                             and isinstance(value.get("execution"), Mapping))]
+            phases = [loop, *(value["execution"] for value in iter_patch_recovery_revisions(loop)
+                             if isinstance(value.get("execution"), Mapping))]
             self._consumed_reads += sum(int(phase.get("tool_rounds_used") or 0) for phase in phases)
             self._consumed_bytes += (sum(int(phase.get("total_observation_bytes") or 0) for phase in phases)
                                      + worker._recovery_observation_bytes)

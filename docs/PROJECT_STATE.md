@@ -1,13 +1,13 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-09-08
+Last updated: 2026-09-09
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
 
-The bounded repair-focused SFT A/B has completed with actual checkpoints and same-worker results, but no demonstrated task-completion gain; the trained profile is not adopted (reconciliation 0.35). The current user request is a Repair/real-Mod route review backed by source and failures. First Shot remains the exposed difficult regression: 014 unchanged bytes passed whole-project compilation and real configuration checks, while its behavior result remains 33/36. The separate integration task owns current natural-language product acceptance; no new Mod success is established here.
+The current bounded implementation addresses the reconciled Repair gaps: shared-budget continuous revisions, submission feedback, current-code views, measured counterexample input, and a same-Plan return from explicit upstream assessment. See [Repair continuation](audits/REPAIR_CONTINUATION_20260909.md) for exact implementation and verification boundaries. No new live-model trial or training is claimed; the earlier SFT profile remains unadopted (reconciliation 0.35). First Shot 014 remains 33/36 despite complete compilation/configuration checks. The separate integration task owns Findings and natural-language product acceptance; no new Mod success is established here.
 
 New execution timing and native model usage from the first four SFT attempts have been explicitly exported and verified in Cloud (0.35); historical imports are unchanged and later SFT attempts remain local. This does not prove automatic future live export or task success. Hosted CI closed its original environment/path/fixture failures but still reports another integration failure set after the product entry migration (0.36); current code is not declared fully green.
 

@@ -34,6 +34,7 @@ from src.libs.llm import (
     AgentResponseFormat,
     AgentTurnClient,
     AgentTurnRequest,
+    AgentTurnResponse,
     ChatResponse,
     LLMFactory,
     Message,
@@ -42,19 +43,22 @@ from src.libs.llm import (
     validate_loopback_http_base_url,
 )
 from src.libs.llm.transport_observation import observe_transport
+from src.mod_agent.action_identity import hash_canonical_value
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.artifacts.store import ArtifactWriteResult
+
+# Initialize the artifact package before its store's semantic helpers.
+# isort: split
+from src.mod_agent.artifact_semantics import (
+    ArtifactWriteIntent,
+    project_artifact_write_intent,
+)
 from src.mod_agent.build import (
     BuildAdapter,
     BuildCommandResult,
     BuildProfile,
     BuildResult,
 )
-from src.mod_agent.evidence import (
-    RgLiveEvidenceProvider,
-    make_requirement_coverage_evidence_provider,
-)
-from src.mod_agent.evidence.rg_live import _csharp_method_source_spans
 from src.mod_agent.edit_authority_capabilities import (
     EditAuthorityCapabilityDeclaration,
     EditAuthorityReviewResultV1,
@@ -67,43 +71,49 @@ from src.mod_agent.edit_authority_capabilities import (
     validate_edit_authority_exact_input_admission,
     validate_edit_authority_request_identity,
 )
+from src.mod_agent.evidence import (
+    RgLiveEvidenceProvider,
+    make_requirement_coverage_evidence_provider,
+)
 from src.mod_agent.evidence.dotnet_metadata import (
     DotNetMetadataEnrichmentError,
     RunLocalMemberAccessResolver,
     enrich_source_evidence_with_member_accesses,
 )
+from src.mod_agent.evidence.rg_live import _csharp_method_source_spans
 from src.mod_agent.execution import ExactDiffApprovalRejectedError, ExactTextPatchApplier
-from src.mod_agent.execution.patch_apply import materialize_exact_text_patch
-from src.mod_agent.git.admission import StrictGitAdmission
-from src.mod_agent.proposal import (
-    PATCH_RESPONSE_CONTRACT_ID,
-    PATCH_RESPONSE_CONTRACT_VERSION,
-    GeneratedPatch,
-    LLMExactPatchGenerator,
-    PatchGenerationError,
+from src.mod_agent.execution.patch_apply import (
+    materialize_exact_text_patch,
+    validate_materialized_patch_submission,
 )
-from src.mod_agent.proposal.patch_agent_loop import (
-    PatchAgentLoopPolicy,
-    PlanBoundSourceInspector,
-    estimate_patch_source_reads,
-    normalize_upstream_effects,
-    run_patch_agent_loop,
+from src.mod_agent.git.admission import StrictGitAdmission
+from src.mod_agent.model_admission import (
+    ModelAdmissionError,
+    local_model_admission_record,
+    local_no_external_disclosure_record,
+)
+from src.mod_agent.model_admission import (
+    assert_ollama_model_identity_stable as _shared_assert_ollama_model_identity_stable,
+)
+from src.mod_agent.model_admission import (
+    read_ollama_model_identity as _shared_read_ollama_model_identity,
+)
+from src.mod_agent.model_admission import (
+    read_ollama_server_version as _shared_read_ollama_server_version,
+)
+from src.mod_agent.model_admission import (
+    select_ollama_model_identity as _shared_select_ollama_model_identity,
+)
+from src.mod_agent.model_admission import (
+    validate_ollama_context_window as _shared_validate_ollama_context_window,
+)
+from src.mod_agent.model_admission import (
+    validate_ollama_model_identity as _shared_validate_ollama_model_identity,
 )
 from src.mod_agent.product_execution import (
     ProductExecutionContractError,
     ProductExecutionInputBindingV1,
     ProductExecutionRequestV1,
-)
-from src.mod_agent.model_admission import (
-    ModelAdmissionError,
-    assert_ollama_model_identity_stable as _shared_assert_ollama_model_identity_stable,
-    local_model_admission_record,
-    local_no_external_disclosure_record,
-    read_ollama_model_identity as _shared_read_ollama_model_identity,
-    read_ollama_server_version as _shared_read_ollama_server_version,
-    select_ollama_model_identity as _shared_select_ollama_model_identity,
-    validate_ollama_context_window as _shared_validate_ollama_context_window,
-    validate_ollama_model_identity as _shared_validate_ollama_model_identity,
 )
 from src.mod_agent.product_executor import (
     PATCH_PROVIDER_PAYLOAD_DISCLOSURE_BINDINGS,
@@ -120,9 +130,30 @@ from src.mod_agent.product_executor import (
     _verify_source_revision_binding,
     execute_product_execution,
     preflight_product_execution,
+)
+from src.mod_agent.product_executor import (
     source_snapshot as _product_source_snapshot,
+)
+from src.mod_agent.product_executor import (
     source_snapshot_sha256 as _product_source_snapshot_sha256,
 )
+from src.mod_agent.proposal import (
+    PATCH_RESPONSE_CONTRACT_ID,
+    PATCH_RESPONSE_CONTRACT_VERSION,
+    GeneratedPatch,
+    LLMExactPatchGenerator,
+    PatchGenerationError,
+)
+from src.mod_agent.proposal.patch_agent_loop import (
+    PatchAgentLoopError,
+    PatchAgentLoopPolicy,
+    PlanBoundSourceInspector,
+    estimate_patch_source_reads,
+    iter_patch_recovery_revisions,
+    normalize_upstream_effects,
+    run_patch_agent_loop,
+)
+from src.mod_agent.proposal.working_view import build_materialized_patch_view
 from src.mod_agent.requirement_coverage_model import (
     parse_requirement_coverage_json_object,
     request_requirement_coverage_model,
@@ -132,9 +163,9 @@ from src.mod_agent.runtime import (
     bind_plugin_deployment_to_runtime_payload,
     build_gtfo_runtime_capability_report,
     build_gtfo_stagger_acceptance_report,
-    make_operator_completion_file_reader,
     make_gtfo_runtime_evidence_factory_from_settings,
     make_gtfo_stagger_runtime_evidence_factory,
+    make_operator_completion_file_reader,
     profile_from_settings,
     stagger_profile_from_settings,
     temporarily_deploy_verified_plugin,
@@ -144,30 +175,13 @@ from src.mod_agent.runtime.stagger_diagnosis import (
     build_stagger_repair_attempt_projection,
     inherit_stagger_repair_attempt_prior_results,
 )
-from src.mod_agent.workflow import (
-    ResumeDecision,
-    ResumePayload,
-    ResumeValidator,
-    VerificationOnlyContinuationInput,
-    VerificationOnlyRuntimeTerminalInput,
-    WorkflowCheckpointStore,
-    build_graph,
-    create_initial_state,
-    preflight_verification_only_continuation,
-    resumed_state_from_decision,
-)
-from src.mod_agent.action_identity import hash_canonical_value
-from src.mod_agent.artifact_semantics import (
-    ArtifactWriteIntent,
-    project_artifact_write_intent,
-)
-from src.mod_agent.workflow.graph import (
-    _RuntimeEvidenceExecutionBoundaryError,
-    _runtime_summary_from_payload,
-)
 from src.mod_agent.runtime_evidence_consolidation import (
     logical_identity as consolidation_logical_identity,
+)
+from src.mod_agent.runtime_evidence_consolidation import (
     project_operation_payload as project_runtime_evidence_consolidation_payload,
+)
+from src.mod_agent.runtime_evidence_consolidation import (
     runtime_evidence_consolidation_child_refs,
 )
 from src.mod_agent.verification_operations import (
@@ -209,6 +223,22 @@ from src.mod_agent.verification_operations import (
     project_verification_operation_result,
     resolve_verification_operation,
     validate_verification_operation_envelope,
+)
+from src.mod_agent.workflow import (
+    ResumeDecision,
+    ResumePayload,
+    ResumeValidator,
+    VerificationOnlyContinuationInput,
+    VerificationOnlyRuntimeTerminalInput,
+    WorkflowCheckpointStore,
+    build_graph,
+    create_initial_state,
+    preflight_verification_only_continuation,
+    resumed_state_from_decision,
+)
+from src.mod_agent.workflow.graph import (
+    _runtime_summary_from_payload,
+    _RuntimeEvidenceExecutionBoundaryError,
 )
 
 _request_requirement_coverage_model = request_requirement_coverage_model
@@ -601,6 +631,15 @@ def _patch_agent_loop_generation_ref(
         ],
         "termination": dict(value.get("termination") or {}),
         "validator_correction": correction_ref,
+        **({"recovery_revision_refs": [
+            {"revision_index": item.get("revision_index"), "message_type": item.get("message_type"),
+             "status": item.get("status"), "model_call_count": item.get("model_call_count"),
+             "previous_response_sha256": item.get("previous_response_sha256"),
+             "response_sha256": (item.get("response") or {}).get("output_sha256"),
+             "failure_report_sha256": (item.get("validator") or {}).get("report_sha256"),
+             "source_observation_sha256s": item.get("source_observation_sha256s", [])}
+            for item in iter_patch_recovery_revisions(value)]}
+           if "recovery_revisions" in value else {}),
         **({
             "behavior_evaluation_refs": [
                 {
@@ -964,6 +1003,11 @@ class LocalOllamaInitialPatchAdapter:
         self._attempt_recorder: Callable[[Mapping[str, Any]], None] | None = None
         self._shared_model_call_reserver: Callable[[str], None] | None = None
         self._upstream_continuation_context: dict[str, Any] | None = None
+        self._last_worker_request: AgentTurnRequest | None = None
+        self._resumed_worker_request: AgentTurnRequest | None = None
+        self._same_plan_assessment: AgentMessage | None = None
+        self._prior_worker_budget = {"consumed_model_turns": 0, "consumed_tool_rounds": 0,
+                                     "consumed_observation_bytes": 0}
         self._upstream_effects = normalize_upstream_effects(None)
         self._invocation_count = 0
         self._response_sidecar_path: Path | None = None
@@ -1036,6 +1080,31 @@ class LocalOllamaInitialPatchAdapter:
             )
         )
 
+    def retained_worker_request(self) -> AgentTurnRequest | None:
+        """Return the effective request retained at the latest worker boundary."""
+        return deepcopy(self._last_worker_request)
+
+    def bind_retained_worker_request(
+        self, request: AgentTurnRequest, *, consumed_model_turns: int, consumed_tool_rounds: int,
+        consumed_observation_bytes: int, planning_rationale: str,
+    ) -> None:
+        """Resume validated same-Plan history while charging only the new assessment."""
+        if self._invocation_count or self._resumed_worker_request is not None or not self.enable_recovery_loop:
+            raise LocalEntryError("PATCH_RETAINED_WORKER_CONTEXT_ALREADY_CONSUMED")
+        if not isinstance(request, AgentTurnRequest) or not isinstance(planning_rationale, str) or not planning_rationale.strip():
+            raise LocalEntryError("PATCH_RETAINED_WORKER_CONTEXT_INVALID")
+        offsets = {"consumed_model_turns": consumed_model_turns, "consumed_tool_rounds": consumed_tool_rounds,
+                   "consumed_observation_bytes": consumed_observation_bytes}
+        if any(type(value) is not int or value < 0 for value in offsets.values()):
+            raise LocalEntryError("PATCH_RETAINED_WORKER_BUDGET_INVALID")
+        self._resumed_worker_request = deepcopy(request)
+        self._prior_worker_budget = offsets
+        self._same_plan_assessment = AgentMessage(role="user", content={
+            "message_type": "patch_same_plan_assessment", "planning_rationale": planning_rationale,
+            "required_action": "Continue repair under the unchanged Plan using the retained code, failure and source observations.",
+            "approval_inherited": False,
+        })
+
     def bind_upstream_effects(self, effects: Mapping[str, str]) -> None:
         """The executing Graph declares consequences before this worker starts."""
         normalized = normalize_upstream_effects(effects)
@@ -1074,7 +1143,9 @@ class LocalOllamaInitialPatchAdapter:
                 if failed_changes is None:
                     parent = self.artifact_store.read(ArtifactRef(**self._repair_context["parent_proposal"]))["data"]
                     failed_changes = parent["diff_intent"]
-                self._known_failed_code = self._materialized_identity(failed_changes)
+                materialized = self._materialize_changes(failed_changes)
+                self._known_failed_code = self._materialized_bytes_identity(materialized)
+                self._attach_working_code_view(self._repair_context["failure_report"], materialized)
             # An approved, applied parent is the current baseline. Its old
             # B0-to-C1 response is diagnostic history, never reapplied to C1.
             self._known_failed_report_ref = deepcopy(self._repair_context["failure_report_ref"])
@@ -1156,6 +1227,15 @@ class LocalOllamaInitialPatchAdapter:
                 self._receipt["post_response_model_identity"] = dict(observed)
                 self._emit("local_patch_post_response_model_admitted")
 
+            def admit_worker_response(response: AgentTurnResponse) -> None:
+                try:
+                    post_response_admission(ChatResponse(content=response.content or "", model=response.model,
+                                                         raw_response=response.raw_response))
+                except LocalEntryError as exc:
+                    raise PatchAgentLoopError(str(exc), stage="response_admission", reason=str(exc)) from exc
+
+            self._worker_response_admission = admit_worker_response
+
             generation_inputs = {
                 "user_request": str(model_input["request"]),
                 "evidence_items": list(model_input["evidence"]),
@@ -1202,14 +1282,23 @@ class LocalOllamaInitialPatchAdapter:
                         if self.enable_recovery_loop else ()
                     ),
                 )
-                if self._repair_context is not None:
-                    agent_messages = (*agent_messages, *self._revision_messages(
+                if self._resumed_worker_request is not None:
+                    if agent_messages[:2] != self._resumed_worker_request.messages[:2]:
+                        raise LocalEntryError("PATCH_RETAINED_WORKER_CONTEXT_CHANGED")
+                    agent_messages = (*self._resumed_worker_request.messages, self._same_plan_assessment)
+                    self._recovery_observation_bytes = len(_patch_agent_context_json(
+                        [asdict(self._same_plan_assessment)]).encode("utf-8"))
+                elif self._repair_context is not None:
+                    repair_messages = self._revision_messages(
                         self._repair_context["previous_response"],
                         self._model_failure_feedback(self._repair_context["failure_report"]),
                         message_type="patch_repair_context",
                         base_relationship=self._repair_context.get("base_relationship"),
-                    ))
-                if self._upstream_continuation_context is not None:
+                    )
+                    agent_messages = (*agent_messages, *repair_messages)
+                    self._recovery_observation_bytes = len(_patch_agent_context_json(
+                        [asdict(message) for message in repair_messages]).encode("utf-8"))
+                if self._upstream_continuation_context is not None and self._resumed_worker_request is None:
                     history = self._upstream_continuation_context
                     agent_messages = (*agent_messages,
                         AgentMessage(role="assistant", content=history["previous_response"]),
@@ -1255,7 +1344,20 @@ class LocalOllamaInitialPatchAdapter:
                     schema=dict(prepared.response_schema),
                     strict=True,
                 )
-                reservations = self._initial_recovery_reservations(inspector)
+                def validate_submission(turn: AgentTurnResponse) -> None:
+                    checked = generator.materialize_prepared_native(
+                        prepared, ChatResponse(content=turn.content or "", model=turn.model,
+                                               raw_response=turn.raw_response),
+                        post_response_admission=post_response_admission,
+                    )
+                    materialized = materialize_exact_text_patch(
+                        workspace_root=self.workspace_root, diff_intent=checked.changes,
+                        implementation_plan=implementation,
+                    )
+                    validate_materialized_patch_submission(materialized)
+
+                submission_validator = validate_submission if self.enable_recovery_loop else None
+                reservations = self._initial_recovery_reservations(inspector) if self._resumed_worker_request is None else {}
                 loop_result = run_patch_agent_loop(
                     client=agent_client,
                     initial_messages=agent_messages,
@@ -1263,22 +1365,33 @@ class LocalOllamaInitialPatchAdapter:
                     source_inspector=inspector,
                     policy=self.patch_agent_loop_policy,
                     upstream_effects=self._upstream_effects,
-                    **({**reservations, "consumed_observation_bytes": self._recovery_observation_bytes}
+                    **({**reservations, **self._prior_worker_budget,
+                        "consumed_observation_bytes": self._prior_worker_budget["consumed_observation_bytes"]
+                            + self._recovery_observation_bytes}
                        if self.enable_recovery_loop else {}),
+                    **({"resume_request": replace(self._resumed_worker_request, messages=agent_messages)}
+                       if self._resumed_worker_request is not None else {}),
+                    **({"submission_validator": submission_validator} if self.enable_recovery_loop else {}),
+                    **({"response_admission": self._worker_response_admission} if self.enable_recovery_loop else {}),
                 )
                 self._receipt["model_call_count"] = loop_result.model_turns_used
                 self._receipt["patch_agent_loop"] = {
                     "enabled": True,
                     "policy": asdict(self.patch_agent_loop_policy),
                     **loop_result.to_dict(),
+                    **({"recovery_observation_bytes": self._recovery_observation_bytes, "recovery_revisions": []}
+                       if self.enable_recovery_loop else {}),
+                    **({"prior_worker_budget": deepcopy(self._prior_worker_budget)}
+                       if self._resumed_worker_request is not None else {}),
                 }
+                self._last_worker_request = deepcopy(loop_result.final_request)
                 self._emit("local_patch_agent_loop_finished")
                 if not loop_result.completed or loop_result.final_content is None:
                     termination = loop_result.termination
                     self._receipt["upstream_decision"] = deepcopy(termination)
-                    raise LocalEntryError(
-                        str(termination.get("code") or "PATCH_AGENT_LOOP_BLOCKED")
-                    )
+                    error = LocalEntryError(str(termination.get("code") or "PATCH_AGENT_LOOP_BLOCKED"))
+                    error.diagnostics = deepcopy(termination.get("diagnostics", {}))
+                    raise error
                 response = ChatResponse(
                     content=loop_result.final_content,
                     model=loop_result.model,
@@ -1334,6 +1447,7 @@ class LocalOllamaInitialPatchAdapter:
                             inspector=inspector, agent_client=agent_client,
                             response_format=response_format, correction_state=correction_state,
                             run_id=run_id, response_label="correction-001",
+                            submission_validator=submission_validator,
                         )
                     else:
                         self._consume_correction_call()
@@ -1434,6 +1548,7 @@ class LocalOllamaInitialPatchAdapter:
                         response_format=response_format,
                         post_response_admission=post_response_admission,
                         run_id=run_id,
+                        submission_validator=submission_validator,
                     )
             else:
                 llm = _PatchResponseCapturingLLM(
@@ -1521,7 +1636,7 @@ class LocalOllamaInitialPatchAdapter:
 
     def _consume_correction_call(self) -> None:
         policy = self.patch_agent_loop_policy
-        if policy is None or self._receipt["model_call_count"] >= policy.max_total_model_turns:
+        if policy is None or self._receipt["model_call_count"] + self._prior_worker_budget["consumed_model_turns"] >= policy.max_total_model_turns:
             raise LocalEntryError("PATCH_AGENT_CORRECTION_BUDGET_EXHAUSTED")
         if self._shared_model_call_reserver is not None:
             self._shared_model_call_reserver("patch")
@@ -1714,8 +1829,8 @@ class LocalOllamaInitialPatchAdapter:
     def _recovery_observation_usage(self) -> tuple[int, int]:
         loop = self._receipt["patch_agent_loop"]
         executions = [
-            value["execution"] for name in ("validator_correction", "behavior_correction")
-            if isinstance(value := loop.get(name), dict) and isinstance(value.get("execution"), dict)
+            value["execution"] for value in iter_patch_recovery_revisions(loop)
+            if isinstance(value.get("execution"), dict)
         ]
         return (
             loop["tool_rounds_used"] + sum(item["tool_rounds_used"] for item in executions),
@@ -1749,7 +1864,7 @@ class LocalOllamaInitialPatchAdapter:
         self._emit("local_patch_recovery_capacity_reserved")
         return reservations
 
-    def _materialized_identity(self, changes: Any) -> dict[str, Any]:
+    def _materialize_changes(self, changes: Any):
         with trace_operation("patch.materialize", attributes={"generated_changes_sha256": _sha256_json(changes)}) as operation:
             result = materialize_exact_text_patch(
                 workspace_root=self.workspace_root, diff_intent=changes,
@@ -1757,8 +1872,24 @@ class LocalOllamaInitialPatchAdapter:
             )
             operation.update(output_code_sha256=result.code_sha256, baseline_sha256=result.baseline_sha256,
                              file_count=len(result.files))
-            return {"baseline_sha256": result.baseline_sha256, "code_sha256": result.code_sha256,
-                    "files": sorted(result.files)}
+            return result
+
+    @staticmethod
+    def _materialized_bytes_identity(materialized) -> dict[str, Any]:
+        return {"baseline_sha256": materialized.baseline_sha256, "code_sha256": materialized.code_sha256,
+                "files": sorted(materialized.files)}
+
+    def _materialized_identity(self, changes: Any) -> dict[str, Any]:
+        return self._materialized_bytes_identity(self._materialize_changes(changes))
+
+    def _attach_working_code_view(self, report: dict[str, Any], materialized) -> None:
+        report["working_code_view"] = build_materialized_patch_view(
+            materialized, context_radius_lines=self.patch_agent_loop_policy.context_radius_lines)
+        report["working_code_view_provenance"] = {
+            "origin": "current_in_memory_materialized_patch_bytes",
+            "covered_by_verifier_report_ref": False,
+            "grants_new_edit_authority": False,
+        }
 
     def _verification_identity(self) -> dict[str, Any] | None:
         identity_reader = getattr(self.behavior_evaluator, "verification_identity", None)
@@ -1778,17 +1909,26 @@ class LocalOllamaInitialPatchAdapter:
     def _failure_capacity(
         self, inspector: PlanBoundSourceInspector, feedback: Mapping[str, Any],
         prior_request: AgentTurnRequest | None = None,
+        previous_response: str | None = None,
     ) -> dict[str, Any]:
         used_reads, used_bytes = self._recovery_observation_usage()
+        used_reads += self._prior_worker_budget["consumed_tool_rounds"]
+        used_bytes += self._prior_worker_budget["consumed_observation_bytes"]
         policy = self.patch_agent_loop_policy
-        remaining_models = policy.max_total_model_turns - self._receipt["model_call_count"]
+        remaining_models = policy.max_total_model_turns - self._prior_worker_budget["consumed_model_turns"] - self._receipt["model_call_count"]
         remaining_reads = policy.max_tool_rounds - used_reads
-        feedback_bytes = len(_patch_agent_context_json(feedback).encode("utf-8"))
+        feedback_bytes = self._revision_payload_bytes(previous_response, feedback, prior_request)
         remaining_bytes = policy.max_observation_bytes - used_bytes - self._recovery_observation_bytes - feedback_bytes
         loop = self._receipt["patch_agent_loop"]
-        phases = [loop, *(value["execution"] for name in ("validator_correction", "behavior_correction")
-                          if isinstance(value := loop.get(name), dict) and isinstance(value.get("execution"), dict))]
+        phases = [loop, *(value["execution"] for value in iter_patch_recovery_revisions(loop)
+                          if isinstance(value.get("execution"), dict))]
         used_ids = {item["binding_id"] for phase in phases for item in phase.get("observation_trace", [])}
+        if self._resumed_worker_request is not None:
+            retained_results = [*self._resumed_worker_request.tool_results,
+                *(result for exchange in self._resumed_worker_request.historical_tool_exchanges
+                  for result in exchange.tool_results)]
+            used_ids.update(result.output["binding_id"] for result in retained_results
+                            if isinstance(result.output, Mapping) and "binding_id" in result.output)
         if policy.reuse_covered_source_observations:
             # Evaluate each alternative against the actual request, not against
             # hypothetical observations from another unselected alternative.
@@ -1831,17 +1971,37 @@ class LocalOllamaInitialPatchAdapter:
         generation_request: AgentTurnRequest, inspector: PlanBoundSourceInspector,
         agent_client: AgentTurnClient, response_format: AgentResponseFormat,
         correction_state: dict[str, Any], run_id: str, response_label: str,
+        submission_validator: Callable[[AgentTurnResponse], None] | None = None,
     ) -> tuple[ChatResponse, AgentTurnRequest | None]:
         """Reuse the generation loop, allowing observations to drive revision actions."""
         used_tools, used_bytes = self._recovery_observation_usage()
-        feedback_bytes = len(_patch_agent_context_json(feedback).encode("utf-8"))
-        self._recovery_observation_bytes += feedback_bytes
+        prior_bytes = self._prior_worker_budget["consumed_observation_bytes"]
         before_calls = self._receipt["model_call_count"]
         prior = deepcopy(generation_request)
         revision_messages = self._revision_messages(
             previous_response, feedback, message_type=message_type,
             visible_messages=prior.messages if self.patch_agent_loop_policy.reuse_covered_source_observations else (),
         )
+        feedback_bytes = len(_patch_agent_context_json([asdict(message) for message in revision_messages]).encode("utf-8"))
+        loop = self._receipt["patch_agent_loop"]
+        required_bytes = prior_bytes + used_bytes + self._recovery_observation_bytes + feedback_bytes
+        correction_state["feedback_budget"] = {
+            "feedback_utf8_bytes": feedback_bytes, "source_observation_utf8_bytes": used_bytes,
+            "prior_feedback_utf8_bytes": self._recovery_observation_bytes,
+            "prior_worker_observation_utf8_bytes": prior_bytes,
+            "combined_utf8_bytes": required_bytes, "limit": self.patch_agent_loop_policy.max_observation_bytes,
+            "admitted": required_bytes <= self.patch_agent_loop_policy.max_observation_bytes,
+            "accounting_scope": "new_revision_messages_role_content_utf8",
+        }
+        if required_bytes > self.patch_agent_loop_policy.max_observation_bytes:
+            raise LocalEntryError("PATCH_BEHAVIOR_OBSERVATION_BUDGET_EXHAUSTED")
+        if before_calls + self._prior_worker_budget["consumed_model_turns"] >= self.patch_agent_loop_policy.max_total_model_turns:
+            raise LocalEntryError("PATCH_AGENT_CORRECTION_BUDGET_EXHAUSTED")
+        history = loop.setdefault("recovery_revisions", [])
+        correction_state.update(revision_index=len(history) + 1, message_type=message_type)
+        history.append(correction_state)
+        self._recovery_observation_bytes += feedback_bytes
+        loop["recovery_observation_bytes"] = self._recovery_observation_bytes
         correction_state["context_encoding"] = {
             "version": "patch_recovery_visible_response_v1",
             "exact_visible_response_reused": len(revision_messages) == 1,
@@ -1855,9 +2015,12 @@ class LocalOllamaInitialPatchAdapter:
             client=agent_client, initial_messages=resumed.messages,
             resume_request=resumed, final_response_format=response_format,
             source_inspector=inspector, policy=self.patch_agent_loop_policy,
-            consumed_model_turns=before_calls, consumed_tool_rounds=used_tools,
-            consumed_observation_bytes=used_bytes + self._recovery_observation_bytes,
+            consumed_model_turns=before_calls + self._prior_worker_budget["consumed_model_turns"],
+            consumed_tool_rounds=used_tools + self._prior_worker_budget["consumed_tool_rounds"],
+            consumed_observation_bytes=prior_bytes + used_bytes + self._recovery_observation_bytes,
             upstream_effects=self._upstream_effects,
+            submission_validator=submission_validator,
+            response_admission=self._worker_response_admission,
         )
         self._receipt["model_call_count"] = before_calls + execution.model_turns_used
         correction_state.update(
@@ -1865,10 +2028,13 @@ class LocalOllamaInitialPatchAdapter:
             model_call_count=execution.model_turns_used, execution=execution.to_dict(),
             usage=_patch_agent_loop_usage(execution.to_dict()),
         )
+        self._last_worker_request = deepcopy(execution.final_request)
         self._emit("local_patch_recovery_loop_finished")
         if not execution.completed or execution.final_content is None:
             self._receipt["upstream_decision"] = deepcopy(execution.termination)
-            raise LocalEntryError(str(execution.termination.get("code") or "PATCH_AGENT_LOOP_BLOCKED"))
+            error = LocalEntryError(str(execution.termination.get("code") or "PATCH_AGENT_LOOP_BLOCKED"))
+            error.diagnostics = deepcopy(execution.termination.get("diagnostics", {}))
+            raise error
         response = ChatResponse(
             content=execution.final_content, model=execution.model,
             usage=_patch_agent_loop_usage(execution.to_dict()),
@@ -1880,6 +2046,18 @@ class LocalOllamaInitialPatchAdapter:
         self._record_response(response)
         correction_state["response"] = deepcopy(self._receipt["model_response"])
         return response, execution.final_request
+
+    def _revision_payload_bytes(
+        self, previous_response: str | None, feedback: Mapping[str, Any],
+        prior_request: AgentTurnRequest | None,
+    ) -> int:
+        if previous_response is None:
+            # Retain the standalone diagnostic estimate when no code context is supplied.
+            return len(_patch_agent_context_json(feedback).encode("utf-8"))
+        messages = self._revision_messages(previous_response, feedback, message_type="patch_behavior_correction",
+            visible_messages=prior_request.messages if prior_request is not None
+                and self.patch_agent_loop_policy.reuse_covered_source_observations else ())
+        return len(_patch_agent_context_json([asdict(message) for message in messages]).encode("utf-8"))
 
     def bind_repair_context(self, context: Mapping[str, Any]) -> None:
         """Consume an owner-admitted failed revision, never infer new edit authority."""
@@ -1893,9 +2071,10 @@ class LocalOllamaInitialPatchAdapter:
         if not isinstance(admitted.get("failure_report"), dict):
             raise LocalEntryError("PATCH_RECOVERY_FAILURE_REPORT_MISSING")
         self._repair_context = admitted
-        self._recovery_observation_bytes = len(_patch_agent_context_json(
-            self._model_failure_feedback(admitted["failure_report"])
-        ).encode("utf-8"))
+        messages = self._revision_messages(admitted["previous_response"],
+            self._model_failure_feedback(admitted["failure_report"]), message_type="patch_repair_context",
+            base_relationship=admitted.get("base_relationship"))
+        self._recovery_observation_bytes = len(_patch_agent_context_json([asdict(message) for message in messages]).encode("utf-8"))
         self._receipt["repair_context"] = {
             "context_sha256": _sha256_json(admitted),
             "parent_proposal": admitted.get("parent_proposal"),
@@ -1922,6 +2101,9 @@ class LocalOllamaInitialPatchAdapter:
             "source_snapshot_sha256": report.get("source_snapshot_sha256"),
             "report_sha256": (report.get("report_ref") or {}).get("sha256"),
             **({"code_revision": deepcopy(report["code_revision"])} if report.get("code_revision") is not None else {}),
+            **({"working_code_view": deepcopy(report["working_code_view"]),
+                "working_code_view_provenance": deepcopy(report["working_code_view_provenance"])}
+               if report.get("working_code_view") is not None else {}),
         }
 
     @staticmethod
@@ -2008,7 +2190,8 @@ class LocalOllamaInitialPatchAdapter:
         inspector.validate_snapshot()
         evaluations = self._receipt["patch_agent_loop"].setdefault("behavior_evaluations", [])
         changes_hash = _sha256_json(generated.changes)
-        code_identity = self._materialized_identity(generated.changes) if self.enable_recovery_loop else None
+        materialized = self._materialize_changes(generated.changes) if self.enable_recovery_loop else None
+        code_identity = self._materialized_bytes_identity(materialized) if materialized is not None else None
         verification_identity = self._verification_identity() if self.enable_recovery_loop else None
         code_revision = None
         if code_identity is not None:
@@ -2064,6 +2247,7 @@ class LocalOllamaInitialPatchAdapter:
                 "admission": "accepted",
             }
             report.pop("report_ref", None)
+            self._attach_working_code_view(report, materialized)
             path = _local_patch_response_sidecar_path(self.artifact_store.root,
                 run_id=self._current_run_id, response_label=f"verification-reuse-{len(evaluations) + 1:03d}").with_suffix(".json")
             data = _patch_agent_context_json(report).encode("utf-8")
@@ -2154,6 +2338,8 @@ class LocalOllamaInitialPatchAdapter:
                       materialized_code_identity=code_identity, verification_identity=verification_identity,
                       code_revision=code_revision,
                       model_response_sha256=context["model_response"]["output_sha256"])
+        if materialized is not None:
+            self._attach_working_code_view(report, materialized)
         if report["status"] in {"behavior_failed", "needs_evidence"} and code_identity is not None:
             self._known_failed_code = deepcopy(code_identity)
             self._known_failed_report_ref = deepcopy(report["report_ref"])
@@ -2169,10 +2355,59 @@ class LocalOllamaInitialPatchAdapter:
         prepared: Any, inspector: PlanBoundSourceInspector, agent_client: AgentTurnClient,
         generation_request: AgentTurnRequest | None, response_format: AgentResponseFormat,
         post_response_admission: Callable[[ChatResponse], None], run_id: str,
+        submission_validator: Callable[[AgentTurnResponse], None] | None = None,
     ) -> GeneratedPatch:
-        report = self._evaluate_generated_behavior(generated, inspector)
-        if report["status"] == "passed":
-            return generated
+        seen_failures: dict[str, int] = {}
+        while True:
+            report = self._evaluate_generated_behavior(generated, inspector)
+            if report["status"] == "passed":
+                return generated
+            loop = self._receipt["patch_agent_loop"]
+            if self.enable_recovery_loop:
+                phases = [loop, *(row["execution"] for row in iter_patch_recovery_revisions(loop)
+                                  if isinstance(row.get("execution"), dict))]
+                source_facts = sorted({_sha256_json({key: item[key] for key in (
+                    "binding_id", "source_hash", "source_snapshot_sha256", "source_ref") if key in item})
+                    for phase in phases for item in phase.get("observation_trace", [])
+                    if item.get("admitted_to_model") or item.get("payload_admitted")})
+                observations = [{key: value for key, value in item.items() if key != "result_ref"}
+                                if isinstance(item, dict) else item for item in report["observations"]]
+                signature = _sha256_json({"code": report.get("materialized_code_identity"),
+                    "status": report["status"], "failure_owner": report["failure_owner"],
+                    "owner_binding_ids": report["owner_binding_ids"], "observations": observations,
+                    "verification_identity": report.get("verification_identity"), "source_facts": source_facts})
+                seen_failures[signature] = seen_failures.get(signature, 0) + 1
+                # One repeated failed submission still gets a chance to revise.
+                # A third identical code/failure/observation state is no progress.
+                if seen_failures[signature] >= 3:
+                    loop["behavior_repair_termination"] = {
+                        "status": "blocked", "code": "PATCH_BEHAVIOR_NO_PROGRESS",
+                        "failure_signature_sha256": signature,
+                        "same_state_observations": seen_failures[signature],
+                        "report_ref": deepcopy(report["report_ref"]),
+                        "remaining_model_turns": self.patch_agent_loop_policy.max_total_model_turns
+                            - self._prior_worker_budget["consumed_model_turns"] - self._receipt["model_call_count"],
+                    }
+                    raise LocalEntryError("PATCH_BEHAVIOR_NO_PROGRESS")
+            generated, generation_request = self._revise_behavior_failure(
+                generated=generated, report=report, generator=generator, prepared=prepared,
+                inspector=inspector, agent_client=agent_client, generation_request=generation_request,
+                response_format=response_format, post_response_admission=post_response_admission,
+                run_id=run_id, submission_validator=submission_validator,
+            )
+            if not self.enable_recovery_loop:
+                final = self._evaluate_generated_behavior(generated, inspector)
+                if final["status"] != "passed":
+                    raise LocalEntryError("PATCH_BEHAVIOR_CORRECTION_FAILED")
+                return generated
+
+    def _revise_behavior_failure(
+        self, *, generated: GeneratedPatch, report: Mapping[str, Any], generator: LLMExactPatchGenerator,
+        prepared: Any, inspector: PlanBoundSourceInspector, agent_client: AgentTurnClient,
+        generation_request: AgentTurnRequest | None, response_format: AgentResponseFormat,
+        post_response_admission: Callable[[ChatResponse], None], run_id: str,
+        submission_validator: Callable[[AgentTurnResponse], None] | None = None,
+    ) -> tuple[GeneratedPatch, AgentTurnRequest | None]:
         can_investigate_unknown = (
             self.enable_recovery_loop and report["status"] in {"behavior_failed", "needs_evidence"}
             and report["failure_owner"] == "unknown" and bool(report["observations"])
@@ -2205,18 +2440,24 @@ class LocalOllamaInitialPatchAdapter:
             **({"code_revision": deepcopy(report["code_revision"]),
                 "verification_execution_origin": report.get("execution_origin", "unknown")}
                if report.get("code_revision") is not None else {}),
+            **({"working_code_view": deepcopy(report["working_code_view"]),
+                "working_code_view_provenance": deepcopy(report["working_code_view_provenance"])}
+               if report.get("working_code_view") is not None else {}),
         }
         loop = self._receipt["patch_agent_loop"]
         if self.enable_recovery_loop:
-            loop["recovery_capacity_at_failure"] = self._failure_capacity(inspector, feedback, generation_request)
+            loop["recovery_capacity_at_failure"] = self._failure_capacity(
+                inspector, feedback, generation_request, previous_response=generated.raw_text)
             self._emit("local_patch_failure_recovery_capacity_checked")
-        feedback_bytes = len(_patch_agent_context_json(feedback).encode("utf-8"))
+        feedback_bytes = (self._revision_payload_bytes(generated.raw_text, feedback, generation_request)
+                          if self.enable_recovery_loop else len(_patch_agent_context_json(feedback).encode("utf-8")))
         _, source_bytes = self._recovery_observation_usage()
-        combined_bytes = source_bytes + self._recovery_observation_bytes + feedback_bytes
+        combined_bytes = self._prior_worker_budget["consumed_observation_bytes"] + source_bytes + self._recovery_observation_bytes + feedback_bytes
         loop["behavior_feedback_budget"] = {
             "feedback_utf8_bytes": feedback_bytes,
             "source_observation_utf8_bytes": source_bytes,
             "prior_feedback_utf8_bytes": self._recovery_observation_bytes,
+            "prior_worker_observation_utf8_bytes": self._prior_worker_budget["consumed_observation_bytes"],
             "combined_utf8_bytes": combined_bytes,
             "limit": self.patch_agent_loop_policy.max_observation_bytes,
             "admitted": combined_bytes <= self.patch_agent_loop_policy.max_observation_bytes,
@@ -2225,29 +2466,36 @@ class LocalOllamaInitialPatchAdapter:
         if combined_bytes > self.patch_agent_loop_policy.max_observation_bytes:
             raise LocalEntryError("PATCH_BEHAVIOR_OBSERVATION_BUDGET_EXHAUSTED")
         previous = self._receipt["model_response"]
+        phases = [loop, *(row["execution"] for row in iter_patch_recovery_revisions(loop)
+                          if isinstance(row.get("execution"), dict))]
         correction_state = {
             "status": "running", "attempt_count": 1, "validator": feedback,
             "previous_response_sha256": previous["output_sha256"], "response": None,
             "context_reused_from_loop": True,
-            "source_observation_sha256s": [item["observation_sha256"] for item in loop["observation_trace"]],
+            "source_observation_sha256s": [item["observation_sha256"] for phase in phases
+                                          for item in phase.get("observation_trace", [])],
+            "feedback_budget": deepcopy(loop["behavior_feedback_budget"]),
+            **({"recovery_capacity_at_failure": deepcopy(loop["recovery_capacity_at_failure"])}
+               if self.enable_recovery_loop else {}),
         }
         loop["behavior_correction"] = correction_state
         post_response_admission(ChatResponse(content=generated.raw_text, model=generated.model))
         inspector.validate_snapshot()
         if self.enable_recovery_loop:
-            corrected_response, _ = self._run_recovery_revision(
+            correction_index = 1 + sum(row.get("message_type") == "patch_behavior_correction"
+                                       for row in iter_patch_recovery_revisions(loop))
+            corrected_response, generation_request = self._run_recovery_revision(
                 previous_response=generated.raw_text, feedback=feedback,
                 message_type="patch_behavior_correction", generation_request=generation_request,
                 inspector=inspector, agent_client=agent_client, response_format=response_format,
-                correction_state=correction_state, run_id=run_id, response_label="behavior-correction-001",
+                correction_state=correction_state, run_id=run_id,
+                response_label=f"behavior-correction-{correction_index:03d}",
+                submission_validator=submission_validator,
             )
             revised = generator.materialize_prepared_native(
                 prepared, corrected_response, post_response_admission=post_response_admission,
             )
-            final = self._evaluate_generated_behavior(revised, inspector)
-            if final["status"] != "passed":
-                raise LocalEntryError("PATCH_BEHAVIOR_CORRECTION_FAILED")
-            return revised
+            return revised, generation_request
         self._consume_correction_call()
         self._emit("local_patch_behavior_correction_started")
         prior_request = deepcopy(generation_request)
@@ -2296,10 +2544,7 @@ class LocalOllamaInitialPatchAdapter:
             prepared, corrected_response, post_response_admission=post_response_admission,
         )
         inspector.validate_snapshot()
-        final = self._evaluate_generated_behavior(revised, inspector)
-        if final["status"] != "passed":
-            raise LocalEntryError("PATCH_BEHAVIOR_CORRECTION_FAILED")
-        return revised
+        return revised, generation_request
 
     def _read_feature_spec(self, state: Mapping[str, Any]) -> dict[str, Any]:
         artifacts = state.get("artifacts")

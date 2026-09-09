@@ -106,16 +106,31 @@ def test_new_plan_keeps_exhausted_reads_and_consumed_observation_bytes(
     new_loop = second["factory_receipt"]["patch_agent_loop"]
     assert new_loop["policy"]["max_tool_rounds"] == 0
     assert new_loop["tool_rounds_used"] == 0
-    # Independently count the exact F1/F2 objects actually carried on the wire,
-    # rather than accepting the transition's own consumption claim.
-    feedback_by_type = {}
+    # Independently count complete newly-added Ck/Fk messages from the wire,
+    # including the assistant code and the user envelope, not only Fk's body.
+    added_by_type = {}
     for _, payload in handler.chat_requests:
-        for _, value in _message_jsons(payload):
-            if value.get("message_type") in {"patch_repair_context", "patch_behavior_correction"}:
-                feedback_by_type.setdefault(value["message_type"], value["validator_feedback"])
-    assert set(feedback_by_type) == {"patch_repair_context", "patch_behavior_correction"}
+        for position, message in enumerate(payload["messages"]):
+            try:
+                value = json.loads(message.get("content") or "null")
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(value, dict):
+                continue
+            kind = value.get("message_type")
+            if kind not in {"patch_repair_context", "patch_behavior_correction"} or kind in added_by_type:
+                continue
+            additions = []
+            if "previous_response_ref" not in value:
+                previous = payload["messages"][position - 1]
+                assert previous["role"] == "assistant"
+                additions.append({"role": "assistant", "content": previous["content"]})
+            additions.append({"role": message["role"], "content": value})
+            added_by_type[kind] = additions
+    assert set(added_by_type) == {"patch_repair_context", "patch_behavior_correction"}
     feedback_bytes = sum(len(_patch_agent_context_json(value).encode("utf-8"))
-        for value in feedback_by_type.values())
+        for value in added_by_type.values())
+    assert old_loop["recovery_observation_bytes"] == feedback_bytes
     source_bytes = old_loop["total_observation_bytes"] + recovery["total_observation_bytes"]
     expected_bytes = case.config["policy"]["max_observation_bytes"] - source_bytes - feedback_bytes
     assert new_loop["policy"]["max_observation_bytes"] == expected_bytes

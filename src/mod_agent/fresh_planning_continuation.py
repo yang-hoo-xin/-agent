@@ -2969,7 +2969,7 @@ class _PatchUpstreamExecution:
         _bind_patch_attempt_recorder(factory, self.record)
 
     def after_plan(self, state):
-        """Rebuild from new exact bindings, without inheriting an old approval or map."""
+        """Continue an explicitly assessed Plan within the same shared budget."""
         if state.get("blockers") or not state["runtime_summary"].get("patch_upstream_return"):
             return state
         from copy import deepcopy
@@ -2984,8 +2984,23 @@ class _PatchUpstreamExecution:
                 "message": "No further upstream cycle or model call is available in this invocation."})
             return next_state
         previous_request = self.request
+        assessment = state["runtime_summary"].get("planning_upstream_assessment") or {}
+        retain_plan = assessment.get("decision") == "retain_current_plan"
+        if retain_plan and (
+                assessment.get("implementation_plan") != {
+                    "path": previous_request.implementation_plan_ref.path,
+                    "artifact_hash": previous_request.implementation_plan_ref.artifact_hash,
+                }
+                or any(state["artifacts"].get(kind) != ref["path"]
+                       or state["artifact_hashes"].get(kind) != ref["artifact_hash"]
+                       for kind, ref in self.selection(previous_request).items())
+                or assessment.get("repair_plan_hash") != state["artifact_hashes"].get("repair_plan")):
+            raise PatchContinuationError("PATCH_UPSTREAM_RETAIN_PLAN_IDENTITY_CHANGED", "upstream_admission",
+                "Retaining the Plan requires the exact assessed Feature, Evidence and Plan references.")
+        retained_request = self.factory.retained_worker_request() if retain_plan else None
+        previous_patch_calls = self.factory.patch_attempt_receipt()["model_call_count"]
         self.request = prepare_replanned_patch_input(prior_request=previous_request, state=state,
-            attempt_id="replanned_" + _canonical_sha256(self.initial_selection)[:24])
+            attempt_id=("retained_" if retain_plan else "replanned_") + _canonical_sha256(self.initial_selection)[:24])
         self.request = replace(self.request, worker_configuration_ref=previous_request.worker_configuration_ref,
             worker_profile_sha256=previous_request.worker_profile_sha256,
             patch_upstream_configuration_ref=previous_request.patch_upstream_configuration_ref)
@@ -3002,40 +3017,52 @@ class _PatchUpstreamExecution:
         consumed_observation_bytes = consumed_source_bytes + self.factory._recovery_observation_bytes
         remaining_reads = old_policy.max_tool_rounds - consumed_reads
         remaining_bytes = old_policy.max_observation_bytes - consumed_observation_bytes
-        if min(remaining_reads, remaining_bytes) < 0 or (remaining_reads == 0 and old_policy.require_source_inspection):
+        if min(remaining_reads, remaining_bytes) < 0 or (
+                not retain_plan and remaining_reads == 0 and old_policy.require_source_inspection):
             raise PatchContinuationError("PATCH_UPSTREAM_CONTINUATION_BUDGET_EXHAUSTED", "model_admission",
                 "The original observation policy leaves no legal allowance for the next worker.")
         self.factory = self.configuration.make_replanned_adapter(self.request, self.allocation)
-        self.factory.patch_agent_loop_policy = replace(self.factory.patch_agent_loop_policy,
-            max_tool_rounds=remaining_reads, max_observation_bytes=remaining_bytes)
+        if retain_plan:
+            self.factory.patch_agent_loop_policy = replace(self.factory.patch_agent_loop_policy,
+                max_total_model_turns=previous_patch_calls + self.allocation,
+                max_tool_rounds=old_policy.max_tool_rounds, max_observation_bytes=old_policy.max_observation_bytes)
+            self.factory.bind_retained_worker_request(retained_request,
+                consumed_model_turns=previous_patch_calls, consumed_tool_rounds=consumed_reads,
+                consumed_observation_bytes=consumed_observation_bytes, planning_rationale=assessment["rationale"])
+        else:
+            self.factory.patch_agent_loop_policy = replace(self.factory.patch_agent_loop_policy,
+                max_tool_rounds=remaining_reads, max_observation_bytes=remaining_bytes)
         observation_budget = {"maximum_reads": old_policy.max_tool_rounds,
             "consumed_reads": consumed_reads, "remaining_reads": remaining_reads,
             "maximum_bytes": old_policy.max_observation_bytes, "consumed_bytes": consumed_observation_bytes,
             "source_bytes": consumed_source_bytes,
             "feedback_bytes": consumed_observation_bytes - consumed_source_bytes,
             "remaining_bytes": remaining_bytes}
-        self.factory._upstream_continuation_context = {
-            "failure_context_role": "diagnostic_history_not_current_plan_authority",
-            "prior_plan": _artifact_ref_dict(previous_request.implementation_plan_ref),
-            "repair_plan": repair_ref,
-            "previous_response": context["previous_response"],
-            "failure_report": context["failure_report"],
-            "failed_response_ref": context["failed_response_ref"],
-            "failure_report_ref": context["failure_report_ref"],
-            "approval_inherited": False}
+        if not retain_plan:
+            self.factory._upstream_continuation_context = {
+                "failure_context_role": "diagnostic_history_not_current_plan_authority",
+                "prior_plan": _artifact_ref_dict(previous_request.implementation_plan_ref),
+                "repair_plan": repair_ref,
+                "previous_response": context["previous_response"],
+                "failure_report": context["failure_report"],
+                "failed_response_ref": context["failed_response_ref"],
+                "failure_report_ref": context["failure_report_ref"],
+                "approval_inherited": False}
         self._attach(self.factory)
         self.replan_count += 1
-        # Old RepairPlan was an assessment. Its edit subset cannot govern the new Plan.
+        # The assessment RepairPlan is history; its empty edit subset cannot govern Patch.
         for kind in ("patch_proposal", "proposal_review", "dry_run_result", "repair_plan"):
             next_state["artifacts"].pop(kind, None)
             next_state["artifact_hashes"].pop(kind, None)
         next_state["approvals"] = {}
-        next_state["run_id"] = state["run_id"] + "_replanned"
+        next_state["run_id"] = state["run_id"] + ("_retained_plan" if retain_plan else "_replanned")
         next_state["runtime_summary"].pop("patch_upstream_return", None)
         next_state["runtime_summary"]["replanned_patch_lineage"] = {
             "repair_plan": repair_ref, "prior_plan": _artifact_ref_dict(previous_request.implementation_plan_ref),
             "failed_response_ref": context["failed_response_ref"], "failure_report_ref": context["failure_report_ref"],
-            "approval_inherited": False}
+            "approval_inherited": False,
+            **({"plan_retained": True, "planning_rationale": assessment["rationale"],
+                "planning_trace_refs": assessment["trace_refs"]} if retain_plan else {})}
         self.record({"phase": "replanned_patch_prepared", "initial_selected_artifacts": self.initial_selection,
             "selected_artifacts": self.selection(self.request), "replanned_patch_lineage": next_state["runtime_summary"]["replanned_patch_lineage"],
             "effective_worker_model_allowance": self.allocation, "failure": None,

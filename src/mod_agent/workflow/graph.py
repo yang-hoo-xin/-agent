@@ -1090,6 +1090,8 @@ def build_graph(
                 planning_target_selection_factory=(
                     planning_target_selection_factory
                 ),
+                patch_continuation_mode=(patch_replanning_context.request
+                    if patch_replanning_context is not None else validated_patch_continuation_mode),
             ), patch_replanning_context),
         ),
     )
@@ -1867,6 +1869,7 @@ def _run_create_implementation_plan(
     use_store_result: bool = False,
     planning_continuation_mode: PlanningContinuationInputV1 | None = None,
     planning_target_selection_factory: PlanningTargetSelectionFactory | None = None,
+    patch_continuation_mode: PatchContinuationInputV1 | None = None,
 ) -> ModAgentState:
     feature_spec = _feature_spec_from_payload(
         _read_artifact_data(state, artifact_store, "feature_spec")
@@ -1876,16 +1879,27 @@ def _run_create_implementation_plan(
         planning_target_selection_factory, ModelPlanningTargetSelector
     )
     prior_feedback = None
+    prior_assessment = None
+    assessment_context = None
     if state["runtime_summary"].get("patch_upstream_return") and isinstance(
             planning_target_selection_factory, ModelPlanningTargetSelector):
         repair = artifact_store.semantic_read_immutable(_artifact_ref_from_state(state, "repair_plan"))["data"]
         upstream = repair["repair_context"]["upstream_request"]
         prior_feedback = planning_target_selection_factory.semantic_feedback
+        prior_assessment = planning_target_selection_factory.upstream_assessment
         planning_target_selection_factory.semantic_feedback = tuple(dict.fromkeys((
             *prior_feedback, *upstream["preserved_plan_boundaries"], upstream["reason"],
             json.dumps({"observed_failure": repair["failure_findings"], "failure_report_ref": upstream["failure_report_ref"],
                 "recommendation_is_not_observation": True}, ensure_ascii=False, sort_keys=True))))
     try:
+        if prior_feedback is not None and patch_continuation_mode is not None:
+            from src.mod_agent.repair.upstream import prepare_patch_upstream_assessment
+            try:
+                assessment_context = prepare_patch_upstream_assessment(
+                    request=patch_continuation_mode, state=state, artifact_store=artifact_store)
+            except PatchContinuationError as exc:
+                raise PlanningTargetSelectionError(exc.code, exc.reason) from exc
+            planning_target_selection_factory.upstream_assessment = copy.deepcopy(assessment_context)
         if planning_continuation_mode is not None and isinstance(
             planning_target_selection_factory, ModelPlanningTargetSelector
         ):
@@ -1904,6 +1918,33 @@ def _run_create_implementation_plan(
             and planning_target_selection_factory is not None
             else None
         )
+        if (isinstance(planning_target_selection_factory, ModelPlanningTargetSelector)
+                and planning_target_selection_factory.selection_result.get("decision") == "retain_current_plan"):
+            if assessment_context is None or assessment_context["retain_current_plan_allowed"] is not True:
+                raise PlanningTargetSelectionError("PLANNING_MODEL_RETAIN_PLAN_NOT_ADMITTED",
+                    "The current Graph does not own an unchanged Plan retention assessment.")
+            try:
+                current_assessment = prepare_patch_upstream_assessment(
+                    request=patch_continuation_mode, state=state, artifact_store=artifact_store)
+            except PatchContinuationError as exc:
+                raise PlanningTargetSelectionError(exc.code, exc.reason) from exc
+            if current_assessment != assessment_context:
+                raise PlanningTargetSelectionError("PLANNING_MODEL_RETAIN_PLAN_CONTEXT_CHANGED",
+                    "The Plan dependencies or checked failure changed during assessment.")
+            next_state = _copy_state(state)
+            next_state["current_stage"] = "implementation_plan"
+            next_state["approvals"] = {}
+            next_state["runtime_summary"]["planning_upstream_assessment"] = {
+                **planning_target_selection_factory.selection_result,
+                "implementation_plan": {
+                    "path": state["artifacts"]["implementation_plan"],
+                    "artifact_hash": state["artifact_hashes"]["implementation_plan"],
+                },
+                "repair_plan_hash": assessment_context["repair_plan_hash"],
+                "trace_refs": planning_target_selection_factory.planning_trace_refs(),
+                "approval_inherited": False,
+            }
+            return next_state
         implementation = ImplementationPlanner().build(
             feature_spec=feature_spec,
             evidence_pack=evidence_pack,
@@ -1933,6 +1974,7 @@ def _run_create_implementation_plan(
     finally:
         if prior_feedback is not None:
             planning_target_selection_factory.semantic_feedback = prior_feedback
+            planning_target_selection_factory.upstream_assessment = prior_assessment
     if planning_continuation_mode is not None:
         preflight_planning_continuation(
             planning_continuation_mode,
@@ -2055,6 +2097,8 @@ def _valid_patch_agent_loop_receipt(
     *,
     model_call_count: int,
 ) -> bool:
+    from src.mod_agent.proposal.patch_agent_loop import iter_patch_recovery_revisions
+
     if not isinstance(value, Mapping):
         return False
     usage = value.get("usage_by_turn")
@@ -2068,15 +2112,50 @@ def _valid_patch_agent_loop_receipt(
     read_limit = policy.get("max_tool_rounds", 3)
     require_read = policy.get("require_source_inspection", True)
     reuse_enabled = policy.get("reuse_covered_source_observations", False)
-    if (type(read_limit) is not int or read_limit < 1 or type(require_read) is not bool
+    if (type(read_limit) is not int or read_limit < 0 or type(require_read) is not bool
+            or (require_read and read_limit == 0)
             or type(reuse_enabled) is not bool):
         return False
+    origin = value.get("prior_worker_budget", {
+        "consumed_model_turns": 0, "consumed_tool_rounds": 0, "consumed_observation_bytes": 0,
+    })
+    if (not isinstance(origin, Mapping) or set(origin) != {
+            "consumed_model_turns", "consumed_tool_rounds", "consumed_observation_bytes"}
+            or any(type(number) is not int or number < 0 for number in origin.values())):
+        return False
+    if "prior_worker_budget" in value and "recovery_revisions" not in value:
+        return False
+    try:
+        corrections = iter_patch_recovery_revisions(value)
+    except ValueError:
+        return False
+    if "recovery_revisions" in value:
+        latest = {}
+        for index, correction in enumerate(corrections, 1):
+            kind = correction.get("message_type")
+            if (type(correction.get("revision_index")) is not int or correction["revision_index"] != index
+                    or kind not in {"patch_validator_correction", "patch_behavior_correction"}):
+                return False
+            latest[kind.removeprefix("patch_")] = correction
+        if any(value.get(name) != latest.get(name) for name in ("validator_correction", "behavior_correction")):
+            return False
+        phases = [value, *(item.get("execution") for item in corrections)]
+        extra_bytes = value.get("recovery_observation_bytes")
+        byte_limit = policy.get("max_observation_bytes", 32_768)
+        model_limit = policy.get("max_total_model_turns", 5)
+        if (type(extra_bytes) is not int or extra_bytes < 0
+                or type(byte_limit) is not int or byte_limit < 0
+                or type(model_limit) is not int or not 1 <= model_limit <= 5
+                or type(model_call_count) is not int or model_call_count < 1
+                or model_call_count + origin["consumed_model_turns"] > model_limit
+                or any(not isinstance(phase, Mapping) or type(phase.get("total_observation_bytes")) is not int
+                    or phase["total_observation_bytes"] < 0 for phase in phases)
+                or origin["consumed_observation_bytes"] + extra_bytes
+                    + sum(phase["total_observation_bytes"] for phase in phases) > byte_limit):
+            return False
     recovery_reads = 0
     correction_calls = 0
-    for key in ("validator_correction", "behavior_correction"):
-        correction = value.get(key)
-        if correction is None:
-            continue
+    for correction in corrections:
         if not (
             isinstance(correction, Mapping)
             and correction.get("status") == "completed"
@@ -2092,6 +2171,13 @@ def _valid_patch_agent_loop_receipt(
         execution = correction.get("execution")
         if execution is not None:
             if not isinstance(execution, Mapping):
+                return False
+            if "recovery_revisions" in value and (
+                    execution.get("status") != "completed" or execution.get("model_turns_used") != count
+                    or not isinstance(execution.get("usage_by_turn"), list)
+                    or len(execution["usage_by_turn"]) != count
+                    or any(not isinstance(item, Mapping) or item.get("admitted_to_model") is not True
+                        for item in execution.get("observation_trace", []))):
                 return False
             reads = execution.get("tool_rounds_used")
             if not _valid_patch_read_accounting(execution, reuse_enabled=reuse_enabled):
@@ -2114,8 +2200,8 @@ def _valid_patch_agent_loop_receipt(
         and isinstance(usage, list)
         and len(usage) == loop_model_turns
         and type(tool_rounds) is int
-        and (1 if require_read else 0) <= tool_rounds
-        and tool_rounds + recovery_reads <= read_limit
+        and (1 if require_read else 0) <= tool_rounds + origin["consumed_tool_rounds"]
+        and origin["consumed_tool_rounds"] + tool_rounds + recovery_reads <= read_limit
         and isinstance(observations, list)
         and _valid_patch_read_accounting(value, reuse_enabled=reuse_enabled)
         and all(
