@@ -2,6 +2,22 @@
 
 Base: `7faf3a32c44606b166549638d94b35758d7e6b90`.
 
+Current acceptance: both newly completed owned Repair runs have now been sent
+and verified in Cloud: **42 observations, six generations and three scores**.
+[Paging](https://us.cloud.langfuse.com/project/cmtr5q7ae024iad0im785u4xl/traces/b707f8d386fe1284627765c3573cc205)
+records 7/7; [nested snapshot](https://us.cloud.langfuse.com/project/cmtr5q7ae024iad0im785u4xl/traces/498784a38297d0b40c55d67d3b1e7f5e)
+retains the 2/4 failure (WARNING, score 0.5) and later 4/4 (score 1.0).
+Original IDs, parents, types, UTC instants at Cloud millisecond precision,
+native levels/status messages and score identities/values matched on readback.
+Each request was sent once; immediate empty reads were followed by read-only
+reconciliation after asynchronous ingestion, without repeated POSTs.
+There were two OTLP POSTs and three score POSTs, no new model calls for export,
+and no source, prompt/reply body, local path or GTFO disclosure. These were
+runtime observations captured locally in frozen `a8b8971`, mapped/exported
+afterward; automatic live export at execution time is not claimed.
+The definitive export receipt is local
+`scratch/langfuse_cloud_diagnosis_20260909/actual-preview/completion.json`.
+
 The user requested direct use of Cloud tracing and useful journal capabilities
 in Langfuse. The Cloud remains a query/evaluation projection. Local journals and
 Artifacts retain source bytes, approval authority, recovery inputs and replay.
@@ -277,3 +293,29 @@ The local preview root is
 audit locators and is explicitly excluded from any outbound payload. No preview
 was sent, no new model call was made and no verification was rerun during this
 acceptance.
+
+## Provider request-gate diagnostics
+
+The observed pre-send context rejection previously left only an exception type
+in the first finished request span. `_recording_agent_client` now selects the
+exact observed gate classification and its four measured/configured integer
+fields before that span closes. It does not transmit exception text, body or
+arbitrary provider diagnostics, and it does not add a generation when transport
+never began. The original exception, budget debit and provider gate are unchanged.
+This applies prospectively; old `a8b8971` spans were not retroactively augmented.
+
+The original 13,710-byte proxy plus 4,096 output-budget rejection was reproduced
+offline: one reservation, one failed request span, zero sender calls and zero
+generations. The missing-diagnostic regression first failed; nine focused tests
+then passed (1.21s), followed by nine selected mapper/query checks (0.98s).
+The query also preserves raw Cloud `startTime` and `endTime` as `start_time` and
+`end_time`, enabling the actual UTC readback above without inventing timestamps.
+
+Final integration of that producer change and the single-process score adapter:
+
+```powershell
+python -B -m pytest tests/unit/test_patch_provider_gate_trace.py tests/unit/test_patch_live_verification_scores.py tests/unit/test_langfuse_single_process_receipt.py -q --tb=short -n 2 --dist=loadfile -o cache_dir="$env:TEMP/lf-final-cache" --basetemp="$env:TEMP/lf-final-$PID"
+```
+
+**60 passed, 4.98s**, existing main Python 3.10.20. These overlap the earlier
+engineering selections; they are not additional independent model tasks.

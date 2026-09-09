@@ -1676,7 +1676,32 @@ class LocalOllamaInitialPatchAdapter:
                         record["model_request_observation_id"] = call_observation.observation_id
                     with observe_transport(call_observation.transport_started if call_observation else None,
                             call_observation.update if call_observation else None):
-                        response = client.complete_turn(request)
+                        try:
+                            response = client.complete_turn(request)
+                        except Exception as exc:
+                            # Select only the observed local gate facts before the span finishes.
+                            # Telemetry must neither expose arbitrary diagnostics nor replace the error.
+                            if call_observation is not None:
+                                try:
+                                    diagnostic = getattr(exc, "diagnostic", None)
+                                    if (isinstance(diagnostic, Mapping)
+                                            and diagnostic.get("failure_boundary") == "provider_request_gate"
+                                            and diagnostic.get("failure_classification") == "provider_request_context_budget_exceeded"):
+                                        facts = {"failure_boundary": "provider_request_gate",
+                                                 "failure_classification": "provider_request_context_budget_exceeded"}
+                                        admission = diagnostic.get("context_admission")
+                                        if (isinstance(admission, Mapping)
+                                                and admission.get("mode") == "provider_body_utf8_proxy_plus_output_budget_v1"):
+                                            facts["context_admission_mode"] = admission["mode"]
+                                            for key in ("provider_body_utf8_bytes", "configured_num_ctx",
+                                                        "num_predict", "conservative_required_context"):
+                                                value = admission.get(key)
+                                                if type(value) is int and value >= 0:
+                                                    facts[key] = value
+                                        call_observation.update(**facts)
+                                except Exception:
+                                    pass
+                            raise
                     if call_observation is not None:
                         measured = (response.provider_diagnostic or {}).get("measured_usage")
                         call_observation.record_response(usage=measured, usage_available=measured is not None,

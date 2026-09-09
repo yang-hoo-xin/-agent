@@ -40,3 +40,9 @@ python -X utf8 -B -m pytest tests/unit/test_patch_submission_cli.py::test_format
 ```
 
 这些工程结果不替代新模型验收；后续分页与快照使用新的固定源码/实例，原失败完整保留。FirstShot的第二层输入表示门槛继续作为明确未完成项。
+
+## 后续真实验收结果
+
+冻结 `a8b89716976f87224f31e350ebd8db494f9800a6` 的一次验收已完成：分页2次实际模型请求、原7/7；嵌套快照4次请求、首份新输出2/4，同worker消费本次失败后修订为4/4。两者通过原Review和无写入Dry-run，停在精确差异批准之前；没有Apply、正式产品Build或游戏Runtime。分页仍保留旧预留1次，逻辑累计3/5；快照使用4/5，没有强迫花完额度。
+
+完整新输入、两次真实运行及三份矩阵的证据只在输出根 [acceptance-results.md](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/repair_actual_native_002/acceptance-results.md) 记录。任务是既有开发回归和人工给定Plan的修复，不作为独立新题或自然语言到Runtime成绩。本次快照实际覆盖一次新的行为失败后自动修订，不扩张成连续两轮以上失败的实测结论。FirstShot仍阻断，独立题仍只准备。

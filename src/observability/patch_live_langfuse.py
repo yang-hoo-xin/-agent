@@ -48,8 +48,12 @@ _METADATA_HASHES = frozenset({"request_sha256", "response_sha256", "observation_
     "behavior_report_sha256", "output_code_sha256", "output_sha256", "generated_changes_sha256", "baseline_sha256",
     "response_content_sha256", "source_snapshot_sha256", "encoded_payload_sha256", "arguments_sha256", "verification_matrix_sha256"})
 _IDENTITY_ATTRIBUTES = frozenset({"source_observation_id", "binding_id", "provider_response_id"})
+_GATE_LABELS = {"failure_boundary": "provider_request_gate",
+    "failure_classification": "provider_request_context_budget_exceeded",
+    "context_admission_mode": "provider_body_utf8_proxy_plus_output_budget_v1"}
+_GATE_NUMBERS = frozenset({"provider_body_utf8_bytes", "configured_num_ctx", "num_predict", "conservative_required_context"})
 ALLOWED_ATTRIBUTE_KEYS = _METADATA_LABELS | _METADATA_NUMBERS | _METADATA_HASHES | {
-    "model", "usage", "call_id", "tool_call_id", "artifact_refs", "consumed_tool_results", "tool_call_ids"} | _IDENTITY_ATTRIBUTES
+    "model", "usage", "call_id", "tool_call_id", "artifact_refs", "consumed_tool_results", "tool_call_ids"} | _IDENTITY_ATTRIBUTES | frozenset(_GATE_LABELS) | _GATE_NUMBERS
 
 
 def _json(value: Any) -> bytes:
@@ -125,7 +129,11 @@ def _usage(attributes: Mapping) -> tuple[dict | None, str]:
 
 
 def _metadata(attributes: Mapping) -> dict:
-    result = {}
+    result = {key: value for key, value in _GATE_LABELS.items() if attributes.get(key) == value}
+    for key in _GATE_NUMBERS:
+        value = attributes.get(key)
+        if type(value) is int and value >= 0:
+            result[key] = value
     for key in _METADATA_LABELS:
         value = _machine_text(attributes.get(key))
         if key == "exception_type" and (value is None or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,95}", value)):
