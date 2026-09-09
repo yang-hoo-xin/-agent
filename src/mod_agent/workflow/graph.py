@@ -7,7 +7,7 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 from uuid import uuid4
@@ -456,6 +456,14 @@ def _validate_patch_continuation_graph_start(
         mode,
         artifact_store=artifact_store,
     )
+    if mode.saved_patch_selection is not None and (
+        admitted.saved_patch is None
+        or state.get("request_id") != admitted.saved_patch["request_id"]
+    ):
+        raise PatchContinuationError(
+            "SAVED_PATCH_LOGICAL_REQUEST_DRIFT", "patch_admission",
+            "Saved output continuation must retain its original logical request.",
+        )
     expected_artifacts = {
         "feature_spec": mode.feature_spec_ref.path,
         "evidence_pack": mode.evidence_pack_ref.path,
@@ -599,6 +607,22 @@ def build_graph(
         raise ValueError(
             "patch_continuation_mode must be PatchContinuationInputV1."
         )
+    saved_patch_reassembly = (
+        validated_patch_continuation_mode is not None
+        and validated_patch_continuation_mode.saved_patch_selection is not None
+    )
+    if saved_patch_reassembly and (
+        patch_change_factory is not None
+        or patch_upstream_request is not None
+        or enable_patch_upstream_replanning
+        or patch_replanning_context is not None
+        or validated_patch_continuation_mode.repair_parent_proposal_ref is not None
+        or type(patch_continuation_max_model_calls) is not int
+        or patch_continuation_max_model_calls != 0
+    ):
+        raise ValueError(
+            "Saved output reassembly requires zero new model calls and no model, Repair, or upstream adapter."
+        )
     active_controlled_modes = sum(
         value is not None
         for value in (
@@ -705,7 +729,7 @@ def build_graph(
         if (
             isinstance(patch_continuation_max_model_calls, bool)
             or not isinstance(patch_continuation_max_model_calls, int)
-            or not 1 <= patch_continuation_max_model_calls <= 5
+            or (not saved_patch_reassembly and not 1 <= patch_continuation_max_model_calls <= 5)
         ):
             raise ValueError(
                 "Patch continuation model-call budget must be between 1 and 5."
@@ -761,7 +785,9 @@ def build_graph(
                 "Patch continuation cannot receive unrelated workflow, "
                 "approval, Apply, Build, Runtime, or repair controls."
             )
-        if patch_upstream_request is None and (patch_change_factory is None or dry_run_factory is None):
+        if patch_upstream_request is None and (
+            (patch_change_factory is None and not saved_patch_reassembly) or dry_run_factory is None
+        ):
             raise ValueError(
                 "Patch continuation requires explicit Patch and no-write "
                 "Dry-run adapters."
@@ -1110,7 +1136,7 @@ def build_graph(
                 patch_change_factory=(patch_replanning_context.factory if patch_replanning_context is not None else patch_change_factory),
                 source_snippet_char_limit=(patch_replanning_context.source_snippet_char_limit
                     if patch_replanning_context is not None else (
-                        None if validated_product_execution_mode is not None
+                        None if validated_product_execution_mode is not None or saved_patch_reassembly
                         else proposal_source_snippet_char_limit)),
                 patch_continuation_mode=(patch_replanning_context.request if patch_replanning_context is not None else validated_patch_continuation_mode),
                 patch_continuation_attempt_recorder=(
@@ -1131,7 +1157,7 @@ def build_graph(
                 artifact_store,
                 domain_adapter_registry=effective_domain_registry,
                 domain_review_policy=domain_review_policy,
-                require_executable_patch=patch_change_factory is not None,
+                require_executable_patch=patch_change_factory is not None or saved_patch_reassembly,
                 proposal_critic=proposal_critic,
                 critic_requirement=critic_requirement,
                 proposal_review_context_factory=proposal_review_context_factory,
@@ -2455,6 +2481,22 @@ def _run_generate_patch_proposal(
     ) = None,
     patch_continuation_max_model_calls: int = 1,
 ) -> ModAgentState:
+    saved_patch = None
+    if patch_continuation_mode is not None and patch_continuation_mode.saved_patch_selection is not None:
+        # Re-admit the retained output at the node boundary, after START admission.
+        # No model factory or synthetic generation receipt participates here.
+        admitted = preflight_patch_continuation(patch_continuation_mode, artifact_store=artifact_store)
+        saved_patch = admitted.saved_patch
+        if (
+            saved_patch is None or patch_change_factory is not None
+            or patch_continuation_max_model_calls != 0
+            or patch_continuation_attempt_recorder is None
+            or state.get("request_id") != saved_patch["request_id"]
+        ):
+            raise PatchContinuationError(
+                "SAVED_PATCH_GRAPH_INPUT_INVALID", "patch_proposal",
+                "Saved output is not bound to this zero-model continuation.",
+            )
     if state["current_stage"] == "repair_plan" and "repair_plan" in state["artifacts"]:
         repair_plan = _read_artifact_data(state, artifact_store, "repair_plan")
         implementation = _read_artifact_data(
@@ -2520,7 +2562,9 @@ def _run_generate_patch_proposal(
     else:
         implementation = _read_artifact_data(state, artifact_store, "implementation_plan")
         evidence_pack = _read_artifact_data(state, artifact_store, "evidence_pack")
-        if patch_change_factory is not None:
+        if saved_patch is not None:
+            implementation = {**implementation, "proposed_changes": copy.deepcopy(saved_patch["changes"])}
+        elif patch_change_factory is not None:
             generated_changes = (
                 _run_patch_continuation_factory(
                     state,
@@ -2563,6 +2607,37 @@ def _run_generate_patch_proposal(
         if lineage is not None:
             proposal = replace(proposal, context_pack={**proposal.context_pack,
                 "repair_lineage": copy.deepcopy(lineage)})
+    if saved_patch is not None:
+        saved_lineage = {
+            key: copy.deepcopy(saved_patch[key])
+            for key in (
+                "source_attempt_ref", "response_ref", "historical_verification", "request_id",
+                "parent_run_id", "inherited_model_budget", "logical_budget", "source_snapshot_sha256",
+            )
+        }
+        saved_lineage.update(
+            source_proposal_ref=asdict(saved_patch["source_proposal_ref"]),
+            source_review_ref=asdict(saved_patch["source_review_ref"]),
+            model_calls_performed=0, verifier_executions_performed=0, approval_inherited=False,
+        )
+        proposal = replace(proposal, context_pack={**proposal.context_pack,
+            "saved_patch_lineage": saved_lineage})
+        # The existing registry permits these exact historical ancestors. Their
+        # immutable identity remains valid after this invocation moves latest.
+        upstream_refs.extend([
+            _artifact_ref_from_state(state, "feature_spec"),
+            saved_patch["source_proposal_ref"], saved_patch["source_review_ref"],
+        ])
+        patch_continuation_attempt_recorder({
+            "phase": "saved_patch_reassembled", "saved_patch_lineage": saved_lineage,
+            "model_call_count": 0, "proposal_admitted": False,
+            "generated_changes_sha256": hashlib.sha256(json.dumps(
+                saved_patch["changes"], ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest(),
+            "generated_change_count": len(saved_patch["changes"]),
+            "generated_against_snapshot_sha256": saved_patch["source_snapshot_sha256"],
+            "current_snapshot_sha256": saved_patch["source_snapshot_sha256"],
+        })
     artifact_ref = artifact_store.write(
         feature_id=proposal.feature_id,
         artifact_type="patch_proposal",

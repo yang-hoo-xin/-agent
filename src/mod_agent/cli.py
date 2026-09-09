@@ -307,6 +307,67 @@ def _read_patch_repair_inputs(path: str) -> dict[str, object]:
     return value
 
 
+def _reassemble_saved_patch_from_cli(args) -> int:
+    """Use the existing continuation owner without constructing any model adapter."""
+    started = time.perf_counter()
+    request = None
+    try:
+        if any(value is not None for value in (
+            args.ollama_base_url, args.ollama_model, args.ollama_context_window,
+            args.ollama_output_budget, args.ollama_timeout_seconds,
+            args.qualified_model_routing, args.patch_worker_config, args.patch_upstream_config,
+        )) or args.patch_agent_loop:
+            raise PatchContinuationError("PATCH_SAVED_MODEL_ARGUMENT_CONFLICT", "request",
+                "Saved Patch reassembly cannot accept model, worker or upstream execution arguments.")
+        request = PatchContinuationInputV1(
+            contract_version=PATCH_CONTINUATION_CONTRACT_VERSION,
+            artifact_store_root=args.artifact_root,
+            workspace_root=args.workspace_root,
+            feature_spec_ref=ArtifactRef(feature_id=args.feature_id, artifact_type="feature_spec",
+                path=args.feature_spec_path, artifact_hash=args.feature_spec_hash),
+            evidence_pack_ref=ArtifactRef(feature_id=args.feature_id, artifact_type="evidence_pack",
+                path=args.evidence_pack_path, artifact_hash=args.evidence_pack_hash),
+            implementation_plan_ref=ArtifactRef(feature_id=args.feature_id, artifact_type="implementation_plan",
+                path=args.implementation_plan_path, artifact_hash=args.implementation_plan_hash),
+            attempt_id=args.attempt_id,
+            saved_patch_selection=read_json_object(args.reassemble_saved_patch),
+        )
+        result = run_fresh_patch_continuation(
+            request, patch_change_factory=None,
+            dry_run_factory=make_exact_no_write_dry_run_factory(args.workspace_root),
+            max_model_calls=0,
+            execution_trace_configuration=_execution_trace_configuration(args),
+        )
+    except (PatchContinuationError, LocalEntryError, OSError, ValueError) as exc:
+        result = blocked_patch_continuation_result(
+            code=str(getattr(exc, "code", type(exc).__name__)),
+            stage=str(getattr(exc, "stage", "request")),
+            reason=str(getattr(exc, "reason", exc)),
+            duration_seconds=time.perf_counter() - started,
+            feature_id=args.feature_id,
+        )
+    payload = result.to_dict()
+    payload["generation_origin"] = "reused_saved_response"
+    payload["new_provider_sends"] = 0
+    exit_code = 0 if result.status == "terminal" else 1
+    if result.status == "terminal":
+        from src.mod_agent.reviewed_patch_continuation import review_run
+
+        view = review_run(artifact_store_root=args.artifact_root, workspace_root=args.workspace_root,
+            feature_id=args.feature_id, run_id=result.run_id)
+        payload["review"] = view
+        if view["status"] == "reviewable_diff":
+            payload.update(
+                approval_status="awaiting_exact_diff_approval",
+                unified_diff=view["unified_diff"], diff_hash=view["diff_hash"],
+            )
+        else:
+            payload["approval_status"] = "review_unavailable"
+            exit_code = 1
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), flush=True)
+    return exit_code
+
+
 def plan_request(
     description: str,
     *,
@@ -943,6 +1004,11 @@ def build_parser(
         "--repair-from-verification",
         help=("JSON containing source_attempt_ref and verification_result_ref; "
               "the product binds the current failed output and formal ancestry automatically."),
+    )
+    patch_repair_selection.add_argument(
+        "--reassemble-saved-patch",
+        help=("Exact source_attempt_ref and logical_budget_ref JSON for no-model "
+              "reassembly of a verified saved Patch through Review and Dry-run."),
     )
     patch_continuation_parser.add_argument(
         "--attempt-id", help="Stable attempt ID; requires --patch-worker-config and is mandatory for Repair.",
@@ -1816,6 +1882,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     if args.command == "continue-fresh-patch":
+        if args.reassemble_saved_patch is not None:
+            return _reassemble_saved_patch_from_cli(args)
         continuation_started = time.perf_counter()
         request: PatchContinuationInputV1 | None = None
         try:

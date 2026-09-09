@@ -133,6 +133,7 @@ class PatchContinuationInputV1:
     repair_verification_ref: Mapping[str, str] | None = None
     qualified_model_routing_ref: Mapping[str, str] | None = None
     patch_upstream_configuration_ref: Mapping[str, str] | None = None
+    saved_patch_selection: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.contract_version != PATCH_CONTINUATION_CONTRACT_VERSION:
@@ -243,6 +244,25 @@ class PatchContinuationInputV1:
                     raise PatchContinuationError("PATCH_REPAIR_BINDING_INPUT_INVALID", "request",
                         "Repair binding sources require exact absolute paths and lowercase SHA-256 values.")
                 object.__setattr__(self, name, dict(ref))
+        if self.saved_patch_selection is not None:
+            selection = self.saved_patch_selection
+            if (not isinstance(selection, Mapping)
+                    or set(selection) != {"source_attempt_ref", "logical_budget_ref"}
+                    or self.attempt_id is None
+                    or any(value is not None for value in (
+                        *recovery_fields, self.repair_source_attempt_ref, self.repair_verification_ref,
+                        self.worker_configuration_ref, self.worker_profile_sha256,
+                        self.qualified_model_routing_ref, self.patch_upstream_configuration_ref))):
+                raise PatchContinuationError("PATCH_SAVED_SELECTION_INVALID", "request",
+                    "Saved Patch reassembly requires its exact selection and attempt ID, without model or Repair inputs.")
+            for ref in selection.values():
+                if (not isinstance(ref, Mapping) or set(ref) != {"path", "sha256"}
+                        or type(ref.get("path")) is not str or not Path(ref["path"]).is_absolute()
+                        or not _is_sha256(ref.get("sha256"))):
+                    raise PatchContinuationError("PATCH_SAVED_SELECTION_INVALID", "request",
+                        "Saved Patch inputs require exact absolute paths and SHA-256 values.")
+            object.__setattr__(self, "saved_patch_selection",
+                {key: dict(value) for key, value in selection.items()})
 
 
 @dataclass(frozen=True)
@@ -380,6 +400,7 @@ class _AdmittedPatchInputs:
     source_tree_snapshot: tuple[tuple[str, str], ...]
     latest_observations: dict[str, dict[str, Any]]
     repair_context: dict[str, Any] | None = None
+    saved_patch: dict[str, Any] | None = None
 
 
 PatchContinuationFactory = Callable[
@@ -519,7 +540,11 @@ def _artifact_write_projection(
     return {field: raw.get(field) for field in fields}
 
 
-def _resolve_roots(request: PlanningContinuationInputV1) -> tuple[Path, Path]:
+def _resolve_roots(
+    request: PlanningContinuationInputV1,
+    *,
+    allow_product_store_subdir: bool = False,
+) -> tuple[Path, Path]:
     try:
         artifact_root = Path(request.artifact_store_root).resolve(strict=True)
         workspace_root = Path(request.workspace_root).resolve(strict=True)
@@ -537,7 +562,7 @@ def _resolve_roots(request: PlanningContinuationInputV1) -> tuple[Path, Path]:
         )
     if (
         _same_path(artifact_root, workspace_root)
-        or _is_within(artifact_root, workspace_root)
+        or (_is_within(artifact_root, workspace_root) and not allow_product_store_subdir)
         or _is_within(workspace_root, artifact_root)
     ):
         raise PlanningContinuationError(
@@ -1220,7 +1245,9 @@ def preflight_patch_continuation(
     if request.patch_upstream_configuration_ref is not None:
         _read_hashed_repair_file(request.patch_upstream_configuration_ref)
     try:
-        artifact_root, workspace_root = _resolve_roots(request)  # type: ignore[arg-type]
+        artifact_root, workspace_root = _resolve_roots(
+            request, allow_product_store_subdir=request.saved_patch_selection is not None,
+        )  # type: ignore[arg-type]
     except PlanningContinuationError as exc:
         raise PatchContinuationError(
             exc.code.replace("PLANNING_", "PATCH_", 1),
@@ -1328,7 +1355,7 @@ def preflight_patch_continuation(
         evidence_pack=evidence_pack, implementation_plan=implementation_plan,
         workspace_root=workspace_root, source_tree_snapshot=source_tree_snapshot,
     ) if request.repair_parent_proposal_ref is not None else None
-    return _AdmittedPatchInputs(
+    admitted = _AdmittedPatchInputs(
         artifact_store=store,
         feature_spec=feature_spec,
         evidence_pack=evidence_pack,
@@ -1341,6 +1368,21 @@ def preflight_patch_continuation(
         },
         repair_context=repair_context,
     )
+    if request.saved_patch_selection is not None:
+        if any(_is_within(workspace_root / row["source_path"], artifact_root)
+               for row in source_validation["files"]):
+            raise PatchContinuationError("PATCH_SAVED_SOURCE_IN_STORE", "source_validation",
+                "Saved Patch target evidence must not resolve inside the ArtifactStore.")
+        from src.mod_agent.saved_patch_admission import admit_saved_patch
+
+        try:
+            admitted = replace(admitted, saved_patch=admit_saved_patch(request, admitted))
+        except PatchContinuationError:
+            raise
+        except (KeyError, TypeError, ValueError, OSError) as exc:
+            raise PatchContinuationError("PATCH_SAVED_ADMISSION_REJECTED", "saved_patch_admission",
+                "Saved source, verification or budget records failed exact admission.") from exc
+    return admitted
 
 
 def _read_hashed_repair_file(ref: Mapping[str, str] | None) -> bytes:
@@ -2013,6 +2055,24 @@ class PatchContinuationAttemptJournal:
                 key: value for key, value in admitted.repair_context.items()
                 if key not in {"previous_response", "failure_report", "failed_diff_intent"}
             }
+        if admitted.saved_patch is not None:
+            saved = admitted.saved_patch
+            self._document.update(
+                continuation_selection="saved_generated_patch_reassembly",
+                generation_origin="reused_saved_response",
+                parent_run_id=saved["parent_run_id"],
+                inherited_model_budget=saved["inherited_model_budget"],
+                logical_budget=saved["logical_budget"],
+                new_provider_sends=0,
+                new_compilations=0,
+                saved_patch={
+                    "source_attempt_ref": saved["source_attempt_ref"],
+                    "source_proposal_ref": _artifact_ref_dict(saved["source_proposal_ref"]),
+                    "source_review_ref": _artifact_ref_dict(saved["source_review_ref"]),
+                    "response_ref": saved["response_ref"],
+                    "historical_verification": saved["historical_verification"],
+                },
+            )
         self._write(exclusive=True)
 
     def record(self, event: Mapping[str, Any]) -> None:
@@ -2884,6 +2944,8 @@ def _proposal_source_snippet_char_limit(admitted: _AdmittedPatchInputs) -> int:
 
 def _patch_attempt_identity(request: PatchContinuationInputV1, max_model_calls: int) -> str:
     identity_request = asdict(request)
+    if request.saved_patch_selection is None:
+        identity_request.pop("saved_patch_selection")
     if request.patch_upstream_configuration_ref is None:
         identity_request.pop("patch_upstream_configuration_ref")
     if request.qualified_model_routing_ref is None:
@@ -2908,6 +2970,10 @@ def _attempt_receipt_projection(path: Path, document: Mapping[str, Any]) -> dict
         "generated_against_snapshot_sha256": document.get("generated_against_snapshot_sha256"),
         "current_snapshot_sha256": document.get("current_snapshot_sha256"),
         **({"execution_trace": document["execution_trace"]} if "execution_trace" in document else {}),
+        **({key: document[key] for key in (
+            "generation_origin", "saved_patch", "inherited_model_budget", "logical_budget",
+            "new_provider_sends", "new_compilations", "parent_run_id")}
+           if "saved_patch" in document else {}),
     }
 
 
@@ -3062,7 +3128,7 @@ class _PatchUpstreamExecution:
 
 def run_fresh_patch_continuation(
     request: PatchContinuationInputV1,
-    *, patch_change_factory: PatchContinuationFactory,
+    *, patch_change_factory: PatchContinuationFactory | None,
     dry_run_factory: PatchContinuationDryRunFactory,
     max_model_calls: int = 1,
     upstream_configuration: Any = None,
@@ -3073,6 +3139,13 @@ def run_fresh_patch_continuation(
     An interrupted attempt with no terminal result is stopped for recovery review:
     absence of a recorded response is not proof that the provider did not run.
     """
+    saved_mode = request.saved_patch_selection is not None
+    if saved_mode and (patch_change_factory is not None or max_model_calls != 0
+                       or isinstance(max_model_calls, bool) or upstream_configuration is not None):
+        return blocked_patch_continuation_result(
+            code="PATCH_SAVED_EXECUTION_MODE_CONFLICT", stage="request", duration_seconds=0.0,
+            reason="Saved Patch reassembly cannot receive a model factory, model allowance or upstream execution.",
+            feature_id=request.feature_spec_ref.feature_id)
     run_id = (
         "patch_continuation_" + hashlib.sha256(request.attempt_id.encode("utf-8")).hexdigest()
         if request.attempt_id is not None else f"patch_continuation_{uuid4().hex}"
@@ -3142,7 +3215,7 @@ def run_fresh_patch_continuation(
 def _run_fresh_patch_continuation_once(
     request: PatchContinuationInputV1,
     *,
-    patch_change_factory: PatchContinuationFactory,
+    patch_change_factory: PatchContinuationFactory | None,
     dry_run_factory: PatchContinuationDryRunFactory,
     max_model_calls: int = 1,
     run_id: str,
@@ -3159,7 +3232,8 @@ def _run_fresh_patch_continuation_once(
     if (
         isinstance(max_model_calls, bool)
         or not isinstance(max_model_calls, int)
-        or not 1 <= max_model_calls <= 5
+        or (max_model_calls != 0 if request.saved_patch_selection is not None
+            else not 1 <= max_model_calls <= 5)
     ):
         return blocked_patch_continuation_result(
             code="PATCH_CONTINUATION_MODEL_CALL_BUDGET_INVALID",
@@ -3187,6 +3261,8 @@ def _run_fresh_patch_continuation_once(
             implementation_plan_ref=reported_refs["implementation_plan"],
         )
 
+    if admitted.saved_patch is not None:
+        request_id = admitted.saved_patch["request_id"]
     journal = PatchContinuationAttemptJournal(
         artifact_root=admitted.artifact_store.root,
         run_id=run_id,

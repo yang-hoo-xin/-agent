@@ -136,6 +136,13 @@ def review_run(*, artifact_store_root: str, workspace_root: str, feature_id: str
               "query_model_calls": 0, "query_verifier_executions": 0, "product_source_writes_performed": False,
               "artifact_writes_performed": False, "approval_created": False, "apply_allowed": False,
               "product_execution_started": False, "review_is_historical_not_current_apply_approval": True}
+    if "saved_patch" in document:
+        result["saved_patch_reassembly"] = {
+            key: document.get(key) for key in (
+                "generation_origin", "saved_patch", "inherited_model_budget", "logical_budget",
+                "new_provider_sends", "new_compilations", "parent_run_id",
+            )
+        }
     try:
         terminal = _verified_terminal(document, feature_id, run_id)
         for kind, field in _ARTIFACT_FIELDS.items():
