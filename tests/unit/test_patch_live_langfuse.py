@@ -111,6 +111,47 @@ def test_explicit_zero_and_unknown_subtypes_are_not_confused():
     assert json.loads(attrs["langfuse.observation.usage_details"]) == {"input": 10, "output": 5}
 
 
+@pytest.mark.parametrize("business_status", ["behavior_failed", "needs_evidence", "infrastructure_failed", "identity_failed"])
+def test_completed_verifier_negative_result_is_visible_without_becoming_transport_error(business_status):
+    row = _row(kind="span", attributes={"verification_status": business_status, "execution_origin": "executed"})
+    row["name"] = "patch.verify"
+    payload = build_patch_live_otlp(row)
+    attrs = _attributes(payload)
+    assert attrs["langfuse.observation.level"] == "WARNING"
+    assert "verification_status=" + business_status in attrs["langfuse.observation.status_message"]
+    assert "not_task_acceptance" in attrs["langfuse.observation.status_message"]
+    assert _span(payload)["status"]["code"] == 1
+
+
+def test_transport_exception_remains_error_even_with_passed_verification_label():
+    row = _row(kind="span", status="failed", attributes={"verification_status": "passed", "exception_type": "ReadTimeout"})
+    row["name"] = "patch.verify"
+    payload = build_patch_live_otlp(row)
+    attrs = _attributes(payload)
+    assert attrs["langfuse.observation.level"] == "ERROR"
+    assert attrs["langfuse.observation.status_message"] == "operation_failed:ReadTimeout"
+    assert _span(payload)["status"]["code"] == 2
+
+
+@pytest.mark.parametrize("workflow_status", ["partial", "blocked", "failed"])
+def test_completed_root_with_negative_workflow_state_is_not_default_success(workflow_status):
+    payload = build_patch_live_otlp(_row(0, kind="span", attributes={"workflow_status": workflow_status}))
+    attrs = _attributes(payload)
+    assert attrs["langfuse.observation.level"] == "WARNING"
+    assert "workflow_status=" + workflow_status in attrs["langfuse.observation.status_message"]
+
+
+def test_generic_completed_operation_and_unproven_pass_do_not_claim_task_acceptance():
+    plain = _attributes(build_patch_live_otlp(_row(kind="span", attributes={})))
+    assert plain["langfuse.observation.status_message"] == "operation_completed;not_task_acceptance"
+    row = _row(kind="span", attributes={"verification_status": "passed", "execution_origin": "unknown"})
+    row["name"] = "patch.verify"
+    attrs = _attributes(build_patch_live_otlp(row))
+    assert attrs["langfuse.observation.level"] == "DEFAULT"
+    assert "execution_origin=unknown" in attrs["langfuse.observation.status_message"]
+    assert "not_task_acceptance" in attrs["langfuse.observation.status_message"]
+
+
 def test_payload_is_strict_metadata_only_and_filters_free_text_paths_and_secrets():
     row = _row(attributes={"model": "qwen3.8-max", "provider": "qwen_chat", "turn_index": 2,
         "request_sha256": "a"*64, "response_sha256": "b"*64, "byte_count": 42, "reused": False,

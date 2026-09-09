@@ -366,10 +366,13 @@ class LangfuseHttpTransport:
 
     def _request(self, method, path, *, params=None, payload=None):
         try:
+            headers = {"Content-Type": "application/json", "x-langfuse-ingestion-version": "4"}
+            if path == "/api/public/mcp":
+                headers["Accept"] = "application/json, text/event-stream"
             with httpx.Client(timeout=self.timeout_seconds, follow_redirects=False, trust_env=False,
                               auth=(self.public_key, self.secret_key)) as client:
                 response = client.request(method, self.base_url + path, params=params, json=payload,
-                    headers={"Content-Type": "application/json", "x-langfuse-ingestion-version": "4"})
+                    headers=headers)
             if not 200 <= response.status_code < 300:
                 raise PatchLangfuseError("LANGFUSE_HTTP_" + str(response.status_code))
             if len(response.content) > MAX_RESPONSE_BYTES:

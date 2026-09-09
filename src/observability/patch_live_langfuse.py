@@ -16,27 +16,37 @@ import time
 from collections import Counter, OrderedDict, deque
 from collections.abc import Mapping
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-from src.observability.patch_langfuse import LangfuseHttpTransport
+from src.observability.patch_langfuse import (
+    MAX_PAYLOAD_BYTES,
+    LangfuseHttpTransport,
+    _read_verified_json,
+    _verified_check_counts,
+)
 
-LIVE_MAPPING_VERSION = "patch_live_langfuse_metadata_v1"
+LIVE_MAPPING_VERSION = "patch_live_langfuse_metadata_v2"
 OTLP_ENDPOINT = "/api/public/otel/v1/traces"
+SCORE_ENDPOINT = "/api/public/scores"
+LIVE_BEHAVIOR_SCORE_NAME = "local_check_pass_fraction"
+VERIFIED_SCORE_BASIS = "report_binds_retained_code_and_exact_matrix_local_checks"
 _KINDS = frozenset({"span", "generation", "tool", "agent", "chain", "retriever", "guardrail", "evaluator", "embedding", "event"})
 _DIGEST = re.compile(r"(?:sha256:)?[a-f0-9]{64}\Z")
 _MACHINE_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}\Z")
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]{0,95}\Z")
 _METADATA_LABELS = frozenset({"provider", "response_origin", "tool_name", "source_kind", "status",
     "workflow_node", "workflow_status", "terminal_stage", "failure_code", "verification_status", "failure_owner", "execution_origin",
-    "admission_result", "result_code", "timing_scope", "validator", "exception_type"})
+    "admission_result", "result_code", "timing_scope", "validator", "exception_type", "score_basis"})
 _METADATA_NUMBERS = frozenset({"turn_index", "response_received", "response_complete", "http_status", "usage_available", "byte_count", "reused",
     "evaluation_index", "checks_run", "checks_failed", "transport_started", "request_bytes", "file_count",
     "proposal_admitted", "callback_invoked", "tool_dispatch_performed", "encoded_payload_bytes", "observation_queued",
     "model_consumption_proven", "read_cost", "prepared_before_dispatch", "dispatch_started", "request_registered",
-    "upstream_execution_performed", "exit_code", "timed_out", "process_index", "process_count"})
+    "upstream_execution_performed", "exit_code", "timed_out", "process_index", "process_count",
+    "score_eligible", "verification_executions"})
 _METADATA_HASHES = frozenset({"request_sha256", "response_sha256", "observation_sha256",
     "behavior_report_sha256", "output_code_sha256", "output_sha256", "generated_changes_sha256", "baseline_sha256",
-    "response_content_sha256", "source_snapshot_sha256", "encoded_payload_sha256", "arguments_sha256"})
+    "response_content_sha256", "source_snapshot_sha256", "encoded_payload_sha256", "arguments_sha256", "verification_matrix_sha256"})
 _IDENTITY_ATTRIBUTES = frozenset({"source_observation_id", "binding_id", "provider_response_id"})
 ALLOWED_ATTRIBUTE_KEYS = _METADATA_LABELS | _METADATA_NUMBERS | _METADATA_HASHES | {
     "model", "usage", "call_id", "tool_call_id", "artifact_refs", "consumed_tool_results", "tool_call_ids"} | _IDENTITY_ATTRIBUTES
@@ -179,6 +189,109 @@ def _metadata(attributes: Mapping) -> dict:
     return result
 
 
+def _native_status(row: Mapping, attributes: Mapping) -> tuple[str, str]:
+    """Expose business negatives while preserving the observation's execution status."""
+    if row["status"] == "failed":
+        exception = _metadata(attributes).get("exception_type")
+        return "ERROR", "operation_failed" + (":" + exception if exception else "")
+    if row["name"] == "patch.verify":
+        status = attributes.get("verification_status")
+        if status not in {"passed", "behavior_failed", "needs_evidence", "infrastructure_failed", "identity_failed"}:
+            status = "unknown"
+        origin = attributes.get("execution_origin")
+        if origin not in {"executed", "reused", "unknown", "incomplete"}:
+            origin = "unknown"
+        level = "WARNING" if status in {"behavior_failed", "needs_evidence", "infrastructure_failed", "identity_failed"} else "DEFAULT"
+        return level, f"verification_status={status};execution_origin={origin};not_task_acceptance"
+    workflow = attributes.get("workflow_status")
+    if workflow in {"partial", "blocked", "failed"}:
+        return "WARNING", f"workflow_status={workflow};operation_completed;not_task_acceptance"
+    return "DEFAULT", "operation_completed;not_task_acceptance"
+
+
+def verified_behavior_trace_attributes(report: Mapping, model_response: Mapping) -> dict:
+    """Read existing bound proof, returning only counts and hashes for new traces.
+
+    Reuses the historical importer's exact matrix checks without importing history.
+    Failure to prove a score is metadata, never a verifier/product exception.
+    """
+    unavailable = {"score_eligible": False, "score_basis": "not_emitted_missing_or_inconsistent_bound_verification"}
+    try:
+        if (not isinstance(report, Mapping) or not isinstance(model_response, Mapping)
+                or report.get("admission") != "accepted" or report.get("callback_invoked") is not True
+                or report.get("execution_origin") != "executed"
+                or report.get("status") not in {"passed", "behavior_failed"}):
+            return unavailable
+        response_hash = model_response.get("output_sha256")
+        if (not isinstance(response_hash, str) or not _DIGEST.fullmatch(response_hash)
+                or report.get("model_response_sha256") != response_hash):
+            return unavailable
+        response_path = Path(model_response["path"])
+        if response_path.stat().st_size > MAX_PAYLOAD_BYTES:
+            return unavailable
+        response_bytes = response_path.read_bytes()
+        if len(response_bytes) > MAX_PAYLOAD_BYTES or hashlib.sha256(response_bytes).hexdigest() != response_hash:
+            return unavailable
+        # This adapter supplies the historical reader's reference shape; that
+        # reader still rereads the bytes and independently verifies each hash.
+        retained_refs = {key: {**dict(report[key]), "integrity": "verified_bytes"}
+                         for key in ("report_ref", "verification_ref")}
+        persisted = _read_verified_json(retained_refs["report_ref"])
+        code = report.get("materialized_code_identity")
+        if (persisted is None or not isinstance(code, Mapping) or not code
+                or ("model_response_sha256" in persisted and persisted["model_response_sha256"] != response_hash)
+                or any(not isinstance(report.get(key), str) or not _DIGEST.fullmatch(report[key])
+                       for key in ("generated_changes_sha256", "source_snapshot_sha256"))
+                or any(not isinstance(code.get(key), str) or not _DIGEST.fullmatch(code[key])
+                       for key in ("baseline_sha256", "code_sha256"))
+                or code != persisted.get("materialized_code_identity")
+                or report.get("generated_changes_sha256") != persisted.get("generated_changes_sha256")):
+            return unavailable
+        evaluation = {
+            **dict(report), **retained_refs, "execution_observation": "executed",
+            "generated_changes_report_link": "matching_explicit_identity",
+            "materialized_code_report_link": "matching_explicit_identity",
+            "code_response_link": "matching_explicit_response_hash",
+            "code_response_refs": [{"integrity": "verified_bytes", "output_sha256": response_hash}],
+        }
+        counts = _verified_check_counts(evaluation)
+        if counts is None:
+            return unavailable
+        checks, failed = counts
+        return {"score_eligible": True, "score_basis": VERIFIED_SCORE_BASIS,
+                "checks_run": checks, "checks_failed": failed,
+                "verification_executions": report["verification_summary"]["executions"],
+                "verification_matrix_sha256": report["verification_ref"]["sha256"],
+                "source_snapshot_sha256": report["source_snapshot_sha256"],
+                "admission_result": "accepted"}
+    except Exception:
+        # Observability proof cannot change an already-admitted verifier result.
+        return {"score_eligible": False, "score_basis": "not_emitted_proof_projection_failed"}
+
+
+def build_patch_live_scores(row: Mapping) -> tuple[dict, ...]:
+    """Score executed local checks, never an absent check or task-delivery claim."""
+    attrs = row.get("attributes") if isinstance(row.get("attributes"), Mapping) else {}
+    status = attrs.get("verification_status")
+    checks, failed, executions = (attrs.get(key) for key in ("checks_run", "checks_failed", "verification_executions"))
+    if (row.get("name") != "patch.verify" or row.get("status") != "completed"
+            or attrs.get("score_eligible") is not True or attrs.get("score_basis") != VERIFIED_SCORE_BASIS
+            or attrs.get("admission_result") != "accepted" or attrs.get("execution_origin") != "executed"
+            or attrs.get("callback_invoked") is not True or status not in {"passed", "behavior_failed"}
+            or type(checks) is not int or checks < 1 or type(failed) is not int or not 0 <= failed <= checks
+            or type(executions) is not int or executions < 1
+            or (status == "passed") != (failed == 0)
+            or any(not isinstance(attrs.get(key), str) or not _DIGEST.fullmatch(attrs[key]) for key in (
+                "behavior_report_sha256", "output_code_sha256", "output_sha256", "generated_changes_sha256",
+                "source_snapshot_sha256", "verification_matrix_sha256"))):
+        return ()
+    trace_id, span_id = live_trace_id(row["trace_id"]), live_observation_id(row["id"])
+    return ({"id": _hash_text(f"{trace_id}:{span_id}:{LIVE_BEHAVIOR_SCORE_NAME}"),
+             "traceId": trace_id, "observationId": span_id, "name": LIVE_BEHAVIOR_SCORE_NAME,
+             "value": (checks - failed) / checks, "dataType": "NUMERIC",
+             "comment": f"live_metadata; {checks - failed}/{checks} bound executed local checks; not task acceptance, Mod delivery or Runtime."},)
+
+
 def build_patch_live_otlp(row: Mapping) -> dict:
     """Map a completed neutral observation; never create missing timing facts."""
     if not isinstance(row, Mapping) or row.get("status") not in {"completed", "failed"}:
@@ -196,11 +309,13 @@ def build_patch_live_otlp(row: Mapping) -> dict:
     elapsed = row.get("elapsed_ms")
     if type(elapsed) in (int, float) and math.isfinite(elapsed) and elapsed >= 0:
         metadata["recorded_elapsed_ms"] = elapsed
+    level, status_message = _native_status(row, attributes)
     attrs = [_attribute("langfuse.observation.type", kind),
              _attribute("langfuse.trace.name", "Patch execution"),
              {"key": "langfuse.trace.tags", "value": {"arrayValue": {"values": [
                  {"stringValue": "live_execution"}, {"stringValue": "metadata_only"}]}}},
-             _attribute("langfuse.observation.level", "ERROR" if row["status"] == "failed" else "DEFAULT")]
+             _attribute("langfuse.observation.level", level),
+             _attribute("langfuse.observation.status_message", status_message)]
     if row.get("session_id") is not None:
         session = _machine_text(row["session_id"])
         if session is None:
@@ -272,7 +387,8 @@ class PatchLiveLangfuseSink:
             return
         try:
             payload = build_patch_live_otlp(row)
-            raw = _json(payload)
+            scores = build_patch_live_scores(row)
+            raw = _json({"observation": payload, "scores": scores})
             if len(raw) > self._max_payload:
                 raise ValueError("LIVE_OBSERVATION_PAYLOAD_TOO_LARGE")
             span = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
@@ -291,12 +407,13 @@ class PatchLiveLangfuseSink:
             elif len(self._queue) >= self._capacity:
                 self._counts["queue_dropped"] += 1
             else:
-                self._queue.append((payload, key))
+                self._queue.append((payload, scores, key))
                 self._pending[key] = digest
                 self._recent[key] = digest
                 while len(self._recent) > self._recent_capacity:
                     self._recent.popitem(last=False)
                 self._counts["queued"] += 1
+                self._counts["score_queued"] += len(scores)
                 self._condition.notify_all()
 
     def _drain(self):
@@ -306,7 +423,7 @@ class PatchLiveLangfuseSink:
                     self._condition.wait()
                 if not self._queue and self._closed:
                     return
-                payload, key = self._queue.popleft()
+                payload, scores, key = self._queue.popleft()
                 self._active = 1
                 self._counts["post_attempts"] += 1
             try:
@@ -319,9 +436,25 @@ class PatchLiveLangfuseSink:
                     raise ValueError("LIVE_OTLP_RESPONSE_INVALID")
                 with self._condition:
                     self._counts["partial_responses" if rejected else "http_accepted"] += 1
+                if rejected:
+                    with self._condition:
+                        self._counts["score_skipped_unaccepted_observation"] += len(scores)
+                else:
+                    for score in scores:
+                        with self._condition:
+                            self._counts["score_post_attempts"] += 1
+                        try:
+                            self._transport._request("POST", SCORE_ENDPOINT, payload=score)
+                            with self._condition:
+                                self._counts["score_http_accepted"] += 1
+                        except Exception as exc:
+                            with self._condition:
+                                self._counts["score_send_failures"] += 1
+                                self._last_error = type(exc).__name__
             except Exception as exc:
                 with self._condition:
                     self._counts["send_failures"] += 1
+                    self._counts["score_skipped_unaccepted_observation"] += len(scores)
                     self._last_error = type(exc).__name__  # Never retain the exception text or request headers.
             finally:
                 with self._condition:
@@ -334,7 +467,8 @@ class PatchLiveLangfuseSink:
             return {**{key: self._counts[key] for key in (
                 "received", "running_not_exported", "queued", "duplicate_records", "conflicting_updates",
                 "invalid_records", "queue_dropped", "post_attempts", "http_accepted", "partial_responses",
-                "send_failures", "rejected_after_shutdown")},
+                "send_failures", "rejected_after_shutdown", "score_queued", "score_post_attempts",
+                "score_http_accepted", "score_send_failures", "score_skipped_unaccepted_observation")},
                 "pending": len(self._queue) + self._active, "queued_pending": len(self._queue),
                 "active_sends": self._active, "closed_to_new_records": self._closed,
                 "worker_alive": self._thread.is_alive(), "last_error_type": self._last_error,

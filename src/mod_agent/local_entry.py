@@ -2185,6 +2185,9 @@ class LocalOllamaInitialPatchAdapter:
                 output_code_sha256=identity.get("code_sha256"),
                 execution_origin=report.get("execution_origin", "unknown"),
                 callback_invoked=report.get("callback_invoked", False))
+            if operation.observation_id is not None:
+                from src.observability.patch_live_langfuse import verified_behavior_trace_attributes
+                operation.update(**verified_behavior_trace_attributes(report, self._receipt["model_response"]))
             return report
 
     def _evaluate_generated_behavior_once(
