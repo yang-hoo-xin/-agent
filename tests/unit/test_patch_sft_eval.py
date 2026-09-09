@@ -10,11 +10,13 @@ import pytest
 
 from scripts import prepare_patch_sft_data as data
 from scripts import run_patch_sft_eval as evaluation
+from src.mod_agent.external_patch import PATCH_FEEDBACK_DATA_CLASSES
 from src.mod_agent.local_entry import (
     LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
     LocalOllamaInitialPatchProfileV1,
     _restore_patch_agent_context,
 )
+from tests.unit.test_external_patch import _consent, _profile
 from tests.unit.test_patch_repair_cli import _message_jsons
 
 
@@ -192,3 +194,124 @@ def test_cli_export_flag_passes_only_explicit_metadata_sink(tmp_path, monkeypatc
     assert (configuration is not None) is enabled
     if enabled:
         assert configuration.sink is not None
+
+
+def _external_fixture(tmp_path, monkeypatch):
+    task, manifest, _, sample = _fixture(tmp_path, monkeypatch)
+    profile = _profile()
+    profile_ref = data.save(tmp_path / "external-profile.json", profile.to_dict())
+    return task, manifest, profile, profile_ref, sample
+
+
+def _install_external(monkeypatch):
+    calls, chats = [], []
+    def handle(request):
+        calls.append((request.method, request.url.path))
+        if request.method == "GET":
+            assert request.url.path == "/api/v1/models"
+            return httpx.Response(200, json={"output": {"models": [{"model": "qwen3.6-plus"}]}}, request=request)
+        assert request.url.path == "/compatible-mode/v1/chat/completions"
+        payload = json.loads(request.content)
+        chats.append(payload)
+        values = _message_jsons(payload)
+        prompt = _restore_patch_agent_context(next(value for _, value in values if "required_change_units" in value))
+        context = next(iter(prompt["edit_binding_contexts"].values()))
+        if len(chats) == 2:
+            feedback = next(value for _, value in values if value.get("message_type") == "patch_behavior_correction")
+            assert feedback["validator_feedback"]["observations"]
+        replacement = "if (publish || sample != 0) Published++;" if len(chats) == 1 else "if (publish) Published++;"
+        content = json.dumps({"changes": [{"edit_binding_id": context["binding_id"],
+            "rationale": "Offline fixture repair.", "rollback_hint": "Restore original.",
+            "after_text": context["source_excerpt"].replace("Published++;", replacement)}]})
+        return httpx.Response(200, json={"id": f"offline-{len(chats)}", "model": "qwen3.6-plus",
+            "choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 200, "completion_tokens": 80}}, request=request)
+    transport = httpx.MockTransport(handle)
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", lambda _self, request: transport.handle_request(request))
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "offline-fixture-secret")
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("No real network or model is allowed.")
+    monkeypatch.setattr("socket.socket.connect", forbidden)
+    monkeypatch.setattr("socket.socket.connect_ex", forbidden)
+    monkeypatch.setattr(evaluation, "execute_version", _fake_execution)
+    monkeypatch.setattr(evaluation, "toolchain", lambda: {})
+    return calls, chats
+
+
+def test_external_preparation_exposes_exact_disclosure_scope_without_credentials_or_network(tmp_path, monkeypatch):
+    task, manifest, profile, profile_ref, _ = _external_fixture(tmp_path, monkeypatch)
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("Preparation must not read credentials or call a provider.")
+    monkeypatch.setattr("src.mod_agent.external_patch.os.environ.get", forbidden)
+    monkeypatch.setattr(httpx.Client, "get", forbidden)
+    monkeypatch.setattr(httpx.Client, "post", forbidden)
+    prepared = evaluation.prepare_eval(manifest_ref=manifest, case_id=task["case_id"], profile_ref=profile_ref,
+        mode="fixed_failure", attempt_id="external-prepare", output_root=tmp_path / "attempt")
+    requirement = prepared["disclosure_requirements"]
+    assert requirement["destination"]["model"] == profile.model
+    assert requirement["destination"]["request_url"] == profile.base_url + "/chat/completions"
+    assert set(PATCH_FEEDBACK_DATA_CLASSES) <= set(requirement["required_data_classes"])
+    assert "approved" not in requirement and "approval_id" not in requirement
+    expected = {path.relative_to(task["source_root"]).as_posix(): data.ref(path)["sha256"]
+                for path in Path(task["source_root"]).rglob("*.cs")}
+    assert prepared["source_files"] == expected and prepared["model_calls"] == 0
+    assert prepared["cli_arguments"] is None
+
+
+@pytest.mark.parametrize("mode", ["fixed_failure", "initial_patch"])
+def test_external_eval_shared_worker_repairs_original_checks_and_reaches_review_dry_run(tmp_path, monkeypatch, mode):
+    task, manifest, profile, profile_ref, sample = _external_fixture(tmp_path, monkeypatch)
+    calls, chats = _install_external(monkeypatch)
+    prepared = evaluation.prepare_eval(manifest_ref=manifest, case_id=task["case_id"], profile_ref=profile_ref,
+        mode=mode, attempt_id="external-" + mode, output_root=tmp_path / "attempt")
+    consent_ref = data.save(tmp_path / "consent.json", _consent(profile))
+    result = evaluation.execute_prepared(prepared["prepared_ref"], source_disclosure_ref=consent_ref)
+    assert result["task_succeeded"] and result["effective_revision"] and result["preservation_passed"], result
+    assert len(chats) == result["actual_model_calls_recorded"] == 2
+    assert result["verification_summary"]["checks"] == 2
+    assert result["execution_counts"]["review"] == result["execution_counts"]["dry_run"] == 1
+    assert result["execution_counts"]["apply"] == result["execution_counts"]["build"] == result["execution_counts"]["runtime"] == 0
+    journal = json.loads(Path(result["attempt_ref"]["path"]).read_text(encoding="utf-8"))
+    factory = journal["factory_receipt"]
+    assert factory["adapter"] == "ExternalQwenPatchAdapter"
+    assert [row["status"] for row in factory["patch_agent_loop"]["behavior_evaluations"]] == ["behavior_failed", "passed"]
+    assert "hidden_oracle" not in json.dumps(chats) and "CheckApp" not in json.dumps(chats)
+    teacher_c2 = json.loads(sample["completion"][0]["content"])["changes"][0]["after_text"]
+    assert teacher_c2 not in [message.get("content") for message in chats[0]["messages"]]
+    assert ("patch_repair_context" in json.dumps(chats[0])) is (mode == "fixed_failure")
+    assert calls[0][0] == "GET"
+
+
+@pytest.mark.parametrize("invalid", ["missing", "destination", "feedback", "source_changed"])
+def test_external_eval_missing_consent_or_changed_scope_sends_nothing(tmp_path, monkeypatch, invalid):
+    task, manifest, profile, profile_ref, _ = _external_fixture(tmp_path, monkeypatch)
+    calls, _ = _install_external(monkeypatch)
+    prepared = evaluation.prepare_eval(manifest_ref=manifest, case_id=task["case_id"], profile_ref=profile_ref,
+        mode="fixed_failure", attempt_id="external-rejected", output_root=tmp_path / "attempt")
+    consent = _consent(profile, feedback=invalid != "feedback")
+    if invalid == "destination":
+        consent["destination"]["model"] = "different-exact-model"
+    if invalid == "source_changed":
+        (Path(task["source_root"]) / "Added.cs").write_text("// newly added source\n")
+    consent_ref = None if invalid == "missing" else data.save(tmp_path / "consent.json", consent)
+    if invalid == "missing":
+        with pytest.raises(ValueError, match="SFT_EVAL_EXTERNAL_DISCLOSURE_REQUIRED"):
+            evaluation.execute_prepared(prepared["prepared_ref"])
+    else:
+        result = evaluation.execute_prepared(prepared["prepared_ref"], source_disclosure_ref=consent_ref)
+        assert not result["task_succeeded"] and result["first_failure"]
+    assert not calls
+
+
+def test_cli_passes_hash_bound_disclosure_only_for_execution(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(evaluation, "execute_prepared", lambda ref, **kwargs: calls.append(kwargs) or {})
+    consent = tmp_path / "consent.json"
+    args = ["--execute", "--prepared", str(tmp_path / "prepared.json"), "--prepared-sha256", "a" * 64,
+            "--source-disclosure", str(consent), "--source-disclosure-sha256", "b" * 64]
+    assert evaluation.main(args) == 0
+    assert calls[0]["source_disclosure_ref"] == {"path": str(consent.resolve()), "sha256": "b" * 64}
+    with pytest.raises(SystemExit):
+        evaluation.main(args[:-2])
+    with pytest.raises(SystemExit):
+        evaluation.main(args[1:])
