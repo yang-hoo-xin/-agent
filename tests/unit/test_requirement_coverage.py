@@ -3399,6 +3399,7 @@ def test_actual9_derived_two_requirement_projection_is_completed_before_findings
     calls: list[str] = []
     projection_payloads: list[dict[str, object]] = []
     projection_schemas: list[dict[str, object]] = []
+    findings_payloads: list[dict[str, object]] = []
 
     def complete_json(role, payload, schema):
         calls.append(role)
@@ -3407,25 +3408,7 @@ def test_actual9_derived_two_requirement_projection_is_completed_before_findings
             projection_schemas.append(deepcopy(schema))
             return raw_projection
         if role == "requirement_findings":
-            assert [
-                relation["parent_requirements"]
-                for relation in payload["relations"]
-            ] == [
-                [
-                    {
-                        "role": "change",
-                        "text": "Keep the two model-owned change obligations.",
-                        "required_before_patch": True,
-                    }
-                ],
-                [
-                    {
-                        "role": "pre_patch_evidence",
-                        "text": "Keep the four model-owned pre-patch obligations.",
-                        "required_before_patch": True,
-                    }
-                ],
-            ]
+            findings_payloads.append(deepcopy(payload))
             return _model_findings_response(
                 {
                     "findings": [
@@ -3481,6 +3464,37 @@ def test_actual9_derived_two_requirement_projection_is_completed_before_findings
     assert coverage is not None
     assert len(coverage["requirements"]) == 2
     assert len(coverage["relations"]) == 2
+    parent_obligations = [
+        [coverage["input_obligations"][index - 1]
+         for index in requirement["input_obligation_indexes"]]
+        for requirement in raw_projection_before["requirements"]
+    ]
+    # Check the source fields independently of the Findings relation projection.
+    assert [[(row["origin"], row["text"]) for row in obligations]
+            for obligations in parent_obligations] == [
+        [({"field": "user_request", "index": 0}, feature["user_request"]),
+         ({"field": "target_behavior", "index": 0}, feature["target_behavior"])],
+        [({"field": "evidence_requirements", "index": index}, text)
+         for index, text in enumerate(feature["evidence_requirements"], 1)],
+    ]
+    assert [row["allowed_roles"] for obligations in parent_obligations for row in obligations] == [
+        ["change", "preservation"], ["change"], *[["pre_patch_evidence"] for _ in range(4)],
+    ]
+    assert all(row["mandatory"] is True and row["required_before_patch"] is True
+               and row["allowed_dispositions"] == []
+               for obligations in parent_obligations for row in obligations)
+    assert len(findings_payloads) == 1
+    assert findings_payloads[0]["relations"] == [
+        {"relation_index": index, "parent_requirements": [{
+            "role": requirement["role"], "text": requirement["text"],
+            "required_before_patch": True, "input_obligations": obligations,
+        }]}
+        for index, (requirement, obligations) in enumerate(
+            zip(raw_projection_before["requirements"], parent_obligations, strict=True), 1)
+    ]
+    assert [requirement["input_obligation_ids"] for requirement in coverage["requirements"]] == [
+        [row["input_obligation_id"] for row in obligations] for obligations in parent_obligations
+    ]
     obligation_index_by_id = {
         obligation["input_obligation_id"]: index
         for index, obligation in enumerate(coverage["input_obligations"], 1)

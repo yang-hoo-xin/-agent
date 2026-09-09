@@ -74,6 +74,22 @@ $integrationPython = 'C:/Users/10160/.codex/visualizations/2026/08/11/019ff15f-9
 
 这是工程集成与旧记录的只读验证，不是新真实模型验收。沿用原Plan的公开CLI场景从既有Fresh恢复入口开始，不据此宣称自然语言全链已经执行该分支；模型生成的下一份代码仍需原Review和精确批准。本页首配置Actual仍停于Findings；第二Actual、First Shot原36项通过、真实Mod Apply/正式Build/Runtime及独立多任务稳定性均未由本轮证明。原页面Repair实现细节与376项历史验证只引用 [Repair记录](audits/REPAIR_CONTINUATION_20260909.md)，不并入本页实测成功数量。
 
+#### 2026-09-09 托管 CI 父义务断言修复
+
+已读取 `278b328` 的 GitHub Actions 原日志（[运行34323112894](https://github.com/yang-hoo-xin/-agent/actions/runs/34323112894)，job `102374062317`）：环境安装及 Ruff 通过，测试为 **1 failed / 964 passed / 2 skipped，60.31s**。唯一失败是 `test_actual9_derived_two_requirement_projection_is_completed_before_findings` 仍期望不含 `input_obligations` 的旧 Findings 父项结构。
+
+仅更新该测试函数，独立核对六条义务的 FeatureSpec 来源、文本、约束与原索引，再检查完整 Findings 关系及绑定ID。保留原 missing/insufficient/不允许生成Patch的判定；未删除测试、忽略新增字段、修改CI配置或回退生产输入修复。
+
+实际验证命令及结果（仓库已有 `.venv/Scripts/python.exe`）：
+
+```powershell
+.venv/Scripts/python.exe -B -m pytest tests/unit/test_requirement_coverage.py::test_actual9_derived_two_requirement_projection_is_completed_before_findings -q --tb=short
+.venv/Scripts/python.exe -B -m pytest tests/unit/test_requirement_coverage.py::test_actual9_derived_two_requirement_projection_is_completed_before_findings tests/unit/test_findings_parent_obligations.py -q --tb=short
+.venv/Scripts/python.exe -B -m pytest tests/unit/test_requirement_coverage.py tests/unit/test_findings_parent_obligations.py -q --tb=short -n 2 --dist=loadfile
+```
+
+旧反例 **1 failed，2.19s**；修后聚焦 **10 passed，2.02s**；两文件checkpoint **116 passed，16.50s**。Ruff `E9,F63,F7,F821` 及 diff-check通过。修复提交将触发原托管CI，最终状态以该提交对应的Actions结果为准；这里没有把本地116项当作托管或模型验收。此CI修复没有启动模型、训练或新的Actual。下一轮真实任务计划仍待用户回传Pro6审核意见后确定执行范围。
+
 ### 并行训练与既有产品工作
 
 原训练页已完成首轮SFT与全部24个固定attempt（52次本地模型调用），两mode的Base/选定epoch1均0/4，决定不采用该训练profile；详细事实以reconciliation 0.35为准。它不再自动训练/DPO/重试。下面保留最初选定范围作为历史上下文，不再把“准备/训练待做”当成当前任务；本页继续持有上述P1/P2整链与首Actual失败修复。
