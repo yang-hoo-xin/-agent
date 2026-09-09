@@ -212,3 +212,10 @@ remains validated through intercepted HTTP until an authorized product run uses 
 Main-repository venv Ruff
 `E9,F63,F7,F821` and `git diff --check` passed for the mapper/caller/tests;
 the ambient Python lacked Ruff, so no dependency was installed.
+
+Integration into `codex/rag-capability-mainline` at `4f6e696` preserved unrelated
+documentation WIP. The intersecting producer/reservation/Review selection
+`tests/unit/test_patch_live_verification_scores.py tests/unit/test_initial_repair_reservation.py
+tests/unit/test_product_proposal_context_budget.py` passed **41 tests in 4.68s**
+with the same Python, `-q --tb=short -n 2 --dist=loadfile`, short TEMP basetemp
+and cache. The Repair acceptance tree remains frozen separately at `a8b8971`.
