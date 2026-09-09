@@ -13,6 +13,16 @@
 }
 ```
 
+## 公开无模型 Actual
+
+代码固定在 `e27595cd208ec1a0a2fed12009bec499dc30a5bf` 后，实际执行上述公开模式（attempt `nlcfg_002_saved_review_001`），2026-09-09 19:20:32–19:20:37 +08，退出0。新Proposal、Review、Dry-run和新journal均由原Graph／Store独立持久化；公开结果为 `awaiting_exact_diff_approval` 并显示真实diff。
+
+本次计数为模型0、Planning0、Proposal重装配1、Review1、Dry-run1、Apply/Build/Runtime0，没有新generation观察或旧编译／配置重执行。原不可变Artifact、旧journal、原manifest/result与13份规范源文件hash均保持；Feature/Evidence/Plan修订数未增加。逻辑预算仍14已用7余7，各stage合计一致。
+
+精确diff哈希：`sha256:b58f3ead136e6cdbb4cd77b3d5a2d8b52b3a00e6b86e101a51f512cd1e22fe2e`。历史验证仅绑定复核，不变成新执行或新评分；旧 `nlcfg_002` 仍为Review阻断，新的续接结果单列。
+
+[实际验收收据](C:/Users/10160/.codex/visualizations/2026/09/08/01a07fb9-9dfe-7a20-a345-de16b4ab1892/joint_configuration_saved_review_001/acceptance-receipt.json) SHA `6095151a48ccef562176deb043066a561376ab3bd4a569381adc1556e0313ada`，同目录保留准确argv、公开stdout、进程回执与 `review.diff`。没有创建批准，下一步仍须用户对新diff进行精确批准。
+
 上述示意中的说明文字不是可执行引用。模型profile、worker执行配置、上游重评和Repair参数与本模式互斥。原 `PatchContinuationInputV1` 增加可选实例字段，未新建 Artifact 类型、Plan 或批准合同。
 
 实际路径仍是原StateGraph的：
@@ -47,4 +57,3 @@ Graph最小旧反例先因旧1–5模型额度规则失败；保存分支通过�
 $pythonSaved = 'C:/Users/10160/.codex/visualizations/2026/08/11/019ff15f-9eac-7b13-aad5-faffde4b36b7/rag_capability_mainline/.venv/Scripts/python.exe'
 & $pythonSaved -B -m pytest tests/unit/test_saved_patch_admission.py tests/unit/test_saved_patch_graph.py tests/unit/test_saved_patch_cli.py tests/unit/test_fresh_planning_continuation.py tests/unit/test_patch_upstream_budget.py tests/unit/test_patch_upstream_unchanged_plan.py tests/unit/test_reviewed_patch_continuation.py tests/unit/test_reviewed_patch_cli.py tests/unit/test_product_patch_journal.py tests/unit/test_product_execution_query.py tests/unit/test_patch_execution_index.py tests/unit/test_cli_unicode_output.py -q --tb=short -n 2 --dist=loadfile --basetemp=C:/Users/10160/AppData/Local/Temp/saved-cp-0909 --junitxml=C:/Users/10160/.codex/visualizations/2026/09/08/01a07fb9-9dfe-7a20-a345-de16b4ab1892/saved-resume-checkpoint.xml
 ```
-
