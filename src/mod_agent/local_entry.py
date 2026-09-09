@@ -153,6 +153,7 @@ from src.mod_agent.proposal.patch_agent_loop import (
     normalize_upstream_effects,
     run_patch_agent_loop,
 )
+from src.mod_agent.proposal.repair_input_projection import project_native_repair_input
 from src.mod_agent.proposal.working_view import build_materialized_patch_view
 from src.mod_agent.requirement_coverage_model import (
     parse_requirement_coverage_json_object,
@@ -984,6 +985,7 @@ class LocalOllamaInitialPatchAdapter:
             raise LocalEntryError("PATCH_RECOVERY_REQUIRES_AGENT_LOOP")
         self.enable_recovery_loop = enable_recovery_loop
         self._repair_context: dict[str, Any] | None = None
+        self._repair_input_projection = None
         self._recovery_observation_bytes = 0
         self._replay_attempt_ref = deepcopy(replay_attempt_ref)
         self._replay_request_refs = deepcopy(replay_request_refs)
@@ -1296,6 +1298,12 @@ class LocalOllamaInitialPatchAdapter:
                     agent_messages = (*agent_messages, *repair_messages)
                     self._recovery_observation_bytes = len(_patch_agent_context_json(
                         [asdict(message) for message in repair_messages]).encode("utf-8"))
+                    self._repair_input_projection = project_native_repair_input(
+                        agent_messages, current_code_identity=self._known_failed_code)
+                    if self._repair_input_projection is not None:
+                        # The current view stays in F1. Charge the complete sent
+                        # history/F1 messages, including every projection guide/ref.
+                        self._recovery_observation_bytes = self._repair_input_projection.repair_message_bytes
                 if self._upstream_continuation_context is not None and self._resumed_worker_request is None:
                     history = self._upstream_continuation_context
                     failed_code = history["previous_response"]
@@ -1334,8 +1342,13 @@ class LocalOllamaInitialPatchAdapter:
                         key: value for key, value in history.items() if key not in {"previous_response", "failure_report"}}
                 initial_user_payload = json.loads(str(agent_messages[1].content))
                 input_encoding = initial_user_payload.get("patch_agent_context_encoding")
+                recorded_messages = (self._repair_input_projection.project_request(
+                    AgentTurnRequest(messages=agent_messages)).messages
+                    if self._repair_input_projection is not None else agent_messages)
+                if self._repair_input_projection is not None:
+                    self._receipt["repair_input_projection"] = deepcopy(self._repair_input_projection.metadata)
                 initial_message_payload = [
-                    {"role": item.role, "content": item.content} for item in agent_messages
+                    {"role": item.role, "content": item.content} for item in recorded_messages
                 ]
                 self._receipt["patch_agent_input_projection"] = {
                     "encoding_version": (
@@ -1391,6 +1404,8 @@ class LocalOllamaInitialPatchAdapter:
                        if self._resumed_worker_request is not None else {}),
                     **({"submission_validator": submission_validator} if self.enable_recovery_loop else {}),
                     **({"response_admission": self._worker_response_admission} if self.enable_recovery_loop else {}),
+                    request_projection=(self._repair_input_projection.project_request
+                        if self._repair_input_projection is not None else None),
                 )
                 self._receipt["model_call_count"] = loop_result.model_turns_used
                 self._receipt["patch_agent_loop"] = {
@@ -2028,7 +2043,8 @@ class LocalOllamaInitialPatchAdapter:
         prior = deepcopy(generation_request)
         revision_messages = self._revision_messages(
             previous_response, feedback, message_type=message_type,
-            visible_messages=prior.messages if self.patch_agent_loop_policy.reuse_covered_source_observations else (),
+            visible_messages=self._model_visible_messages(prior.messages)
+                if self.patch_agent_loop_policy.reuse_covered_source_observations else (),
         )
         feedback_bytes = len(_patch_agent_context_json([asdict(message) for message in revision_messages]).encode("utf-8"))
         loop = self._receipt["patch_agent_loop"]
@@ -2069,6 +2085,8 @@ class LocalOllamaInitialPatchAdapter:
             upstream_effects=self._upstream_effects,
             submission_validator=submission_validator,
             response_admission=self._worker_response_admission,
+            request_projection=(self._repair_input_projection.project_request
+                if self._repair_input_projection is not None else None),
         )
         self._receipt["model_call_count"] = before_calls + execution.model_turns_used
         correction_state.update(
@@ -2095,6 +2113,11 @@ class LocalOllamaInitialPatchAdapter:
         correction_state["response"] = deepcopy(self._receipt["model_response"])
         return response, execution.final_request
 
+    def _model_visible_messages(self, messages: tuple[AgentMessage, ...]) -> tuple[AgentMessage, ...]:
+        if self._repair_input_projection is None:
+            return messages
+        return self._repair_input_projection.project_request(AgentTurnRequest(messages=messages)).messages
+
     def _revision_payload_bytes(
         self, previous_response: str | None, feedback: Mapping[str, Any],
         prior_request: AgentTurnRequest | None,
@@ -2103,7 +2126,7 @@ class LocalOllamaInitialPatchAdapter:
             # Retain the standalone diagnostic estimate when no code context is supplied.
             return len(_patch_agent_context_json(feedback).encode("utf-8"))
         messages = self._revision_messages(previous_response, feedback, message_type="patch_behavior_correction",
-            visible_messages=prior_request.messages if prior_request is not None
+            visible_messages=self._model_visible_messages(prior_request.messages) if prior_request is not None
                 and self.patch_agent_loop_policy.reuse_covered_source_observations else ())
         return len(_patch_agent_context_json([asdict(message) for message in messages]).encode("utf-8"))
 

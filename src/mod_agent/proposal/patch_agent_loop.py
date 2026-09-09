@@ -874,6 +874,7 @@ def run_patch_agent_loop(
     upstream_effects: Mapping[str, str] | None = None,
     submission_validator: Callable[[AgentTurnResponse], None] | None = None,
     response_admission: Callable[[AgentTurnResponse], None] | None = None,
+    request_projection: Callable[[AgentTurnRequest], AgentTurnRequest] | None = None,
 ) -> PatchAgentLoopResult:
     """Run bounded source inspection turns and return final Patch content or a receipt."""
 
@@ -1160,8 +1161,20 @@ def run_patch_agent_loop(
         for entry in submission_trace:
             if entry.get("feedback_queued") and entry["response_sha256"] in feedback_in_request:
                 entry["feedback_in_request"] = True
+        sent_request = request
+        if request_projection is not None:
+            try:
+                sent_request = request_projection(request)
+            except Exception as exc:
+                return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                    model_turns_used=turn_index - 1, tool_rounds_used=tool_rounds_used,
+                    total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                    tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                    termination=_termination(getattr(exc, "code", type(exc).__name__), str(exc), turn_index - 1))
         try:
-            response = client.complete_turn(request)
+            # Retain logical history for source-cache validation and same-Plan
+            # continuation; the recorder/provider receives the checked view.
+            response = client.complete_turn(sent_request)
         except AgentTurnProviderError as exc:
             usage_by_turn.append(
                 {
