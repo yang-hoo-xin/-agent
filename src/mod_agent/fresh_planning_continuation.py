@@ -2987,6 +2987,7 @@ class _PatchUpstreamExecution:
             raise PatchContinuationError("PATCH_UPSTREAM_RETAIN_PLAN_IDENTITY_CHANGED", "upstream_admission",
                 "Retaining the Plan requires the exact assessed Feature, Evidence and Plan references.")
         retained_request = self.factory.retained_worker_request() if retain_plan else None
+        retained_input_projection = self.factory._repair_input_projection if retain_plan else None
         previous_patch_calls = self.factory.patch_attempt_receipt()["model_call_count"]
         self.request = prepare_replanned_patch_input(prior_request=previous_request, state=state,
             attempt_id=("retained_" if retain_plan else "replanned_") + _canonical_sha256(self.initial_selection)[:24])
@@ -3018,6 +3019,9 @@ class _PatchUpstreamExecution:
             self.factory.bind_retained_worker_request(retained_request,
                 consumed_model_turns=previous_patch_calls, consumed_tool_rounds=consumed_reads,
                 consumed_observation_bytes=consumed_observation_bytes, planning_rationale=assessment["rationale"])
+            # Keep the same checked wire view and charged history while the
+            # existing same-Plan owner retains the original logical request.
+            self.factory._repair_input_projection = retained_input_projection
         else:
             self.factory.patch_agent_loop_policy = replace(self.factory.patch_agent_loop_policy,
                 max_tool_rounds=remaining_reads, max_observation_bytes=remaining_bytes)
