@@ -1848,24 +1848,18 @@ def _source_tool_definition(
         name=PATCH_SOURCE_INSPECTION_TOOL_NAME,
         description=(
             "Read existing registered content and return it here; no Evidence/Coverage or Plan reassessment. "
-            "Read a bounded excerpt of the validated Plan-bound original source baseline B0 "
-            "for one exact ImplementationPlan read binding. Generated changes are not applied here: "
-            "the current checked code is the complete assistant Patch identified by the latest failure feedback. "
-            "Reading supporting source does not grant edit permission. "
-            "Registered API bindings return the complete saved Evidence excerpt, not a new live API inspection. "
-            + ("Calls execute sequentially. Only a newly supplied complete source window consumes one read budget unit; "
-                "a reference to an already visible complete window costs zero reads, but still consumes observation bytes. "
+            "Read bounded, validated Plan-bound original B0 (no generated edits) via listed binding_id; no paths. "
+            "Checked code: full assistant Patch bound by latest failure feedback. "
+            "Supporting reads grant no edits. API bindings return full saved "
+            "Evidence, not live inspection. Sequential calls. "
+            + ("New full windows cost 1 read; visible refs cost 0 reads but consume observation bytes. "
                 if inspector.policy.reuse_covered_source_observations else
-                "When batched reads are enabled, calls execute sequentially and each consumes one read budget unit. ")
-            +
-            "Select only a listed binding_id; paths are not accepted."
-            + (" A source_excerpt_span on excerpt_ref means the full requested excerpt_span is contained in that preceding "
-                "source body. Use its line numbers; the entire requested window remains available and is never clipped. "
-                if inspector.policy.reuse_covered_source_observations else "")
-            + (" A returned excerpt_ref means the identical complete excerpt already appears in the named "
-               "preceding observation (including an earlier item in the same result batch). Read that excerpt "
-               "using the current binding's own target_span; no source text has been shortened."
+                "Each dispatched binding read costs one read, including in a batch. ")
+            + ("excerpt_ref reuses full requested text verbatim from a prior observation or earlier same-batch item. "
                if inspector.policy.deduplicate_source_excerpts or inspector.policy.reuse_covered_source_observations else "")
+            + ("source_excerpt_span gives prior body lines containing the full requested excerpt_span. "
+               if inspector.policy.reuse_covered_source_observations else "")
+            + "Use current binding target_span; keep full text."
         ),
         parameters={
             "type": "object",

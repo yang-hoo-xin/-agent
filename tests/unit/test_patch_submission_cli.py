@@ -267,7 +267,8 @@ def test_format_correction_cannot_spend_model_turns_reserved_for_behavior_repair
     case = _case(tmp_path, turns=3)
     profile = _profile_json()
     transport = _install(monkeypatch, ["prose"])
-    result = _run(case, profile, _consent(profile))
+    initial = replace(_patch_request(case.inputs), attempt_id="fresh-format-reserved-for-repair")
+    result = _run(case, profile, _consent(profile), request=initial)
     assert result.status != "terminal" and len(transport.wires) == 1
     receipt = _receipt(result)
     loop = receipt["patch_agent_loop"]
@@ -275,3 +276,15 @@ def test_format_correction_cannot_spend_model_turns_reserved_for_behavior_repair
     assert loop["submission_trace"][0]["feedback_queued"] is False
     assert receipt["model_response"] is None and not receipt["model_responses"]
     assert not list(case.reports.glob("report-*.json"))
+
+
+def test_bound_repair_can_correct_format_without_a_second_fresh_reservation(tmp_path, monkeypatch):
+    case = _case(tmp_path, turns=3)
+    profile = _profile_json()
+    transport = _install(monkeypatch, ["prose", "passed"])
+    result = _run(case, profile, _consent(profile))
+    assert result.status == "terminal", result.to_dict()
+    assert len(transport.wires) == 2
+    loop = _receipt(result)["patch_agent_loop"]
+    assert loop["submission_trace"][0]["feedback_queued"] is True
+    assert loop["behavior_evaluations"][-1]["status"] == "passed"

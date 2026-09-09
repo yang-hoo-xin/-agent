@@ -928,9 +928,7 @@ def _patch_agent_initial_messages(
             role="system",
             content=(
                 str(messages[0].content)
-                + " Use permitted source inspection when it can resolve caller, callee, "
-                "lifecycle or state-flow uncertainty. When the supplied information is sufficient, "
-                "you may return the Patch without an extra read."
+                + " Inspect permitted source for caller/callee/lifecycle/state-flow gaps; submit if evidence suffices."
             ),
         ),
         AgentMessage(
@@ -1839,6 +1837,11 @@ class LocalOllamaInitialPatchAdapter:
 
     def _initial_recovery_reservations(self, inspector: PlanBoundSourceInspector) -> dict[str, int]:
         if not self.enable_recovery_loop or self.behavior_evaluator is None:
+            return {}
+        # Bound C1/F1 is already the current Repair, not a fresh first draft.
+        # Its complete messages are charged through consumed_observation_bytes;
+        # reserving them again for a future repair can prevent the first send.
+        if self._repair_context is not None:
             return {}
         policy = self.patch_agent_loop_policy
         # Size the registered tool's actual representation; this deterministic

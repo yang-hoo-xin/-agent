@@ -1636,6 +1636,18 @@ def _patch_system_prompt(
     require_native_schema: bool,
     plan_bound_response: bool,
 ) -> str:
+    if require_native_schema:
+        return (
+            "Minimal exact-text Patch from verified evidence; strict schema-only JSON, no fences. "
+            "Do not add trailing spaces or tabs. One change per required_change_units item, solely exact "
+            "edit_binding_id. Never invent paths/symbols/APIs/bindings. Omit Plan/binding-derived "
+            "change_id/before_text/paths/hashes/kind/occurrence count/change type/operation/validation. "
+            "after_text replaces full matching source_excerpt; keep unrelated text. "
+            "target_behavior/constraints/acceptance_criteria/runtime_verification_plan form one feature contract. "
+            "Units carry only identity/operation/binding refs, not per-change obligations. "
+            "supporting_evidence is read-only. Non-Boolean receivers as Boolean operands require exact "
+            "verified_member_accesses. Uppercase required_validation_by_binding identifiers must appear literally in after_text."
+        )
     identity_contract = (
         "Return exactly one change for every required_change_units entry and "
         "identify it only by its exact edit_binding_id. Do not return change_id; "
