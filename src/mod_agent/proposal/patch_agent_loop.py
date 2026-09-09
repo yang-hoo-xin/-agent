@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
@@ -26,6 +26,7 @@ from src.libs.llm.agent_turn import (
 )
 from src.mod_agent.proposal.code_generator import (
     PatchGenerationError,
+    PatchSubmissionValidationError,
     validate_patch_submission,
     validate_patch_submission_schema,
 )
@@ -33,6 +34,17 @@ from src.mod_agent.proposal.code_generator import (
 PATCH_SOURCE_INSPECTION_TOOL_NAME = "inspect_plan_binding_source"
 PATCH_UPSTREAM_REQUEST_TOOL_NAME = "request_patch_upstream"
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def iter_patch_recovery_revisions(loop: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]:
+    """Project recorded segments once, retaining compatibility with old receipts."""
+    if "recovery_revisions" in loop:
+        revisions = loop["recovery_revisions"]
+        if not isinstance(revisions, list) or any(not isinstance(item, Mapping) for item in revisions):
+            raise ValueError("Patch recovery revisions must be a list of recorded segments.")
+        return tuple(revisions)
+    return tuple(loop[name] for name in ("validator_correction", "behavior_correction")
+        if isinstance(loop.get(name), Mapping))
 
 
 def normalize_upstream_effects(value: Mapping[str, str] | None) -> dict[str, str]:
@@ -860,6 +872,8 @@ def run_patch_agent_loop(
     reserve_tool_reads: int = 0,
     reserve_observation_bytes: int = 0,
     upstream_effects: Mapping[str, str] | None = None,
+    submission_validator: Callable[[AgentTurnResponse], None] | None = None,
+    response_admission: Callable[[AgentTurnResponse], None] | None = None,
 ) -> PatchAgentLoopResult:
     """Run bounded source inspection turns and return final Patch content or a receipt."""
 
@@ -1021,7 +1035,14 @@ def run_patch_agent_loop(
             termination=_termination("PATCH_AGENT_MODEL_TURN_BUDGET_EXHAUSTED" if consumed_model_turns >= allowed_model_end
                 else "PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED", "No shared budget remains for this segment.", consumed_model_turns))
 
-    for turn_index in range(consumed_model_turns + 1, allowed_model_end + 1):
+    for turn_index in range(consumed_model_turns + 1, selected_policy.max_total_model_turns + 1):
+        if turn_index > allowed_model_end:
+            return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                model_turns_used=turn_index - 1, tool_rounds_used=tool_rounds_used,
+                total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                termination=_termination("PATCH_AGENT_MODEL_TURN_BUDGET_EXHAUSTED",
+                    "No model turn remains in this segment.", turn_index - 1))
         try:
             source_inspector.validate_snapshot()
         except PatchAgentLoopError as exc:
@@ -1204,6 +1225,17 @@ def run_patch_agent_loop(
         pending_response = None
         pending_observation = None
         pending_tool_results = ()
+
+        if response_admission is not None:
+            try:
+                response_admission(response)
+            except Exception as exc:
+                return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                    model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                    total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                    tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                    termination={**_termination(getattr(exc, "code", type(exc).__name__), str(exc), turn_index),
+                        "failure_class": type(exc).__name__, "diagnostics": deepcopy(getattr(exc, "diagnostics", {}))})
 
         if response.stop_reason in {"length", "max_tokens", "max_output_tokens", "incomplete", "content_filter", "refusal"}:
             incomplete = response.stop_reason in {"length", "max_tokens", "max_output_tokens", "incomplete"}
@@ -1618,6 +1650,17 @@ def run_patch_agent_loop(
             "content_present": content is not None, "code_validation_performed": False,
             "feedback_queued": False, "feedback_in_request": False, "followup_response_observed": False}
         submission_trace.append(submission)
+
+        def hard_submission_failure(error: Exception) -> PatchAgentLoopResult:
+            submission.update(status="validation_failed", failure_class=type(error).__name__,
+                diagnostics=deepcopy(getattr(error, "diagnostics", {})))
+            return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                termination={**_termination(getattr(error, "code", type(error).__name__), str(error), turn_index),
+                    "failure_class": type(error).__name__, "diagnostics": deepcopy(submission["diagnostics"])})
+
         try:
             with trace_operation("patch.submission", attributes={
                 "turn_index": turn_index, "provider_response_id": response.request_id,
@@ -1626,8 +1669,23 @@ def run_patch_agent_loop(
                 "behavior_validation_performed": False, "submission_admitted": False,
             }) as submission_observation:
                 validate_patch_submission(raw_content, final_response_format.schema)
+                if submission_validator is not None:
+                    # Identity/authority failures are not model-correctable. Only
+                    # the explicitly typed, read-only submission check may feed back.
+                    source_inspector.validate_snapshot()
+                    submission["code_validation_performed"] = True
+                    submission_observation.update(validation_scope="submission_and_bound_patch_static_checks")
+                    try:
+                        submission_validator(response)
+                    except PatchSubmissionValidationError:
+                        raise
+                    except Exception:
+                        submission["status"] = "validation_failed"
+                        raise
                 submission_observation.update(submission_admitted=True)
         except ValueError as exc:
+            if submission["code_validation_performed"]:
+                return hard_submission_failure(exc)
             submission["status"] = "contract_invalid"
             return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
                 model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
@@ -1635,9 +1693,22 @@ def run_patch_agent_loop(
                 tool_call_trace=tool_call_trace, observation_trace=observation_trace,
                 termination=_termination("PATCH_AGENT_SUBMISSION_CONTRACT_INVALID", str(exc), turn_index))
         except PatchGenerationError as exc:
+            if submission["code_validation_performed"] and not isinstance(exc, PatchSubmissionValidationError):
+                return hard_submission_failure(exc)
+            if isinstance(exc, PatchSubmissionValidationError):
+                # A complete, bound Patch with a repairable text defect has
+                # reached recovery. Spend its existing reserve, never new credit.
+                submission["released_recovery_reservation"] = {
+                    "model_turns": selected_policy.max_total_model_turns - allowed_model_end,
+                    "tool_reads": selected_policy.max_tool_rounds - allowed_read_end,
+                    "observation_bytes": selected_policy.max_observation_bytes - allowed_observation_end,
+                }
+                allowed_model_end = selected_policy.max_total_model_turns
+                allowed_read_end = selected_policy.max_tool_rounds
+                allowed_observation_end = selected_policy.max_observation_bytes
             submission["diagnostics"] = deepcopy(exc.diagnostics)
             if submission["response_sha256"] in rejected_submissions:
-                stop_code, reason = "PATCH_AGENT_REPEATED_INVALID_SUBMISSION", "The same unadmitted submission was returned after format feedback."
+                stop_code, reason = "PATCH_AGENT_REPEATED_INVALID_SUBMISSION", "The same unadmitted submission was returned after submission feedback."
             elif turn_index >= allowed_model_end:
                 stop_code, reason = "PATCH_AGENT_SUBMISSION_CORRECTION_BUDGET_EXHAUSTED", "No model turn remains in this segment to correct the submission; reserved behavior turns are unchanged."
             else:
@@ -1651,9 +1722,10 @@ def run_patch_agent_loop(
             feedback = {"message_type": "patch_submission_feedback", "response_sha256": submission["response_sha256"],
                 "schema_sha256": submission["schema_sha256"], "diagnostics": deepcopy(exc.diagnostics),
                 "error": str(exc), "response_schema": deepcopy(final_response_format.schema),
-                "code_validation_performed": False,
+                "code_validation_performed": submission["code_validation_performed"],
                 "required_action": "The preceding output was not admitted as a Patch. Use only the actions currently listed. "
                     "If submitting, return one complete JSON object matching response_schema, without surrounding explanation. "
+                    "Correct the reported submission defects and preserve already-correct behavior. "
                     "Keep the original requirements, bindings and unchanged source baseline; no code has been accepted or applied."}
             original_output = (AgentMessage("assistant", raw_content),) if raw_content else ()
             additions = (*original_output, AgentMessage("user", feedback))
@@ -1672,6 +1744,10 @@ def run_patch_agent_loop(
             format_correction_pending = True
             last_reused_only_batch = None
             continue
+        except Exception as exc:
+            # Preserve already-spent calls/reads even when identity, environment
+            # or authority rejects submission. This remains a terminal failure.
+            return hard_submission_failure(exc)
         else:
             submission["status"] = "accepted"
             response_actions[turn_index]["submitted_patch"] = True

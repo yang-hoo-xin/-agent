@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-09-08
+Last updated: 2026-09-09
 
 ## 1. Product
 
@@ -40,7 +40,7 @@ this chain. They are not independent product lines.
 
 ### 1.1 Current Development Selection
 
-The bounded repair-focused SFT A/B is complete without a demonstrated task-completion gain (reconciliation 0.35): retain the checkpoints and original results, do not adopt this trained profile or automatically add training/DPO. The current user request is an evidence-backed Repair/real-Mod route review; full product-chain acceptance remains owned by the separate integration task. First Shot remains unresolved. A saved model, a passing engineering test, and a repaired Mod are separate outcomes.
+The current user request activates the reconciled Repair implementation: continuous revisions within the shared budget, recoverable submission feedback, checked-source views, recorded counterexample steps, and explicit upstream assessment that can retain the unchanged Plan. Implementation and verification are recorded in [Repair continuation](audits/REPAIR_CONTINUATION_20260909.md). Full product-chain acceptance and Findings remain owned by the separate integration task; First Shot remains unresolved. The prior repair-focused SFT A/B showed no task-completion gain (reconciliation 0.35), so the trained profile is not adopted and no additional training/DPO is automatic. Engineering acceptance does not establish live-model repair quality or Mod delivery.
 
 Prospective shared-worker tracing has measured local observations, and the explicitly approved first four SFT attempts have now been exported and read back in Cloud (0.35). This was capture during execution followed by authorized export, not automatic live export for every future task. The complete changed-project compilation/configuration checks remain separate from the original 36-check matrix and applicable Runtime. Current hosted CI still has unresolved integration failures (0.36); no production readiness or Mod success is claimed.
 

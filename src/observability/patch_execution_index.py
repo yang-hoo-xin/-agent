@@ -20,6 +20,7 @@ from src.mod_agent.fresh_planning_continuation import _canonical_sha256
 from src.mod_agent.proposal.patch_agent_loop import (
     PatchAgentLoopError,
     expand_patch_source_observations,
+    iter_patch_recovery_revisions,
 )
 
 MAX_FILE_BYTES = 16 * 1024 * 1024
@@ -147,8 +148,15 @@ class _References:
 
 def _phases(loop: Mapping[str, Any]):
     yield "initial", loop
-    for name in ("validator_correction", "behavior_correction"):
-        execution = _object(_object(loop.get(name)).get("execution"))
+    try:
+        revisions = iter_patch_recovery_revisions(loop)
+    except ValueError:
+        return  # Malformed records do not acquire invented execution positions.
+    for revision in revisions:
+        name = ("validator_correction" if revision.get("message_type") == "patch_validator_correction"
+                or ("message_type" not in revision and revision is loop.get("validator_correction"))
+                else "behavior_correction")
+        execution = _object(revision.get("execution"))
         if execution:
             yield name, execution
 

@@ -45,6 +45,15 @@ class PatchGenerationError(RuntimeError):
         self.diagnostics = dict(diagnostics or {})
 
 
+class PatchSubmissionValidationError(PatchGenerationError):
+    """A complete submission has a bounded, model-correctable text defect.
+
+    Only no-op replacements, the existing C# header-preservation check and
+    added diff trailing whitespace use this type. Authority, source identity,
+    schema and provider-admission failures retain their original hard errors.
+    """
+
+
 @dataclass(frozen=True)
 class GeneratedPatch:
     changes: tuple[dict[str, Any], ...]
@@ -627,11 +636,19 @@ class LLMExactPatchGenerator:
                 changes,
                 required_change_units=normalized_required_changes,
             )
+            _validate_submission_text(
+                changes, binding_contexts=binding_contexts, native=require_native_schema,
+            )
         except Exception as exc:
             diagnostics = _response_diagnostics(response)
             if isinstance(exc, PatchGenerationError):
                 diagnostics.update(exc.diagnostics)
-                raise PatchGenerationError(
+                error_type = (
+                    PatchSubmissionValidationError
+                    if isinstance(exc, PatchSubmissionValidationError)
+                    else PatchGenerationError
+                )
+                raise error_type(
                     str(exc),
                     diagnostic_content=response.content,
                     diagnostics=diagnostics,
@@ -1146,11 +1163,17 @@ def _materialize_frozen_native_response(
             changes,
             required_change_units=normalized_required_changes,
         )
+        _validate_submission_text(changes, binding_contexts=binding_contexts, native=True)
     except Exception as exc:
         diagnostics = _response_diagnostics(response)
         if isinstance(exc, PatchGenerationError):
             diagnostics.update(exc.diagnostics)
-            raise PatchGenerationError(
+            error_type = (
+                PatchSubmissionValidationError
+                if isinstance(exc, PatchSubmissionValidationError)
+                else PatchGenerationError
+            )
+            raise error_type(
                 str(exc),
                 diagnostic_content=response.content,
                 diagnostics=diagnostics,
@@ -2249,23 +2272,6 @@ def _materialize_native_change(
             change_id=change_id,
             binding_id=binding_id,
         )
-    _validate_csharp_header_preservation(
-        before=before,
-        after=after,
-        binding_context=binding_contexts.get(binding_id) or {},
-        index=index,
-        change_id=change_id,
-        binding_id=binding_id,
-    )
-    if after == before:
-        raise _native_validation_error(
-            f"Change {index} after_text must be a real replacement.",
-            failure_classification="native_after_text_not_replacement",
-            change_index=index,
-            change_id=change_id,
-            binding_id=binding_id,
-        )
-
     _validate_bound_language_semantics(
         after=after,
         binding_id=binding_id,
@@ -2319,6 +2325,39 @@ def _materialize_native_change(
     }
 
 
+def _validate_submission_text(
+    changes: tuple[dict[str, Any], ...],
+    *,
+    binding_contexts: Mapping[str, Mapping[str, Any]],
+    native: bool,
+) -> None:
+    """Check repairable text only after every change's hard validation passes."""
+    for index, change in enumerate(changes, start=1):
+        binding_id = change["edit_binding_id"]
+        before = change["patch"]["before_text"]
+        after = change["patch"]["after_text"]
+        if before == after:
+            raise PatchSubmissionValidationError(
+                f"Change {index} after_text must be a real replacement.",
+                diagnostics={
+                    "failure_boundary": "deterministic_patch_validation",
+                    "failure_classification": (
+                        "native_after_text_not_replacement"
+                        if native else "patch_after_text_not_replacement"
+                    ),
+                    "change_index": index,
+                    "change_id": change["change_id"],
+                    "binding_id": binding_id,
+                },
+            )
+        if native:
+            _validate_csharp_header_preservation(
+                before=before, after=after,
+                binding_context=binding_contexts.get(binding_id) or {},
+                index=index, change_id=change["change_id"], binding_id=binding_id,
+            )
+
+
 def _validate_csharp_header_preservation(
     *,
     before: str,
@@ -2349,14 +2388,17 @@ def _validate_csharp_header_preservation(
         and line.strip().endswith(";")
     }
     if before_usings and not after_usings:
-        raise _native_validation_error(
+        raise PatchSubmissionValidationError(
             f"Change {index} removes every existing C# using directive from "
             "a file-header replacement.",
-            failure_classification="csharp_file_header_usings_removed",
-            change_index=index,
-            change_id=change_id,
-            binding_id=binding_id,
-            removed_using_count=len(before_usings),
+            diagnostics={
+                "failure_boundary": "deterministic_patch_validation",
+                "failure_classification": "csharp_file_header_usings_removed",
+                "change_index": index,
+                "change_id": change_id,
+                "binding_id": binding_id,
+                "removed_using_count": len(before_usings),
+            },
         )
 
 
@@ -2436,7 +2478,7 @@ def _validate_change(
                 "failure_classification": "before_text_not_verbatim_evidence",
             },
         )
-    if not isinstance(after, str) or not after or after == before:
+    if not isinstance(after, str) or not after:
         raise PatchGenerationError(f"Change {index} after_text must be a real replacement.")
     _validate_bound_language_semantics(
         after=after,

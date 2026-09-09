@@ -68,7 +68,25 @@ task("snapshot_nested_tags", "snapshot_aliasing", "validation",
  ("        return Records;",
   "        return new List<List<string>>(Records);",
   "        return Records.Select(tags=>new List<string>(tags)).ToList();"),
- 'var s=new Subject();var snap=s.Apply();Check("original_values",snap.Select(x=>x.ToArray()).ToArray(),new[]{new[]{"red"},new[]{"blue"}},"preservation");snap[0].Add("changed");Check("snapshot_not_live",s.Records[0].ToArray(),new[]{"red"});s.Records[1].Add("later");Check("live_not_snapshot",snap[1].ToArray(),new[]{"blue"});snap.Add(new List<string>{"third"});Check("outer_independent",s.Records.Count,2);'),
+'''var s=new Subject();
+var initial=new { Records=s.Records.Select(x=>x.ToArray()).ToArray() };
+var steps=new List<object>();
+var snap=s.Apply();
+steps.Add(new { step=1, action="call", target="live", member="Apply" });
+Check("original_values",snap.Select(x=>x.ToArray()).ToArray(),new[]{new[]{"red"},new[]{"blue"}},"preservation",
+    TraceInput(initial,steps,new { target="snapshot" }));
+snap[0].Add("changed");
+steps.Add(new { step=2, action="add", target="snapshot", record_index=0, value="changed" });
+Check("snapshot_not_live",s.Records[0].ToArray(),new[]{"red"},input:
+    TraceInput(initial,steps,new { target="live", member="Records", record_index=0 }));
+s.Records[1].Add("later");
+steps.Add(new { step=3, action="add", target="live", member="Records", record_index=1, value="later" });
+Check("live_not_snapshot",snap[1].ToArray(),new[]{"blue"},input:
+    TraceInput(initial,steps,new { target="snapshot", record_index=1 }));
+snap.Add(new List<string>{"third"});
+steps.Add(new { step=4, action="add_record", target="snapshot", values=new[]{"third"} });
+Check("outer_independent",s.Records.Count,2,input:
+    TraceInput(initial,steps,new { target="live", member="Records.Count" }));'''),
 task("snapshot_nested_properties", "snapshot_aliasing", "validation",
  "Return an independent map of per-user property maps. Both inner updates and new outer entries must stay isolated in either direction. Preserve original property values and names.",
  "    public Dictionary<string,Dictionary<string,int>> Users=new Dictionary<string,Dictionary<string,int>>{{\"u\",new Dictionary<string,int>{{\"score\",4}}}};", "Dictionary<string,Dictionary<string,int>> Apply()",
@@ -82,7 +100,36 @@ task("paging_partial_tail", "pagination_boundary", "holdout",
  ("        return Items.Take(size).ToArray();",
   "        if(Offset+size>Items.Length){Offset=Items.Length;return Array.Empty<int>();}\n        var page=Items.Skip(Offset).Take(size).ToArray();Offset+=size;return page;",
   "        var page=Items.Skip(Offset).Take(size).ToArray();Offset+=page.Length;return page;"),
- 'var s=new Subject();Check("first_full",s.Apply(2),new[]{10,20},"preservation");Check("second_full",s.Apply(2),new[]{30,40});Check("tail",s.Apply(2),new[]{50});Check("exact_offset",s.Offset,5);Check("exhausted",s.Apply(2),Array.Empty<int>());Check("stable_offset",s.Offset,5);var p=new Subject();Check("large_page",p.Apply(8),new[]{10,20,30,40,50});'),
+'''var s=new Subject();
+var initial=new { Items=s.Items.ToArray(), Offset=s.Offset };
+var steps=new List<object>();
+var size=2;
+var offsetBefore=s.Offset;
+var page=s.Apply(size);
+steps.Add(new { step=1, action="call", target="s", member="Apply", arguments=new { size }, offset_before=offsetBefore, offset_after=s.Offset });
+Check("first_full",page,new[]{10,20},"preservation",TraceInput(initial,steps,new { target="return_value", step=1 }));
+offsetBefore=s.Offset;
+page=s.Apply(size);
+steps.Add(new { step=2, action="call", target="s", member="Apply", arguments=new { size }, offset_before=offsetBefore, offset_after=s.Offset });
+Check("second_full",page,new[]{30,40},input:TraceInput(initial,steps,new { target="return_value", step=2 }));
+offsetBefore=s.Offset;
+page=s.Apply(size);
+steps.Add(new { step=3, action="call", target="s", member="Apply", arguments=new { size }, offset_before=offsetBefore, offset_after=s.Offset });
+Check("tail",page,new[]{50},input:TraceInput(initial,steps,new { target="return_value", step=3 }));
+Check("exact_offset",s.Offset,5,input:TraceInput(initial,steps,new { target="s", member="Offset" }));
+offsetBefore=s.Offset;
+page=s.Apply(size);
+steps.Add(new { step=4, action="call", target="s", member="Apply", arguments=new { size }, offset_before=offsetBefore, offset_after=s.Offset });
+Check("exhausted",page,Array.Empty<int>(),input:TraceInput(initial,steps,new { target="return_value", step=4 }));
+Check("stable_offset",s.Offset,5,input:TraceInput(initial,steps,new { target="s", member="Offset" }));
+var p=new Subject();
+var otherInitial=new { Items=p.Items.ToArray(), Offset=p.Offset };
+var otherSteps=new List<object>();
+var largeSize=8;
+var otherOffsetBefore=p.Offset;
+var largePage=p.Apply(largeSize);
+otherSteps.Add(new { step=1, action="call", target="p", member="Apply", arguments=new { size=largeSize }, offset_before=otherOffsetBefore, offset_after=p.Offset });
+Check("large_page",largePage,new[]{10,20,30,40,50},input:TraceInput(otherInitial,otherSteps,new { target="return_value", step=1 }));'''),
 task("paging_resume_cursor", "pagination_boundary", "holdout",
  "Add a continuation cursor: a page begins at Cursor, which always names the next unread item. A nonzero resume cursor must neither repeat nor skip an item. Exhaustion retains the end cursor and returns empty; order remains unchanged.",
  "    public string[] Items={\"a\",\"b\",\"c\",\"d\"}; public int Cursor;", "string[] Apply(int size)",
@@ -112,10 +159,17 @@ def harness(checks):
 public static class Program
 {
     static List<Dictionary<string,object>> Rows=new List<Dictionary<string,object>>();
-    static void Check(string name,object actual,object expected,string group="new")
+    static object TraceInput(object initialState,object operations,object observation)
     {
-        Rows.Add(new Dictionary<string,object>{{"check",name},{"observed",actual},{"expected",expected},
-            {"group",group},{"passed",JsonSerializer.Serialize(actual)==JsonSerializer.Serialize(expected)}});
+        return JsonSerializer.Deserialize<JsonElement>(JsonSerializer.Serialize(new {
+            initial_state=initialState, operations, observation }));
+    }
+    static void Check(string name,object actual,object expected,string group="new",object input=null)
+    {
+        var row=new Dictionary<string,object>{{"check",name},{"observed",actual},{"expected",expected},
+            {"group",group},{"passed",JsonSerializer.Serialize(actual)==JsonSerializer.Serialize(expected)}};
+        if(input!=null)row.Add("input",input);
+        Rows.Add(row);
     }
     public static int Main(string[] args)
     {

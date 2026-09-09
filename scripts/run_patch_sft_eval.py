@@ -82,6 +82,14 @@ def _contract(request):
     return admitted, generator, prepared
 
 
+def _observation_input(check, *, case_id):
+    """Preserve explicitly recorded inputs; labels cannot reconstruct execution."""
+    if check.get("input") is not None:
+        return deepcopy(check["input"])
+    return {"case_id": case_id, "group": check["group"],
+            "execution_context_status": "unknown"}
+
+
 def _teacher_parent(request, task, output):
     admitted, generator, contract = _contract(request)
     raw_request = read_bound_json(task["raw_request_ref"])
@@ -129,7 +137,7 @@ def _teacher_parent(request, task, output):
     failure = {"status": "behavior_failed", "failure_owner": "patch_implementation",
         "owner_binding_ids": list(inspector.available_binding_ids), "generated_changes_sha256": canonical_hash(generated.changes),
         "source_snapshot_sha256": inspector.source_snapshot_sha256,
-        "observations": [{"check_id": row["check"], "input": {"case_id": task["case_id"], "group": row["group"]},
+        "observations": [{"check_id": row["check"], "input": _observation_input(row, case_id=task["case_id"]),
             "expected": row["expected"], "observed": row["observed"], "result_ref": task["version_reports"]["C1"]}
             for row in measured["checks"] if not row["passed"]],
         "verification_ref": task["version_reports"]["C1"], "execution_origin": "unknown",
@@ -181,7 +189,7 @@ class OwnedSftOracle:
             matrix_verified = True
             failed = [row for row in matrix["checks"] if not row["passed"]]
             status, owner = ("behavior_failed", "patch_implementation") if failed else ("passed", None)
-            observations = [{"check_id": row["check"], "input": {"case_id": self.task["case_id"], "group": row["group"]},
+            observations = [{"check_id": row["check"], "input": _observation_input(row, case_id=self.task["case_id"]),
                 "expected": row["expected"], "observed": row["observed"]} for row in failed]
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             compilation_path = run / "execution/compilation.json"

@@ -176,16 +176,21 @@ def test_repeated_failed_materialized_code_uses_same_budget_and_only_explicit_re
     )
     result = run_fresh_patch_continuation(request, patch_change_factory=adapter,
         dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace), max_model_calls=5)
-    assert result.reason == "PATCH_BEHAVIOR_CORRECTION_FAILED"
+    assert result.reason == "PATCH_AGENT_CORRECTION_BUDGET_EXHAUSTED"
     receipt = adapter.patch_attempt_receipt()
     rows = receipt["patch_agent_loop"]["behavior_evaluations"]
-    assert len(client.requests) == 4
+    assert len(client.requests) == receipt["model_call_count"] == 5
+    assert len(rows) == 3
     assert all(row["code_revision"]["same_materialized_code"] for row in rows)
     assert rows[0]["materialized_code_identity"]["baseline_sha256"] != rows[0]["materialized_code_identity"]["code_sha256"]
     feedback = next(m.content for m in client.requests[2].messages if isinstance(m.content, dict)
                     and m.content.get("message_type") == "patch_behavior_correction")
     assert feedback["validator_feedback"]["code_revision"]["same_materialized_code"]
     assert "exactly the same as the known failed version" in feedback["required_action"]
+    for row in rows:
+        assert row["admission"] == "accepted"
+        report_path = Path(row["report_ref"]["path"])
+        assert hashlib.sha256(report_path.read_bytes()).hexdigest() == row["report_ref"]["sha256"]
     if reuse and not change_environment:
         assert len(oracle.contexts) == 1
         assert rows[1]["execution_origin"] == "reused" and rows[1]["callback_invoked"] is False
@@ -194,9 +199,15 @@ def test_repeated_failed_materialized_code_uses_same_budget_and_only_explicit_re
         assert hashlib.sha256(old.read_bytes()).hexdigest() == oracle.reports[0]["report_ref"]["sha256"]
         assert rows[1]["generated_changes_sha256"] != rows[0]["generated_changes_sha256"]
         assert rows[1]["materialized_code_identity"] == rows[0]["materialized_code_identity"]
+        assert rows[2]["execution_origin"] == "reused" and rows[2]["callback_invoked"] is False
+        assert rows[2]["reused_from_report_ref"] == oracle.reports[0]["report_ref"]
     else:
-        assert len(oracle.contexts) == 2
+        assert len(oracle.contexts) == (2 if reuse else 3)
         assert rows[1]["execution_origin"] == "executed"
+        assert rows[2]["execution_origin"] == ("reused" if reuse else "executed")
+        assert rows[2]["callback_invoked"] is (not reuse)
+        if reuse:
+            assert rows[2]["reused_from_report_ref"] == oracle.reports[-1]["report_ref"]
 
 
 def test_first_output_passes_without_forcing_inspection_or_failure(tmp_path):

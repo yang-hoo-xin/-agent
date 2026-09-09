@@ -14,6 +14,7 @@ from src.mod_agent.fresh_planning_continuation import (
     _artifact_ref_dict,
     _canonical_sha256,
     _patch_continuation_state,
+    _read_hashed_repair_file,
     _repair_json,
     _source_tree_snapshot_sha256,
     admit_active_worker_failure,
@@ -26,6 +27,57 @@ from src.mod_agent.proposal.patch_agent_loop import (
     PlanBoundSourceInspector,
     _validate_upstream_request,
 )
+
+
+def prepare_patch_upstream_assessment(*, request, state, artifact_store):
+    """Read the original Plan and current bound failure for one model assessment.
+
+    Exact reference and live-source checks remain deterministic. The returned
+    model view contains hashes instead of local Artifact/file locations.
+    """
+    from src.mod_agent.artifacts import ArtifactRef
+
+    upstream = state["runtime_summary"].get("patch_upstream_return")
+    if (not isinstance(upstream, Mapping) or upstream.get("assessment_only") is not True
+            or upstream.get("repair_plan_hash") != state["artifact_hashes"].get("repair_plan")):
+        raise PatchContinuationError("PATCH_UPSTREAM_ASSESSMENT_INVALID", "upstream_admission",
+            "The current RepairPlan must own this explicit upstream assessment.")
+    admitted = preflight_patch_continuation(request, artifact_store=artifact_store)
+    original_refs = {kind: getattr(request, kind + "_ref")
+                     for kind in ("feature_spec", "evidence_pack", "implementation_plan")}
+    unchanged = all(state["artifacts"].get(kind) == ref.path
+                    and state["artifact_hashes"].get(kind) == ref.artifact_hash
+                    for kind, ref in original_refs.items())
+    repair_ref = ArtifactRef(feature_id=state["feature_id"], artifact_type="repair_plan",
+        path=state["artifacts"]["repair_plan"], artifact_hash=state["artifact_hashes"]["repair_plan"])
+    repair = artifact_store.semantic_read_immutable(repair_ref)["data"]
+    context = repair["repair_context"]
+    report = _repair_json(context["failure_report_ref"])
+    if (report != context["failure_report"]
+            or context["upstream_request"]["failure_report_ref"] != context["failure_report_ref"]
+            or context["workspace_snapshot_sha256"] != _source_tree_snapshot_sha256(admitted.source_tree_snapshot)):
+        raise PatchContinuationError("PATCH_UPSTREAM_FAILURE_BINDING_REQUIRED", "upstream_admission",
+            "The assessment must use the current checked failure over unchanged source bytes.")
+    raw = _read_hashed_repair_file(context["failed_response_ref"]).decode("utf-8")
+    model_report = deepcopy(report)
+    for observation in model_report["observations"]:
+        if isinstance(observation.get("result_ref"), dict):
+            observation["result_ref"] = {"sha256": observation["result_ref"]["sha256"]}
+    if isinstance(model_report.get("verification_ref"), dict):
+        model_report["verification_ref"] = {"sha256": model_report["verification_ref"]["sha256"]}
+    return {
+        "current_plan": deepcopy(admitted.implementation_plan),
+        "selected_artifact_hashes": {kind: ref.artifact_hash for kind, ref in original_refs.items()},
+        "repair_plan_hash": repair_ref.artifact_hash,
+        "previous_response": raw,
+        "failed_response_sha256": context["failed_response_ref"]["sha256"],
+        "failure_report": model_report,
+        "failure_report_sha256": context["failure_report_ref"]["sha256"],
+        "generated_changes_sha256": context["generated_changes_sha256"],
+        "source_snapshot_sha256": context["source_snapshot_sha256"],
+        "retain_current_plan_allowed": unchanged,
+        "approval_inherited": False,
+    }
 
 
 def validate_patch_upstream_selection(request: PatchContinuationInputV1, selection: Mapping[str, Any], *, artifact_store=None):
