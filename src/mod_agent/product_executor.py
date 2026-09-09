@@ -930,6 +930,7 @@ class _ProductStoreRecorder:
         self._phase_by_node = PRODUCT_EXECUTION_DECLARATION.phase_by_node
         self._repair_source_scope: ArtifactRef | None = None
         self._repair_source_roles: list[str] = []
+        self.uncommitted_blocked_causes: tuple[ProductExecutionBlockerV1, ...] = ()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._store, name)
@@ -1038,6 +1039,11 @@ class _ProductStoreRecorder:
             if role == "repair_plan":
                 self._repair_attempt = attempt_number
         else:
+            if role == "blocked_report" and isinstance(payload.get("blockers"), list) and payload["blockers"]:
+                # Preserve the Graph's actual submitted reasons even when C5
+                # cannot commit its report. These are owner facts, not an output
+                # Artifact or a claim that the failed Store write succeeded.
+                self.uncommitted_blocked_causes = _domain_blockers(payload)
             raise _ProductStoreStopped(
                 f"{role} did not commit: {result.outcome}"
             )
@@ -1708,6 +1714,7 @@ def execute_product_execution(
         if terminal == "blocked" and not platform_blockers
         else platform_blockers
     )
+    blockers = (*blockers, *recorder.uncommitted_blocked_causes)
     if validation.failed and not platform_blockers:
         blockers = (
             _platform_blocker(

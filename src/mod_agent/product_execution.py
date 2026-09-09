@@ -1505,6 +1505,19 @@ def _validate_repair_plan_lifecycle_predicates(
                 and blocker.get("required_next_owner") == "evidence"
                 for blocker in blocked_envelope.get("data", {}).get("blockers", [])
             )
+            if (not physical_source_blocked and later == attempts[-1]
+                    and later.artifact_role == "blocked_report"
+                    and later.store_result.outcome != "committed"
+                    and facts.failure_stage == "blocked_report_store"):
+                # A failed report write has no committed readback. The existing
+                # typed blocker facts retain the exact reason submitted by the
+                # Graph before C5 failed; they do not stand in for an Artifact.
+                physical_source_blocked = any(
+                    blocker.owner == "domain" and blocker.source_node == "blocked"
+                    and blocker.stage == "repair_plan"
+                    and blocker.code == "PRODUCT_REPAIR_SOURCE_REANCHORING_REQUIRED"
+                    for blocker in facts.blockers
+                )
         if later is None and payload_terminal:
             terminal = facts.failure_stage == "blocked_execution"
         source_attempt = prior.repair_attempt

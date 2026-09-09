@@ -1,7 +1,7 @@
 # Implementation Queue
 
 Status: active and conditional work only
-Last updated: 2026-09-08
+Last updated: 2026-09-09
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 Completed, frozen, review, and superseded records belong in
@@ -13,7 +13,7 @@ Completed, frozen, review, and superseded records belong in
 
 用户 2026-09-08 回执已批准本页优先实施 P1/P2，允许替换触及链条的旧重复装配；不扩大31组模块盘点，不嵌套CLI、复制runner、人工拼Artifact或静默回退旧生成路径。本块是最新整链状态的唯一详细控制位置，恢复上下文时先核对本块与当前Git/源码。
 
-- 集成页：`01a07fb9-9dfe-7a20-a345-de16b4ab1892`；接收基线 `0f59a0c185d253fc18a604e53e262b264ba98110`（含 `d8db786` 完整验证/DSH/摘要与 `21f2a36` C#验证修正）。当前阶段：入口接缝聚焦复现与实施，尚无本任务工程贯穿或真实模型结果。
+- 集成页：`01a07fb9-9dfe-7a20-a345-de16b4ab1892`；接收基线 `0f59a0c185d253fc18a604e53e262b264ba98110`（含 `d8db786` 完整验证/DSH/摘要与 `21f2a36` C#验证修正）。当前阶段：工程贯穿已有替身验证；首Actual `nlcfg_001` 在Findings后阻断，尚无本任务模型生成代码或交付成功，第二Actual未启动。
 - 选定首任务：无已保存配置时 `General Settings` 下 `Follow Recoil` 默认关闭；已有显式true/false、其余默认值和全部键保持不变。起点为自然语言 `run-request`、真实项目和正常环境配置；不预填Findings、编辑位置或Plan，不伪造Repair输入。
 - 首个接缝：原 `run_local_request` 的重复Patch装配迁移到已有共享worker，并接入本次上游产物、journal、失败上下文、实际effect与全任务/阶段累计预算。
 - 后段：保留原Review/完整diff/精确批准/隔离Apply；仅在任务适用且有效授权时续接原Build/Runtime。Build消费实际Apply工程，Runtime消费本次Build产物；新代码重新Review/批准。本回执不批准尚未生成的diff或具体游戏操作。
@@ -30,9 +30,26 @@ Completed, frozen, review, and superseded records belong in
 - 唯一集成checkpoint：`.venv/Scripts/python.exe -B -m pytest tests/unit/test_run_request_shared_worker.py tests/unit/test_run_request_external_worker.py tests/unit/test_product_patch_journal.py tests/unit/test_request_patch_repair_context.py tests/unit/test_product_patch_outcome.py tests/unit/test_product_repair_reanchoring.py tests/unit/test_deferred_product_approval.py tests/unit/test_reviewed_patch_continuation.py tests/unit/test_reviewed_patch_cli.py tests/unit/test_actual_crosshair_configuration.py tests/unit/test_complete_crosshair_verification.py tests/unit/test_full_project_compilation.py tests/unit/test_accurate_crosshair_eval.py tests/unit/test_product_execution.py::test_public_product_executor_preserves_repair_attempt_prefixes tests/unit/test_product_execution.py::test_product_repair_review_uses_ephemeral_review_context_only_on_repair tests/unit/test_product_execution.py::test_public_product_executor_returns_repair_budget_exhaustion_result tests/unit/test_product_execution.py::test_public_product_executor_runs_exact_runtime_terminal_chain -k 'not original_source_exposes' -q --tb=short -n 2 --dist=loadfile --basetemp=C:/Users/10160/AppData/Local/Temp/jointcp0908`：157 passed，83.18s。后续仅新增公开timeout穿透，`test_run_request_shared_worker.py`定点3 passed，4.51s；未重复大组。
 - 首Actual事前判定：采用完整工程编译与真实完整DLL的CONFIG_CASE五项配置义务（首次false、其他默认、原6键、已有true/false）。固定两源码文件的旧doubles matrix保留独立，不作为本任务模型合法选址的门槛；本任务配置I/O在隔离进程执行，GTFO游戏/自动LiveEdit不在本轮完成声明内。获准后的正式Build仍与预审批编译分开报告。
 - 预选真实运行：`qwen3-coder:30b`，仅loopback，context32768/output4096/timeout600s；全任务14次额度，projection2/findings2/planning2/initial_patch4/repair4累计，不按节点重置，原worker每段上限4。到原`--defer-approval`停点后等本次精确diff批准，未批准不Apply/后段Build，不启动游戏；第一物理失败照原规则处理。
-- 当前未完成：固定集成commit/独立执行树、一次上述真实模型验收及其实际到达阶段。GPU由原页面顺序使用，收到交还再开始；此前本页0真实模型发送。原页面独立提交已推进到99a3c5a，冻结时以当前实际HEAD及本页commit为准。
+- 首Actual已固定并执行：`7ea960f9e6a87830c42a810efb4b17821208e928`，独立干净执行树 `C:/Users/10160/.codex/visualizations/2026/09/08/01a07fb9-9dfe-7a20-a345-de16b4ab1892/execution-7ea960f`；公开 `run-request` 的正常参数完整保存在 [prepared-inputs.json](C:/Users/10160/.codex/visualizations/2026/09/08/01a07fb9-9dfe-7a20-a345-de16b4ab1892/joint_configuration_001/prepared-inputs.json)。未传Findings/target/Plan，未改变模型配置或冻结代码。
+- `nlcfg_001` 实际结果：原工程基线构建通过；需求投影/Findings各1次模型响应，共2次。Coverage把合并的pre_patch_evidence判缺失，模型Planning/Patch均0，生成了blocked Plan记录而非模型Plan。无新代码/Review/diff/Apply/正式Build/配置检查/游戏Runtime。总额剩12，GPU已归还；没有自动重试。[唯一验收摘要](C:/Users/10160/.codex/visualizations/2026/09/08/01a07fb9-9dfe-7a20-a345-de16b4ab1892/joint_configuration_001/acceptance-summary.json)绑定原始公开结果、输入、进程回执和Artifact路径。
+- 第一失败定位：模型以当前BindAll源码支持change，同时把通用“target source or API evidence”判missing。实际检索已命中配置代码。Findings父视图丢掉了合并requirement关联的其余input_obligations；本次仅修无损父义务投影，7条prompt规则/Coverage标准/旧Actual字节不变，不翻转missing。新9项及已有语义caller/负例19 passed（4.99s），旧missing离线仍阻塞。该修复只证明输入完整，最多一个新Actual接受；若同签名再现停止继续加prompt/schema补丁。
+- 原summary的`canonical_source_unchanged=False`实际来自typed owner的`not_applicable`布尔映射，不是源码改动事实；独立读回13个完整项目文件与冻结输入全部相同。保留旧结果不改，未来summary将not_applicable保留为unknown/null并带原状态。
+- 当前查询限制：原patch-execution查询在此run返回missing_cr_directory/match_count0，因为它止于worker之前；这不代表没有模型调用。原run_result、Artifact和验收摘要可查，不能宣称统一Patch索引已覆盖全部上游失败。
+- 并行CI实证另行处理：f976a59的13项失败分为旧fixture未执行真实Apply、外部profile/native transport前置未适配，以及null响应投影和BlockedReport写失败语义两处生产接缝；它们与本Actual的Findings输入缺失分开。仅有界修复相应owner/fixture，不扩大全仓QA。第二Actual若启动，沿同一逻辑任务继承已用2次，仅使用剩余总额12及projection1/findings1/planning2/initial4/repair4，不重新领14次。
+
+- 用户随后要求同时解释Mod与SFT持续未修复的原因，本次按只读路线复核：First Shot 009/014的真实修订请求均保留当前失败代码及三个反例的输入/预期/实际/状态，模型响应与第二次矩阵确实发生，但五处代码均未改变，仍33/36；这两次不能归因于反馈未发送或预算提前拒绝。SFT三个checkpoint的validation均0/2，选定e1与Base的holdout各模式仍0/4；部分代码有变化但无有效修复，上游record-and-stop不等于执行重规划。本页nlcfg_001则在Findings后阻断，未进入Patch。现有证据支持分别定位语义修订无效、上游执行停止和输入投影缺口；未证明一个可解释全部失败的单一原因，也未证明本页投影修复能消除First Shot/SFT失败。本次诊断未启动新模型、训练或Actual。
+
+- 2026-09-09接收原页面独立冻结对照：同一需求/Evidence/Plan/C1/F1、首请求消息、worker与原判定下，未微调1.7B Base为0/2，`qwen3.8-max` 为2/2，分别通过原4项/7项且各用1次调用；均从预置失败开始，不是Max先生成失败后连续多轮修复。已读回共同输入与输出身份核查，并独立复核两份实际被测源码hash吻合。该证据支持把这两个任务的模型/provider组合列为已观察到的关键差异，不能隔离为纯权重因果，也不证明First Shot使用的30B在同题的表现。本轮是人辅Plan的自有C#任务，到Proposal/Review/Dry-run，未Apply/正式Mod Build/Runtime；不并入本页自然语言Mod成功。完整事实只保留在原页面的[对照报告](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/repair_ability_contrast_001/comparison-report.md)，本页没有新增模型调用、训练或自动合并其分支。
+
+- 2026-09-09后续归属协调：原页面通知其用户已选择在独立Repair工作树逐项处理原预算内连续行为恢复、可纠正投稿/静态反馈，随后处理当前代码只读视图、反例过程和上游返回。Findings父义务投影修复仍由本页持有；本页未启动这些Repair工作的重复实现，也未开始“评估后沿用原Plan回worker”新能力。Findings现态仍为7ea旧Actual失败加未提交输入投影修复，尚无新真实语义验证；提供6Pro构造资料时须分列旧实测源码与当前WIP，不能把离线输入完整性通过写为Findings模型已修好。
+
+- 同次只读核对上游边界：当前Graph经上游评估后重新执行Planning、写入Plan并重装worker；没有明确的“评估确认无需修改、保留原Plan身份直接返回”分支。但现有准入也不强制Plan语义或新旧hash必须变化，不能把重新执行Planning表述成必须修改Plan内容。精确接缝为`workflow/graph.py`的Planning/Plan写入及`fresh_planning_continuation.py`的`prepare_replanned_patch_input`/`make_replanned_adapter`；该显式无修改返回能力交原页面独立Repair工作树，本次只读核对未执行测试或模型。
+
+- 原页面后续进度回执：独立`codex/repair-feedback-loop`工作树已复现旧单次行为纠正反例，报告三份代码/三次调用经原Graph/Review/Dry-run的scripted场景通过，并接入累计预算、最新修订记录及可纠正提交回流。当前被测源码视图、实际反例操作input和`retain_current_plan`仍在补充。本页仅接收进度，未独立执行其验证，未合并运行中的代码；暂无该轮真实模型或重训结果。等待其最终commit、改动清单和聚焦收据后，对齐本页共享文件WIP；Findings独立归属及旧Actual边界保持。
 
 ### 并行训练与既有产品工作
+
+原训练页已完成首轮SFT与全部24个固定attempt（52次本地模型调用），两mode的Base/选定epoch1均0/4，决定不采用该训练profile；详细事实以reconciliation 0.35为准。它不再自动训练/DPO/重试。下面保留最初选定范围作为历史上下文，不再把“准备/训练待做”当成当前任务；本页继续持有上述P1/P2整链与首Actual失败修复。
 
 Current user-selected work: complete an actual bounded repair SFT A/B (not only preparation), using verified diverse owned code revisions, task-family splits, completion-only token masks, checkpoint save/reload and the original worker deployment. Do not make First Shot passing a prerequisite or silently substitute requirement extraction. DPO is optional after appropriate same-input data and comparisons. Also add automatic evidence-based failure summaries to the existing query so module/chain/multi-task failures can be located without manual reference reconstruction. Completed full compilation/configuration and offline DSH Apply work is in 0.32; no real Mod or Runtime success is implied.
 

@@ -1255,6 +1255,7 @@ def _runtime_request_and_adapters(
     base = _successful_compile_adapters(
         request,
         build_exit_codes=build_exit_codes,
+        physical_apply=bool(build_exit_codes and any(code != 0 for code in build_exit_codes)),
     )
 
     def runtime_evidence_factory(feature_id, build, feature_spec):
@@ -1435,6 +1436,7 @@ def _execute_store_role_scenario(
                     if scenario == "repair"
                     else [0]
                 ),
+                physical_apply=scenario in {"review_max", "repair"},
             )
             if scenario in {"review", "review_max"}:
                 original_patch_factory = adapters.patch_change_factory
@@ -3141,6 +3143,7 @@ def test_strict_replay_rejects_terminal_repair_attempt_drift_by_source(
             for index, item in enumerate(collection)
             if item["node_name"] == "create_repair_plan"
         )
+        assert collection[last_plan]["repair_attempt"] != replacement_attempt
         collection[last_plan]["repair_attempt"] = replacement_attempt
         if collection[-1]["node_name"] == "blocked":
             collection[-1]["repair_attempt"] = replacement_attempt
@@ -3148,6 +3151,39 @@ def test_strict_replay_rejects_terminal_repair_attempt_drift_by_source(
 
     with pytest.raises(ProductExecutionContractError):
         ProductExecutionResultV1.from_dict(projection)
+
+
+@pytest.mark.parametrize("outcome", ["blocked_before_commit", "partial"])
+def test_repair_source_blocked_report_write_failure_retains_cause_without_fabricating_output(tmp_path, monkeypatch, outcome):
+    request, store = _request(tmp_path)
+    Path(request.isolated_target_root, "Plugin.cs").write_bytes(b"public void Load() {}\n")
+    values = request.to_dict()
+    values["isolated_source_snapshot_sha256"] = source_snapshot_sha256(source_snapshot(Path(request.isolated_target_root)))
+    request = ProductExecutionRequestV1.from_dict(values)
+    adapters = _successful_compile_adapters(request, build_exit_codes=[1], physical_apply=True)
+    original_apply = adapters.isolated_apply_factory
+
+    def incomplete_apply_receipt(*args):
+        result = original_apply(*args)
+        result.pop("changes")
+        return result
+
+    adapters = replace(adapters, isolated_apply_factory=incomplete_apply_receipt)
+    _install_actual_store_failure(monkeypatch, store, artifact_role="blocked_report", outcome=outcome)
+    result = execute_product_execution(preflight_product_execution(request, adapters, store), adapters, store)
+    assert result.platform_status == "partial"
+    assert result.failure_stage == "blocked_report_store"
+    assert result.store_attempts[-1].store_result.outcome == outcome
+    assert result.store_attempts[-1].artifact_role == "blocked_report"
+    assert not any(output.artifact_role == "blocked_report" for output in result.outputs)
+    assert {blocker.code for blocker in result.blockers} == {
+        "PRODUCT_STORE_NOT_COMMITTED", "PRODUCT_REPAIR_SOURCE_REANCHORING_REQUIRED"}
+    assert ProductExecutionResultV1.from_dict(result.to_dict()) == result
+    without_cause = result.to_dict()
+    without_cause["blockers"] = [blocker for blocker in without_cause["blockers"]
+                                if blocker["code"] != "PRODUCT_REPAIR_SOURCE_REANCHORING_REQUIRED"]
+    with pytest.raises(ProductExecutionContractError, match="lifecycle predicate"):
+        ProductExecutionResultV1.from_dict(without_cause)
 
 
 @pytest.mark.parametrize("mutation", ("missing", "wrong_attempt"))

@@ -22,6 +22,7 @@ from .requirement_coverage import (
     REQUIREMENT_COVERAGE_SCHEMA_VERSION,
     REQUIREMENT_ROLES,
     RequirementCoverageProjectionError,
+    _validated_input_obligations,
     default_feature_requirement_projection,
     is_exact_edit_target_evidence,
     materialize_requirement_coverage_projection,
@@ -1040,6 +1041,14 @@ def _requirement_findings_model_relations(
 ]:
     requirements = materialized_projection["requirements"]
     relations = materialized_projection["relations"]
+    obligations = _validated_input_obligations(materialized_projection["input_obligations"],
+        feature_spec_sha256=materialized_projection["feature_spec_identity"]["feature_spec_sha256"])
+    obligation_by_id: dict[str, Mapping[str, Any]] = {}
+    for obligation in obligations:
+        obligation_id = str(obligation["input_obligation_id"])
+        if obligation_id in obligation_by_id:
+            raise ValueError("REQUIREMENT_COVERAGE_INPUT_OBLIGATION_INVALID")
+        obligation_by_id[obligation_id] = obligation
     requirement_by_id: dict[str, Mapping[str, Any]] = {}
     for requirement in requirements:
         requirement_id = requirement["requirement_id"]
@@ -1049,6 +1058,11 @@ def _requirement_findings_model_relations(
             or requirement_id in requirement_by_id
         ):
             raise ValueError("REQUIREMENT_COVERAGE_RELATION_INVALID")
+        linked_ids = requirement.get("input_obligation_ids")
+        if (not isinstance(linked_ids, list) or not linked_ids
+                or any(not isinstance(value, str) or value not in obligation_by_id for value in linked_ids)
+                or len(linked_ids) != len(set(linked_ids))):
+            raise ValueError("REQUIREMENT_COVERAGE_INPUT_OBLIGATION_INVALID")
         requirement_by_id[requirement_id] = requirement
 
     relation_views: list[dict[str, object]] = []
@@ -1099,6 +1113,8 @@ def _requirement_findings_model_relations(
                         "required_before_patch": parent[
                             "required_before_patch"
                         ],
+                        "input_obligations": [deepcopy(obligation_by_id[obligation_id])
+                            for obligation_id in parent["input_obligation_ids"]],
                     }
                     for parent in parents
                 ],

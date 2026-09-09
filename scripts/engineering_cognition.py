@@ -1492,20 +1492,32 @@ def build_projection(
     run_id: str | None = None,
     attempt_locator: str | None = None,
     query: str | None = None,
+    run_root: Path | str | None = None,
 ) -> dict[str, Any]:
     """Build one deterministic projection from the current repository."""
 
     selected_root = (root or repository_root()).resolve()
-    execution_filters = (artifact_store_root, feature_id, run_id, attempt_locator)
+    execution_filters = (artifact_store_root, feature_id, run_id, attempt_locator, run_root)
+    product_query = view == "verification-claims" and query == "product-execution"
     execution_query = view == "patch-execution" or (
         view == "verification-claims" and query == "patch-execution"
     )
-    if query is not None and not execution_query:
-        raise EngineeringCognitionError("--query patch-execution requires --view verification-claims.")
-    if any(value is not None for value in execution_filters) and not execution_query:
-        raise EngineeringCognitionError("Execution filters require the patch-execution subquery.")
-    if execution_query:
-        if artifact_store_root is None or kind is not None or name is not None:
+    if query is not None and not (product_query or execution_query and query == "patch-execution"):
+        raise EngineeringCognitionError("Execution subqueries require --view verification-claims.")
+    if any(value is not None for value in execution_filters) and not (execution_query or product_query):
+        raise EngineeringCognitionError("Execution filters require an execution subquery.")
+    if product_query:
+        if run_root is None or any(value is not None for value in (artifact_store_root, attempt_locator, kind, name)):
+            raise EngineeringCognitionError("product-execution requires --run-root and no Patch-store or entity filters.")
+        from src.observability.patch_execution_index import project_product_execution
+
+        try:
+            data = project_product_execution(run_root, feature_id=feature_id, run_id=run_id)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise EngineeringCognitionError(str(exc)) from exc
+        selected_view = view
+    elif execution_query:
+        if artifact_store_root is None or kind is not None or name is not None or run_root is not None:
             raise EngineeringCognitionError(
                 "patch-execution requires --artifact-store-root and no entity query."
             )
@@ -1554,8 +1566,8 @@ def build_projection(
         "repository_root": str(selected_root),
         "schema_version": SCHEMA_VERSION,
         "view": selected_view,
-        **({"view_family": "verification-claims", "subquery": "patch-execution"}
-           if execution_query else {}),
+        **({"view_family": "verification-claims", "subquery": "product-execution" if product_query else "patch-execution"}
+           if execution_query or product_query else {}),
     }
 
 
@@ -1567,9 +1579,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--kind", choices=ENTITY_KINDS)
     parser.add_argument("--name", help="Exact entity identifier; no fuzzy or case matching.")
     parser.add_argument("--pretty", action="store_true")
-    parser.add_argument("--query", choices=("patch-execution",),
+    parser.add_argument("--query", choices=("patch-execution", "product-execution"),
                         help="Bounded subquery within verification-claims.")
     parser.add_argument("--artifact-store-root", type=Path, help="Read-only Patch journal store.")
+    parser.add_argument("--run-root", type=Path, help="Explicit product run root containing its original run_manifest.json.")
     parser.add_argument("--feature-id", help="Exact journal feature_id filter.")
     parser.add_argument("--run-id", help="Exact journal run_id filter.")
     parser.add_argument("--attempt-locator", help="Exact journal path within the store cr directory.")
@@ -1586,7 +1599,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             args.view, kind=args.kind, name=args.name,
             artifact_store_root=args.artifact_store_root, feature_id=args.feature_id,
             run_id=args.run_id, attempt_locator=args.attempt_locator,
-            query=args.query,
+            query=args.query, run_root=args.run_root,
         )
     except EngineeringCognitionError as exc:
         sys.stderr.write(f"engineering-cognition: {exc}\n")

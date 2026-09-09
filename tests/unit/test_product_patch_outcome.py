@@ -125,16 +125,16 @@ def test_deferred_owner_keeps_exact_checkpoint_diff_and_zero_downstream_effects(
     assert _snapshot(tmp_path) == before
 
 
-@pytest.mark.parametrize("mismatch", ["response", "repair_attempt"])
+@pytest.mark.parametrize("mismatch", ["response", "null_response", "repair_attempt"])
 def test_segment_without_its_own_proposal_cannot_borrow_another_output(tmp_path, mismatch):
     case, execution = _case(tmp_path)
     preflight = preflight_product_execution(case.request, case.adapters, case.store)
     with pytest.raises(ProductApprovalDeferred) as caught:
         execute_product_execution(preflight, case.adapters, case.store, defer_approval=True)
     journal = execution.journals[0]
-    if mismatch == "response":
+    if mismatch in {"response", "null_response"}:
         journal.record({"phase": "local_patch_generation_failed", "factory_receipt": {
-            "model_response": {"output_sha256": "0" * 64}}})
+            "model_response": None if mismatch == "null_response" else {"output_sha256": "0" * 64}}})
     else:
         execution._repair_attempts[0] = 1
     execution.complete_deferred(caught.value)

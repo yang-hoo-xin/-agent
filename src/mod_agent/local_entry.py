@@ -7859,8 +7859,10 @@ def run_local_request(
     selected_classification = dict(product_request.completion_classification)
     final_artifact_verification = validation_details.get("compiled_artifact")
     source_change_verification = validation_details.get("source_change")
+    source_validation_status = product_result.validation_facts.canonical_source_status
     canonical_source_unchanged = (
-        product_result.validation_facts.canonical_source_status == "passed"
+        True if source_validation_status == "passed"
+        else False if source_validation_status == "failed" else None
     )
 
     summary = {
@@ -7894,6 +7896,7 @@ def run_local_request(
         ),
         "final_artifact_verification": final_artifact_verification,
         "canonical_source_unchanged": canonical_source_unchanged,
+        "canonical_source_validation_status": source_validation_status,
         "initial_isolated_source_snapshot": initial_source_snapshot,
         "final_isolated_source_snapshot": (
             source_change_verification.get("final_snapshot")

@@ -4535,7 +4535,17 @@ def test_external_run_still_requires_api_key_after_disclosure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from dataclasses import replace
+
+    from src.core.settings import load_settings
+    from tests.unit.test_external_patch import _profile
+
+    profile = replace(_profile(), credential_env="MISSING_EXTERNAL_KEY")
+    settings = load_settings("config/settings.yaml")
+    settings = replace(settings, llm=replace(settings.llm, model=profile.model, base_url=profile.base_url))
+    monkeypatch.setattr("src.mod_agent.local_entry.load_settings", lambda _path: settings)
     monkeypatch.delenv("MISSING_EXTERNAL_KEY", raising=False)
+    monkeypatch.setenv("EXTERNAL_KEY_TEST_BASE_URL", profile.base_url)
 
     with pytest.raises(LocalEntryError, match="MISSING_EXTERNAL_KEY"):
         run_local_request(
@@ -4544,6 +4554,8 @@ def test_external_run_still_requires_api_key_after_disclosure(
             workspace_base=tmp_path / "runs",
             settings_path=Path("config/settings.yaml"),
             api_key_env="MISSING_EXTERNAL_KEY",
+            base_url_env="EXTERNAL_KEY_TEST_BASE_URL",
+            external_patch_profile=profile,
             confirm_isolated_write=True,
             allow_build=True,
             allow_source_disclosure=True,

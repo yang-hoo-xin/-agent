@@ -1901,6 +1901,11 @@ def test_findings_prompt_defines_change_support_as_current_source_location(
             "required_before_patch": materialized_requirement[
                 "required_before_patch"
             ],
+            "input_obligations": [
+                next(obligation for obligation in materialized["input_obligations"]
+                     if obligation["input_obligation_id"] == obligation_id)
+                for obligation_id in materialized_requirement["input_obligation_ids"]
+            ],
         }
         for materialized_relation in materialized["relations"][:3]
         for materialized_requirement in materialized["requirements"]

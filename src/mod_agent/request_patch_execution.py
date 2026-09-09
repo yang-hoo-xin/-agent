@@ -430,7 +430,10 @@ class RequestPatchExecution:
     def _segment_output_refs(self, document, outputs):
         """Join owner output lineage to this segment's exact Plan and response."""
         selected = document["selected_artifacts"]
-        response_hash = (document.get("factory_receipt") or {}).get("model_response", {}).get("output_sha256")
+        response = (document.get("factory_receipt") or {}).get("model_response")
+        if not isinstance(response, Mapping) or not response.get("output_sha256"):
+            return {}
+        response_hash = response["output_sha256"]
         refs = {}
 
         def has(envelope, ref):

@@ -1883,6 +1883,40 @@ def _formal_coverage_model_response(request: dict[str, object]) -> dict[str, obj
     return None
 
 
+def _install_public_run_request_native_chat(monkeypatch, deterministic_chat):
+    """Replace HTTP only; keep native AgentTurn, the shared worker and Graph real."""
+    def native_chat(_transport, request):
+        assert request.method == "POST"
+        assert str(request.url) == "http://127.0.0.1:11434/api/chat"
+        payload = json.loads(request.content)
+        contexts = []
+        for message in payload["messages"]:
+            if message["role"] != "user":
+                continue
+            try:
+                context = json.loads(message["content"])
+            except (TypeError, ValueError):
+                continue
+            if "patch_agent_context_encoding" in context:
+                context = local_entry_module._restore_patch_agent_context(context)
+            if "required_change_units" in context or "allowed_edit_evidence_ids" in context:
+                contexts.append(context)
+        assert contexts, "Native request omitted its real Planning or Patch context."
+        context = contexts[-1]
+        if "allowed_edit_evidence_ids" in context:
+            response = ChatResponse(model=payload["model"], content=json.dumps({
+                "decision": "select_targets", "selected_evidence_ids": context["allowed_edit_evidence_ids"],
+                "rationale": "Engineering transport fixture selected the observed source unit.", "missing_evidence": [],
+            }))
+        else:
+            response = deterministic_chat(SimpleNamespace(), [SimpleNamespace(content=json.dumps(context))])
+        return httpx.Response(200, request=request, json={"model": response.model,
+            "message": {"role": "assistant", "content": response.content},
+            "done": True, "done_reason": "stop", "prompt_eval_count": 10, "eval_count": 20})
+
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", native_chat)
+
+
 def test_cli_run_request_real_public_product_executor_compile_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2002,6 +2036,7 @@ def test_cli_run_request_real_public_product_executor_compile_success(
         )
 
     monkeypatch.setattr(local_entry_module.OllamaLLM, "chat", deterministic_chat)
+    _install_public_run_request_native_chat(monkeypatch, deterministic_chat)
 
     def build(profile):
         artifact = profile.working_directory / "bin" / "Debug" / "Example.dll"
@@ -2280,6 +2315,7 @@ def test_cli_run_request_real_public_product_executor_runtime_success(
         )
 
     monkeypatch.setattr(local_entry_module.OllamaLLM, "chat", deterministic_chat)
+    _install_public_run_request_native_chat(monkeypatch, deterministic_chat)
 
     def build(profile):
         artifact = profile.working_directory / "bin" / "Debug" / "Example.dll"

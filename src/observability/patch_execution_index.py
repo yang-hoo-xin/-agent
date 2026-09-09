@@ -1,6 +1,6 @@
-"""Regenerable, non-authoritative index of retained Patch execution journals.
+"""Regenerable, non-authoritative queries of retained Patch and product records.
 
-Only local files explicitly referenced by a journal are read. No worker, model,
+Only local files referenced by the selected journal or run manifest are read. No worker, model,
 validator, graph, Artifact write, network sink, or recovery operation is invoked.
 Missing fields remain unknown; journal claims are not promoted to execution proof.
 """
@@ -820,3 +820,151 @@ def project_patch_executions(
         "verifier_executions_performed": 0, "product_source_writes_performed": False,
         "langfuse_delivery": "not_performed", "task_suite_denominator": None,
     }
+
+
+def _product_record_json(raw):
+    def exact_object(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("product_record_duplicate_json_field")
+            value[key] = item
+        return value
+
+    value = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=exact_object)
+    if not isinstance(value, dict):
+        raise ValueError("product_record_object_required")
+    return value
+
+
+def _product_bound_path(root, raw):
+    if not isinstance(raw, str) or not raw:
+        raise ValueError("product_record_path_missing")
+    path = _local_path(root, raw)
+    if not path.is_relative_to(root):
+        raise ValueError("product_record_path_outside_run_root")
+    return path
+
+
+def _product_artifact(root, reference, feature_id):
+    if not isinstance(reference, dict) or set(reference) != {"feature_id", "artifact_type", "path", "artifact_hash"}:
+        raise ValueError("product_artifact_reference_invalid")
+    if reference["feature_id"] != feature_id:
+        raise ValueError("product_artifact_feature_mismatch")
+    path = _product_bound_path(root, reference["path"])
+    document = _product_record_json(_read_bytes(path))
+    if any(document.get(key) != reference[key] for key in ("feature_id", "artifact_type", "artifact_hash")):
+        raise ValueError("product_artifact_identity_mismatch")
+    # Use only the existing content-hash functions. This query does not invoke
+    # ArtifactStore admission, freshness, any behavioral validator, or a Graph.
+    if ArtifactStore._stable_hash(ArtifactStore._envelope_content_for_hash(document)) != reference["artifact_hash"]:
+        raise ValueError("product_artifact_content_hash_mismatch")
+    if not isinstance(document.get("data"), dict):
+        raise ValueError("product_artifact_data_invalid")
+    return document["data"]
+
+
+def project_product_execution(run_root: str | Path, *, feature_id=None, run_id=None):
+    """Read one explicitly selected product run, including pre-worker stops."""
+    from src.mod_agent.product_execution import ProductExecutionResultV1
+
+    selected = Path(run_root)
+    if not selected.is_absolute():
+        raise ValueError("product_query_requires_absolute_run_root")
+    root = _local_path(Path.cwd(), str(selected))
+    result = {"authority": "non_authoritative", "read_only": True, "persistence": "none",
+        "query_scope": "single_explicit_product_run", "run_root": str(root), "record_status": "unknown",
+        "current_stage": "unknown", "artifact_refs": [], "blockers": None,
+        "source_validation": {"canonical_source_status": "unknown", "source_change_status": "unknown",
+            "scope": "recorded_status_only_not_live_source_validation"},
+        "model_accounting": {"recorded_model_call_count": None, "budget": None, "native_send_count": None,
+            "scope": "recorded_provider_accounting_not_independent_transport_proof"},
+        "upstream_responses": {"status": "unknown", "recorded_response_count": None, "records": [],
+            "scope": "selected_evidence_pack_audit_entries_not_all_task_calls_or_native_sends"},
+        "post_stages": {name: "unknown" for name in ("isolated_apply", "build", "runtime", "evaluation")},
+        "query_execution": {"model_calls_performed": 0, "verifier_executions_performed": 0,
+            "graph_invocations": 0, "product_source_writes_performed": False}}
+    manifest_path = _product_bound_path(root, str(root / "run_manifest.json"))
+    if not manifest_path.is_file():
+        return {**result, "record_status": "unknown_missing_manifest"}
+    manifest_raw = _read_bytes(manifest_path)
+    manifest = _product_record_json(manifest_raw)
+    result["manifest_ref"] = {"path": str(manifest_path), "sha256": hashlib.sha256(manifest_raw).hexdigest()}
+    terminal_ref = manifest.get("terminal_record")
+    if not isinstance(terminal_ref, dict) or set(terminal_ref) != {"path", "sha256"}:
+        return {**result, "record_status": "unknown_missing_terminal_reference"}
+    terminal_path = _product_bound_path(root, terminal_ref["path"])
+    result["terminal_record_ref"] = dict(terminal_ref)
+    if not terminal_path.is_file():
+        return {**result, "record_status": "unknown_missing_terminal_record"}
+    raw = _read_bytes(terminal_path)
+    if hashlib.sha256(raw).hexdigest() != terminal_ref["sha256"]:
+        raise ValueError("product_terminal_hash_mismatch")
+    terminal = _product_record_json(raw)
+    typed_raw = terminal.get("product_execution_result")
+    typed = ProductExecutionResultV1.from_dict(typed_raw) if typed_raw is not None else None
+    identity = {name: getattr(typed, name) if typed is not None else terminal.get(name)
+                for name in ("run_id", "request_id", "feature_id")}
+    if any(not isinstance(identity[name], str) or not identity[name] or manifest.get(name) != identity[name]
+           for name in ("run_id", "request_id")):
+        raise ValueError("product_manifest_terminal_identity_mismatch")
+    if any(terminal.get(name) is not None and terminal[name] != identity[name] for name in identity):
+        raise ValueError("product_terminal_typed_identity_mismatch")
+    if manifest.get("feature_id") is not None and manifest["feature_id"] != identity["feature_id"]:
+        raise ValueError("product_manifest_feature_mismatch")
+    if (run_id is not None and run_id != identity["run_id"]) or (feature_id is not None and feature_id != identity["feature_id"]):
+        raise ValueError("product_query_identity_filter_mismatch")
+    stage = terminal.get("current_stage", "unknown")
+    if manifest.get("terminal_stage") is not None and manifest["terminal_stage"] != stage:
+        raise ValueError("product_terminal_stage_mismatch")
+    refs = []
+    result.update(identity, current_stage=stage, record_status="verified_terminal_bytes")
+    if typed is not None:
+        refs = [{"feature_id": item.artifact_ref.feature_id, "artifact_type": item.artifact_ref.artifact_type,
+            "path": item.artifact_ref.path, "artifact_hash": item.artifact_ref.artifact_hash} for item in typed.outputs]
+        result.update(typed_result_status="validated", execution_disposition=typed.execution_disposition,
+            platform_status=typed.platform_status, blockers=[item.to_dict() for item in typed.blockers])
+        result["source_validation"].update(canonical_source_status=typed.validation_facts.canonical_source_status,
+            source_change_status=typed.validation_facts.source_change_status)
+        for name, role in (("isolated_apply", "isolated_apply_result"), ("build", "build_result"),
+                           ("runtime", "runtime_evidence"), ("evaluation", "eval_report")):
+            result["post_stages"][name] = ("recorded_result" if any(ref["artifact_type"] == role for ref in refs) else
+                "started_without_result" if any(event.effect_role == name for event in typed.effect_events) else "not_reached")
+    elif terminal.get("status") == "awaiting_approval" and stage == "awaiting_approval":
+        checkpoint_ref = terminal.get("workflow_checkpoint")
+        checkpoint = _product_artifact(root, checkpoint_ref, identity["feature_id"])
+        snapshot = checkpoint.get("state_snapshot", {})
+        if (checkpoint.get("checkpoint_stage") != "dry_run_apply" or snapshot.get("current_stage") != "dry_run_apply"
+                or any(checkpoint.get(name) != identity[name] or snapshot.get(name) != identity[name] for name in identity)
+                or checkpoint_ref["artifact_type"] != "workflow_checkpoint"):
+            raise ValueError("product_pending_checkpoint_identity_mismatch")
+        refs = [{"feature_id": identity["feature_id"], "artifact_type": kind, "path": path,
+                 "artifact_hash": snapshot["artifact_hashes"][kind]} for kind, path in snapshot["artifacts"].items()]
+        if any(ref["artifact_type"] in {"isolated_apply_result", "build_result", "runtime_evidence"} for ref in refs):
+            raise ValueError("product_pending_checkpoint_is_after_apply")
+        result.update(typed_result_status="not_applicable_saved_approval_pause", checkpoint_ref=checkpoint_ref,
+            blockers=terminal.get("blockers"), approval_status="awaiting_approval")
+        result["post_stages"] = {name: "not_reached_at_saved_pause" for name in result["post_stages"]}
+        result["source_validation"]["recorded_canonical_source_unchanged"] = terminal.get("canonical_source_unchanged")
+    else:
+        result.update(typed_result_status="unknown_missing_typed_result", blockers=terminal.get("blockers"))
+    result["artifact_refs"] = refs
+    result["model_accounting"].update(recorded_model_call_count=terminal.get("model_call_count"),
+        budget=terminal.get("model_call_budget"))
+    evidence_refs = [ref for ref in refs if ref["artifact_type"] == "evidence_pack"]
+    if evidence_refs:
+        evidence_ref = evidence_refs[-1]
+        result["upstream_responses"]["evidence_pack_ref"] = evidence_ref
+        try:
+            evidence = _product_artifact(root, evidence_ref, identity["feature_id"])
+            audits = _object(evidence.get("budget_summary")).get("requirement_coverage_model_audits")
+            if isinstance(audits, list):
+                rows = [{**_fields(row, "model_role", "payload_sha256", "structured_output_sha256"),
+                    "model_identity": _fields(_object(row.get("model_identity")), "name", "model", "digest"),
+                    "provider_request": _fields(_object(row.get("provider_request")), "body_sha256", "body_size_bytes")}
+                    for row in audits if isinstance(row, dict)]
+                result["upstream_responses"].update(status="recorded_audit_entries", records=rows,
+                    recorded_response_count=sum(isinstance(row.get("structured_output_sha256"), str) for row in rows))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            result["upstream_responses"].update(status="unknown_unavailable_evidence_record", reason=str(exc))
+    return result
