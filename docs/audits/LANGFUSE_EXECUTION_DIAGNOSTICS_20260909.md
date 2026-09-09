@@ -219,3 +219,61 @@ documentation WIP. The intersecting producer/reservation/Review selection
 tests/unit/test_product_proposal_context_budget.py` passed **41 tests in 4.68s**
 with the same Python, `-q --tb=short -n 2 --dist=loadfile`, short TEMP basetemp
 and cache. The Repair acceptance tree remains frozen separately at `a8b8971`.
+
+## Verified single-process receipt compatibility
+
+The subsequently completed owned paging/snapshot runs exposed an exact format
+gap: `scripts.prepare_patch_sft_data.execute_version` retained real C# process
+stdout, exit code, compilation/source/assembly references and
+`execution_origin=actual_csharp_process`, but no top-level matrix `executions`.
+The outer verifier summary recorded one execution. The original strict helper
+therefore correctly emitted no score from those unadapted records.
+
+`_verified_matrix_executions` now derives one only for this existing exact
+single-process receipt shape. It requires canonical parsed stdout to equal the
+check rows, exit code/status/failed-name list/preservation result to agree,
+successful compilation, and valid retained hashes for compilation, both source
+files, compiler arguments, subject source and nonempty assembly bytes. Compiler
+arguments must bind the same source and assembly references in the format
+produced by that owner. Unknown receipt shapes, contradictory values, missing
+files or hash drift remain unscored. An explicit matrix `executions` field keeps
+the original path, including rejection of invalid/zero values; it is never
+replaced by an inferred count. No matrix field is written or synthesized, and
+the grader and its original expectations are unchanged.
+
+The new focused file first reproduced the valid-record rejection: one failed,
+17 negative cases passed. The bounded adjacent checkpoint then ran:
+
+```powershell
+python -B -m pytest tests/unit/test_langfuse_single_process_receipt.py tests/unit/test_patch_langfuse.py tests/unit/test_patch_live_verification_scores.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\lf-single-green"
+```
+
+Result: **80 passed, 5.33s**. These are file/HTTP-fixture engineering checks;
+they do not execute a compiler, model, or Cloud write. No broader test suite was
+repeated for this bounded compatibility change.
+
+Read-only acceptance then used both newly completed actual journals, each
+verification's own retained report/matrix/response, and the unchanged v2 mapper.
+The paging trace `b707f8d386fe1284627765c3573cc205` produced a preview of 16
+observations, two generations and one local-check score of 1.0. The snapshot
+trace `498784a38297d0b40c55d67d3b1e7f5e` produced 26 observations, four generations
+and separate scores 0.5 then 1.0. All three actual verification observations
+remain represented; the latest successful report does not replace the earlier
+failure. These fractions are local-check results, not Mod delivery or model
+qualification scores.
+
+The export copies add only the verified count/hash projection. Original
+observation IDs, parent IDs, types and UTC instants were compared to the native
+payload, and all read source files were rehashed after preparation. Original
+journals and reports remain unchanged. Outbound previews contain no source,
+prompt/reply body, local absolute path, GTFO content or credential field.
+Collection was `local_only` during execution; mapping occurred afterward and
+does not claim that a live Cloud export happened at capture time.
+
+The local preview root is
+`scratch/langfuse_cloud_diagnosis_20260909/actual-preview/`, with separate
+`otlp-preview.json`, `scores-preview.json`, `verification-provenance.json` and
+`preview-manifest.json` per case. `source-references.local.json` contains local
+audit locators and is explicitly excluded from any outbound payload. No preview
+was sent, no new model call was made and no verification was rerun during this
+acceptance.

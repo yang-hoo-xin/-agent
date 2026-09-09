@@ -140,6 +140,68 @@ def _read_verified_json(ref):
         return None
 
 
+def _verified_matrix_executions(matrix):
+    """Read explicit counts or the exact existing execute_version process receipt.
+
+    scripts.prepare_patch_sft_data.execute_version launches one checker process
+    and retains its stdout/exit verdict plus the compiled inputs. Derive one
+    only from that complete byte-bound shape; never add a field to the matrix.
+    """
+    if "executions" in matrix:
+        value = matrix["executions"]
+        return value if type(value) is int and value > 0 else None
+    expected = {"status", "checks", "failed_checks", "preservation_passed", "compilation_ref",
+                "assembly_ref", "exit_code", "stdout", "stderr", "execution_origin", "source_ref"}
+    if set(matrix) != expected or matrix["execution_origin"] != "actual_csharp_process":
+        return None
+
+    def read(ref):
+        if (not isinstance(ref, dict) or set(ref) != {"path", "sha256"}
+                or not isinstance(ref["path"], str) or _digest(ref["sha256"]) is None):
+            return None
+        path = Path(ref["path"])
+        if path.stat().st_size > MAX_PAYLOAD_BYTES:
+            return None
+        raw = path.read_bytes()
+        return raw if len(raw) <= MAX_PAYLOAD_BYTES and _sha(raw) == ref["sha256"] else None
+
+    try:
+        rows = matrix["checks"]
+        if (not isinstance(rows, list) or not rows or any(not isinstance(row, dict)
+                or type(row.get("passed")) is not bool or not isinstance(row.get("group"), str) for row in rows)
+                or not isinstance(matrix["stdout"], str) or not isinstance(matrix["stderr"], str)
+                or _json(json.loads(matrix["stdout"])) != _json(rows)):
+            return None
+        failed = [row["check"] for row in rows if not row["passed"]]
+        if (type(matrix["exit_code"]) is not int or matrix["exit_code"] != int(bool(failed))
+                or matrix["status"] != ("behavior_failed" if failed else "passed")
+                or matrix["failed_checks"] != failed
+                or type(matrix["preservation_passed"]) is not bool
+                or matrix["preservation_passed"] != all(row["passed"] for row in rows if row["group"] == "preservation")):
+            return None
+        raw_compilation = read(matrix["compilation_ref"])
+        compilation = json.loads(raw_compilation) if raw_compilation is not None else None
+        if (not isinstance(compilation, dict)
+                or set(compilation) != {"exit_code", "stdout", "stderr", "sources", "arguments_ref"}
+                or type(compilation["exit_code"]) is not int or compilation["exit_code"] != 0
+                or not isinstance(compilation["stdout"], str) or not isinstance(compilation["stderr"], str)
+                or not isinstance(compilation["sources"], list) or len(compilation["sources"]) != 2
+                or compilation["sources"][0] != matrix["source_ref"]
+                or any(read(ref) is None for ref in compilation["sources"])
+                or not read(matrix["assembly_ref"])):
+            return None
+        raw_arguments = read(compilation["arguments_ref"])
+        arguments = raw_arguments.decode("utf-8").splitlines() if raw_arguments is not None else []
+        if (len(arguments) < 7 or arguments[:4] != ["/nologo", "/target:exe", "/langversion:latest",
+                f'/out:"{matrix["assembly_ref"]["path"]}"']
+                or arguments[-2:] != [f'"{ref["path"]}"' for ref in compilation["sources"]]
+                or any(not value.startswith('/r:"') or not value.endswith('"') for value in arguments[4:-2])):
+            return None
+        return 1
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def _verified_check_counts(evaluation):
     """Import measured local checks, never convert them into model qualification."""
     if (evaluation.get("execution_observation") != "executed" or evaluation.get("admission") != "accepted"
@@ -189,8 +251,8 @@ def _verified_check_counts(evaluation):
     if (type(summary.get("checks")) is not int or type(summary.get("failed_checks")) is not int
             or summary["checks"] != len(rows) or summary["failed_checks"] != failed):
         return None
-    if (type(matrix.get("executions")) is not int or matrix["executions"] < 1
-            or type(summary.get("executions")) is not int or summary["executions"] != matrix["executions"]):
+    executions = _verified_matrix_executions(matrix)
+    if (executions is None or type(summary.get("executions")) is not int or summary["executions"] != executions):
         return None
     reported_summary = report.get("verification_summary")
     if reported_summary is not None and (not isinstance(reported_summary, dict)
