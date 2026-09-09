@@ -1410,10 +1410,11 @@ def test_v3_four_site_plan_projects_and_materializes_canned_native_response(
         not in provider_payload_text
     )
     system_prompt = llm.messages[0].content
-    assert "feature-level generation contract" in system_prompt
-    assert "does not assign a feature obligation to an individual change" in (
-        system_prompt
-    )
+    assert (
+        "target_behavior/constraints/acceptance_criteria/runtime_verification_plan "
+        "form one feature contract."
+    ) in system_prompt
+    assert "Units carry only identity/operation/binding refs, not per-change obligations." in system_prompt
     assert "rationale is its exact behavior obligation" not in system_prompt
     assert "expected_validation is its exact validation obligation" not in (
         system_prompt
