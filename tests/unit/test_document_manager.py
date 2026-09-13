@@ -185,6 +185,7 @@ def _make_manager(
 ) -> DocumentManager:
     """Build a DocumentManager with mock stores."""
     chroma = MagicMock()
+    chroma.collection_name = "default"
     bm25 = MagicMock()
     images = MagicMock()
     integrity = MagicMock()
@@ -205,6 +206,7 @@ def _make_manager(
 
     # Default bm25 remove
     bm25.remove_document.return_value = True
+    bm25.remove_chunks.return_value = True
 
     # Default integrity remove
     integrity.remove_record.return_value = True
@@ -299,17 +301,18 @@ class TestDocumentManagerDelete:
         test_file = tmp_path / "test.pdf"
         test_file.write_bytes(b"data")
 
-        mgr = _make_manager()
+        mgr = _make_manager(chroma_get_ids=["c0"])
         mgr.chroma.delete_by_metadata.side_effect = RuntimeError("chroma fail")
         result = mgr.delete_document(str(test_file), "default")
         assert result.success is False
         assert any("ChromaDB" in e for e in result.errors)
-        # Other stores still attempted
-        mgr.bm25.remove_document.assert_called_once()
-        mgr.integrity.remove_record.assert_called_once()
+        # Sparse cleanup used exact IDs; preserve identity after partial failure.
+        mgr.bm25.remove_chunks.assert_called_once_with(["c0"], "default")
+        mgr.integrity.remove_record.assert_not_called()
 
     def test_delete_file_missing_falls_back_to_integrity(self):
         mgr = _make_manager(
+            chroma_get_ids=["c0"],
             integrity_records=[
                 {
                     "file_hash": "xyz789",
@@ -323,7 +326,7 @@ class TestDocumentManagerDelete:
         mgr.integrity.compute_sha256.side_effect = FileNotFoundError("gone")
         result = mgr.delete_document("/gone/missing.pdf", "default")
         # Should fall back to _hash_from_path
-        assert result.success is True or len(result.errors) == 0 or True
+        assert result.success is True
         mgr.chroma.delete_by_metadata.assert_called_once()
 
 

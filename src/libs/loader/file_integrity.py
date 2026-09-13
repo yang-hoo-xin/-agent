@@ -43,7 +43,7 @@ class FileIntegrityChecker(ABC):
         pass
     
     @abstractmethod
-    def should_skip(self, file_hash: str) -> bool:
+    def should_skip(self, file_hash: str, collection: Optional[str] = None) -> bool:
         """Check if file should be skipped based on hash.
         
         Args:
@@ -78,7 +78,8 @@ class FileIntegrityChecker(ABC):
         self, 
         file_hash: str, 
         file_path: str, 
-        error_msg: str
+        error_msg: str,
+        collection: Optional[str] = None
     ) -> None:
         """Mark file processing as failed.
         
@@ -96,7 +97,7 @@ class FileIntegrityChecker(ABC):
         pass
 
     @abstractmethod
-    def remove_record(self, file_hash: str) -> bool:
+    def remove_record(self, file_hash: str, collection: Optional[str] = None) -> bool:
         """Remove an ingestion record by its file hash.
 
         Args:
@@ -132,7 +133,7 @@ class SQLiteIntegrityChecker(FileIntegrityChecker):
     
     Database Schema:
         ingestion_history (
-            file_hash TEXT PRIMARY KEY,
+            file_hash TEXT NOT NULL,
             file_path TEXT NOT NULL,
             status TEXT NOT NULL,  -- 'success' or 'failed'
             collection TEXT,
@@ -169,40 +170,60 @@ class SQLiteIntegrityChecker(FileIntegrityChecker):
         self.close()
     
     def _ensure_database(self) -> None:
-        """Create database file and schema if they don't exist."""
-        # Create parent directories if needed
-        db_file = Path(self.db_path)
-        db_file.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Connect and initialize schema
+        """Atomically preserve legacy rows while making collection part of identity.
+
+        NULL is the legacy unscoped identity, distinct from both an empty string
+        and every named collection. No historical collection is invented.
+        """
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.db_path)
         try:
-            # Enable WAL mode for concurrent access
             conn.execute("PRAGMA journal_mode=WAL")
-            
-            # Create table if not exists
+            conn.execute("BEGIN IMMEDIATE")
+            columns = conn.execute("PRAGMA table_info(ingestion_history)").fetchall()
+            names = {"file_hash", "file_path", "status", "collection", "error_msg", "processed_at", "updated_at"}
+            if columns and {row[1] for row in columns} != names:
+                raise RuntimeError("Unsupported ingestion_history schema; existing data was preserved.")
+            legacy = columns and [row[1] for row in columns if row[5]] == ["file_hash"]
+            if legacy:
+                conn.execute("ALTER TABLE ingestion_history RENAME TO ingestion_history_before_collection_scope")
+            if not columns or legacy:
+                conn.execute("""
+                    CREATE TABLE ingestion_history (
+                        file_hash TEXT NOT NULL,
+                        file_path TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        collection TEXT,
+                        error_msg TEXT,
+                        processed_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                """)
+            if legacy:
+                conn.execute("""
+                    INSERT INTO ingestion_history
+                        (file_hash, file_path, status, collection, error_msg, processed_at, updated_at)
+                    SELECT file_hash, file_path, status, collection, error_msg, processed_at, updated_at
+                    FROM ingestion_history_before_collection_scope
+                """)
+                conn.execute("DROP TABLE ingestion_history_before_collection_scope")
             conn.execute("""
-                CREATE TABLE IF NOT EXISTS ingestion_history (
-                    file_hash TEXT PRIMARY KEY,
-                    file_path TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    collection TEXT,
-                    error_msg TEXT,
-                    processed_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                )
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_ingestion_history_scope
+                ON ingestion_history(file_hash, collection IS NULL, IFNULL(collection, ''))
             """)
-            
-            # Create index on status for faster queries
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_status 
-                ON ingestion_history(status)
-            """)
-            
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_status ON ingestion_history(status)")
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
-    
+
+    @staticmethod
+    def _validate_collection(collection: Optional[str]) -> None:
+        if collection is not None and type(collection) is not str:
+            raise TypeError("collection must be a string or None.")
+
     def compute_sha256(self, file_path: str) -> str:
         """Compute SHA256 hash of file using chunked reading.
         
@@ -240,159 +261,70 @@ class SQLiteIntegrityChecker(FileIntegrityChecker):
         
         return sha256_hash.hexdigest()
     
-    def should_skip(self, file_hash: str) -> bool:
-        """Check if file should be skipped.
-        
-        Only files with status='success' are skipped. Failed files
-        can be retried.
-        
-        Args:
-            file_hash: SHA256 hash of the file.
-            
-        Returns:
-            True if file has status='success', False otherwise.
-        """
+    def should_skip(self, file_hash: str, collection: Optional[str] = None) -> bool:
+        """Skip only a success for this exact collection; None is unscoped."""
+        self._validate_collection(collection)
         conn = sqlite3.connect(self.db_path)
         try:
-            cursor = conn.execute(
-                "SELECT status FROM ingestion_history WHERE file_hash = ?",
-                (file_hash,)
-            )
-            result = cursor.fetchone()
-            
-            if result is None:
-                return False
-            
-            return result[0] == "success"
+            row = conn.execute(
+                "SELECT status FROM ingestion_history WHERE file_hash = ? AND collection IS ?",
+                (file_hash, collection),
+            ).fetchone()
         finally:
             conn.close()
-    
-    def mark_success(
-        self, 
-        file_hash: str, 
-        file_path: str, 
-        collection: Optional[str] = None
-    ) -> None:
-        """Mark file as successfully processed.
-        
-        Uses INSERT OR REPLACE for idempotent operation.
-        
-        Args:
-            file_hash: SHA256 hash of the file.
-            file_path: Original file path (for tracking).
-            collection: Optional collection/namespace identifier.
-            
-        Raises:
-            RuntimeError: If database operation fails.
-        """
+        return row is not None and row[0] == "success"
+
+    def mark_success(self, file_hash: str, file_path: str, collection: Optional[str] = None) -> None:
+        """Mark success only in the supplied scope, retaining its first timestamp."""
+        self._mark(file_hash, file_path, collection, status="success", error_msg=None)
+
+    def mark_failed(self, file_hash: str, file_path: str, error_msg: str,
+                    collection: Optional[str] = None) -> None:
+        """A failed target ingestion never changes another collection's success."""
+        self._mark(file_hash, file_path, collection, status="failed", error_msg=error_msg)
+
+    def _mark(self, file_hash: str, file_path: str, collection: Optional[str],
+              *, status: str, error_msg: Optional[str]) -> None:
+        self._validate_collection(collection)
         now = datetime.now(timezone.utc).isoformat()
-        
         conn = sqlite3.connect(self.db_path)
         try:
-            # Check if record exists to preserve processed_at
-            cursor = conn.execute(
-                "SELECT processed_at FROM ingestion_history WHERE file_hash = ?",
-                (file_hash,)
-            )
-            result = cursor.fetchone()
-            
-            if result:
-                # Update existing record
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT processed_at FROM ingestion_history WHERE file_hash = ? AND collection IS ?",
+                (file_hash, collection),
+            ).fetchone()
+            if row is None:
                 conn.execute("""
-                    UPDATE ingestion_history 
-                    SET file_path = ?,
-                        status = 'success',
-                        collection = ?,
-                        error_msg = NULL,
-                        updated_at = ?
-                    WHERE file_hash = ?
-                """, (file_path, collection, now, file_hash))
-            else:
-                # Insert new record
-                conn.execute("""
-                    INSERT INTO ingestion_history 
+                    INSERT INTO ingestion_history
                     (file_hash, file_path, status, collection, error_msg, processed_at, updated_at)
-                    VALUES (?, ?, 'success', ?, NULL, ?, ?)
-                """, (file_hash, file_path, collection, now, now))
-            
-            conn.commit()
-        except sqlite3.Error as e:
-            raise RuntimeError(f"Failed to mark success for {file_path}: {e}")
-        finally:
-            conn.close()
-    
-    def mark_failed(
-        self, 
-        file_hash: str, 
-        file_path: str, 
-        error_msg: str
-    ) -> None:
-        """Mark file processing as failed.
-        
-        Failed files are not skipped, allowing retries.
-        
-        Args:
-            file_hash: SHA256 hash of the file.
-            file_path: Original file path (for tracking).
-            error_msg: Error message describing the failure.
-            
-        Raises:
-            RuntimeError: If database operation fails.
-        """
-        now = datetime.now(timezone.utc).isoformat()
-        
-        conn = sqlite3.connect(self.db_path)
-        try:
-            # Check if record exists to preserve processed_at
-            cursor = conn.execute(
-                "SELECT processed_at FROM ingestion_history WHERE file_hash = ?",
-                (file_hash,)
-            )
-            result = cursor.fetchone()
-            
-            if result:
-                # Update existing record
-                conn.execute("""
-                    UPDATE ingestion_history 
-                    SET file_path = ?,
-                        status = 'failed',
-                        error_msg = ?,
-                        updated_at = ?
-                    WHERE file_hash = ?
-                """, (file_path, error_msg, now, file_hash))
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (file_hash, file_path, status, collection, error_msg, now, now))
             else:
-                # Insert new record
                 conn.execute("""
-                    INSERT INTO ingestion_history 
-                    (file_hash, file_path, status, collection, error_msg, processed_at, updated_at)
-                    VALUES (?, ?, 'failed', NULL, ?, ?, ?)
-                """, (file_hash, file_path, error_msg, now, now))
-            
+                    UPDATE ingestion_history SET file_path = ?, status = ?, error_msg = ?, updated_at = ?
+                    WHERE file_hash = ? AND collection IS ?
+                """, (file_path, status, error_msg, now, file_hash, collection))
             conn.commit()
-        except sqlite3.Error as e:
-            raise RuntimeError(f"Failed to mark failure for {file_path}: {e}")
+        except sqlite3.Error as exc:
+            conn.rollback()
+            raise RuntimeError(f"Failed to mark {status} for {file_path}: {exc}") from exc
         finally:
             conn.close()
 
-    def remove_record(self, file_hash: str) -> bool:
-        """Remove an ingestion record by its file hash.
-
-        Args:
-            file_hash: SHA256 hash identifying the record.
-
-        Returns:
-            True if a record was deleted, False if not found.
-        """
+    def remove_record(self, file_hash: str, collection: Optional[str] = None) -> bool:
+        """Delete this exact scope only; omitted collection never means all."""
+        self._validate_collection(collection)
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.execute(
-                "DELETE FROM ingestion_history WHERE file_hash = ?",
-                (file_hash,),
+                "DELETE FROM ingestion_history WHERE file_hash = ? AND collection IS ?",
+                (file_hash, collection),
             )
             conn.commit()
             return cursor.rowcount > 0
-        except sqlite3.Error as e:
-            raise RuntimeError(f"Failed to remove record {file_hash}: {e}")
+        except sqlite3.Error as exc:
+            raise RuntimeError(f"Failed to remove record {file_hash}: {exc}") from exc
         finally:
             conn.close()
 
@@ -408,6 +340,7 @@ class SQLiteIntegrityChecker(FileIntegrityChecker):
             List of dicts with keys: file_hash, file_path, collection,
             processed_at, updated_at.
         """
+        self._validate_collection(collection)
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         try:

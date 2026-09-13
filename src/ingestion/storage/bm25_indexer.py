@@ -380,7 +380,19 @@ class BM25Indexer:
         Returns:
             ``True`` if any postings were removed, ``False`` otherwise.
         """
-        if not self._index:
+        return self._remove_matching_chunks(lambda chunk_id: chunk_id.startswith(doc_id), collection)
+
+    def remove_chunks(self, chunk_ids: List[str], collection: str = "default") -> bool:
+        """Remove only exact chunk IDs observed in the selected document store."""
+        if not isinstance(chunk_ids, list) or any(type(value) is not str or not value for value in chunk_ids):
+            raise ValueError("chunk_ids must be a list of nonempty exact identifiers.")
+        selected = frozenset(chunk_ids)
+        if not selected:
+            return False
+        return self._remove_matching_chunks(lambda chunk_id: chunk_id in selected, collection)
+
+    def _remove_matching_chunks(self, selected, collection: str) -> bool:
+        if self._metadata.get("collection") != collection or not self._index:
             if not self.load(collection):
                 return False
 
@@ -391,7 +403,7 @@ class BM25Indexer:
             original_len = len(term_data["postings"])
             term_data["postings"] = [
                 p for p in term_data["postings"]
-                if not p["chunk_id"].startswith(doc_id)
+                if not selected(p["chunk_id"])
             ]
             if len(term_data["postings"]) < original_len:
                 removed_any = True

@@ -144,7 +144,8 @@ class IngestionPipeline:
         # Stage 2: Loader
         self.loader = PdfLoader(
             extract_images=True,
-            image_storage_dir=str(resolve_path(f"data/images/{collection}"))
+            image_storage_dir=str(resolve_path(f"data/images/{collection}")),
+            image_id_namespace=collection,
         )
         logger.info("  ✓ PdfLoader initialized")
         
@@ -236,7 +237,7 @@ class IngestionPipeline:
             file_hash = self.integrity_checker.compute_sha256(str(file_path))
             logger.info(f"  File hash: {file_hash[:16]}...")
             
-            if not self.force and self.integrity_checker.should_skip(file_hash):
+            if not self.force and self.integrity_checker.should_skip(file_hash, collection=self.collection):
                 logger.info(f"  ⏭️  File already processed, skipping (use force=True to reprocess)")
                 return PipelineResult(
                     success=True,
@@ -497,6 +498,7 @@ class IngestionPipeline:
                     for img in images
                 ]
                 trace.record_stage("upsert", {
+                    "method": "chroma+bm25+image_index",
                     "dense_store": {
                         "backend": "ChromaDB",
                         "collection": self.collection,
@@ -541,7 +543,7 @@ class IngestionPipeline:
             
         except Exception as e:
             logger.error(f"❌ Pipeline failed: {e}", exc_info=True)
-            self.integrity_checker.mark_failed(file_hash, str(file_path), str(e))
+            self.integrity_checker.mark_failed(file_hash, str(file_path), str(e), collection=self.collection)
             
             return PipelineResult(
                 success=False,

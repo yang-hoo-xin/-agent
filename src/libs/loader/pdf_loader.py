@@ -13,6 +13,7 @@ Features:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -58,7 +59,8 @@ class PdfLoader(BaseLoader):
     def __init__(
         self,
         extract_images: bool = True,
-        image_storage_dir: str | Path = "data/images"
+        image_storage_dir: str | Path = "data/images",
+        image_id_namespace: str | None = None,
     ):
         """Initialize PDF Loader.
         
@@ -73,6 +75,9 @@ class PdfLoader(BaseLoader):
             )
         
         self.extract_images = extract_images
+        if image_id_namespace is not None and type(image_id_namespace) is not str:
+            raise TypeError("image_id_namespace must be a string or None.")
+        self.image_id_namespace = image_id_namespace
         self.image_storage_dir = Path(image_storage_dir)
         self._markitdown = MarkItDown()
     
@@ -210,7 +215,10 @@ class PdfLoader(BaseLoader):
         
         try:
             # Create image storage directory
-            image_dir = self.image_storage_dir / doc_hash
+            # Scoped IDs already bind the full document hash. Avoid repeating
+            # a 64-character directory component on Windows; legacy paths stay.
+            image_dir = (self.image_storage_dir / doc_hash
+                         if self.image_id_namespace is None else self.image_storage_dir)
             image_dir.mkdir(parents=True, exist_ok=True)
             
             # Open PDF with PyMuPDF
@@ -232,7 +240,8 @@ class PdfLoader(BaseLoader):
                         image_ext = base_image["ext"]
                         
                         # Generate image ID and filename
-                        image_id = self._generate_image_id(doc_hash, page_num + 1, img_index + 1)
+                        image_id = self._generate_image_id(doc_hash, page_num + 1, img_index + 1,
+                            namespace=self.image_id_namespace)
                         image_filename = f"{image_id}.{image_ext}"
                         image_path = image_dir / image_filename
                         
@@ -299,7 +308,8 @@ class PdfLoader(BaseLoader):
             return text_content, []
     
     @staticmethod
-    def _generate_image_id(doc_hash: str, page: int, sequence: int) -> str:
+    def _generate_image_id(doc_hash: str, page: int, sequence: int,
+                           *, namespace: str | None = None) -> str:
         """Generate unique image ID.
         
         Args:
@@ -310,4 +320,9 @@ class PdfLoader(BaseLoader):
         Returns:
             Unique image ID string.
         """
-        return f"{doc_hash[:8]}_{page}_{sequence}"
+        original = f"{doc_hash[:8]}_{page}_{sequence}"
+        if namespace is None:
+            return original
+        identity = json.dumps([namespace, doc_hash, page, sequence],
+            ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        return "scoped_" + hashlib.sha256(identity).hexdigest()

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -118,10 +119,10 @@ class DocumentManager:
             coll = rec.get("collection")
 
             # Count chunks in Chroma
-            chunk_count = self._count_chunks(source_hash)
+            chunk_count = self._count_chunks(source_hash, coll)
 
             # Count images
-            image_count = self._count_images(source_hash)
+            image_count = self._count_images(source_hash, coll)
 
             docs.append(
                 DocumentInfo(
@@ -140,7 +141,7 @@ class DocumentManager:
     # get_document_detail
     # ------------------------------------------------------------------
 
-    def get_document_detail(self, doc_id: str) -> Optional[DocumentDetail]:
+    def get_document_detail(self, doc_id: str, collection: Optional[str] = None) -> Optional[DocumentDetail]:
         """Get detailed information about a single document.
 
         *doc_id* is matched against the ``source_hash`` stored in the
@@ -153,12 +154,11 @@ class DocumentManager:
             ``DocumentDetail`` with chunk/image IDs, or *None* if not found.
         """
         # Look up integrity record
-        all_records = self.integrity.list_processed()
-        record = None
-        for rec in all_records:
-            if rec["file_hash"] == doc_id:
-                record = rec
-                break
+        all_records = self.integrity.list_processed(collection)
+        matches = [rec for rec in all_records if rec["file_hash"] == doc_id]
+        if len(matches) > 1:
+            raise ValueError("Document exists in multiple collections; select its collection.")
+        record = matches[0] if matches else None
 
         if record is None:
             return None
@@ -166,10 +166,10 @@ class DocumentManager:
         source_hash = record["file_hash"]
 
         # Collect chunk IDs from Chroma
-        chunk_ids = self._get_chunk_ids(source_hash)
+        chunk_ids = self._get_chunk_ids(source_hash, record.get("collection"))
 
         # Collect image IDs
-        image_ids = self._get_image_ids(source_hash)
+        image_ids = self._get_image_ids(source_hash, record.get("collection"))
 
         return DocumentDetail(
             source_path=record["file_path"],
@@ -215,56 +215,86 @@ class DocumentManager:
         """
         result = DeleteResult(success=True)
 
+        # The injected vector backend is already bound to one collection. Never
+        # delete through that handle on behalf of a different/unknown scope.
+        if type(collection) is not str or getattr(self.chroma, "collection_name", None) != collection:
+            result.success = False
+            result.errors.append("ChromaDB collection does not match the selected deletion scope.")
+            return result
+
         # Resolve hash – prefer caller-supplied, then file, then DB lookup
         if source_hash is None:
             try:
                 source_hash = self.integrity.compute_sha256(source_path)
             except Exception as e:
-                source_hash = self._hash_from_path(source_path)
+                source_hash = self._hash_from_path(source_path, collection)
                 if source_hash is None:
                     result.success = False
                     result.errors.append(f"Cannot identify document: {e}")
                     return result
 
-        # 1. ChromaDB – delete chunks matching source_hash
-        try:
-            count = self.chroma.delete_by_metadata(
-                {"doc_hash": source_hash}
-            )
-            result.chunks_deleted = count
-        except Exception as e:
-            result.errors.append(f"ChromaDB delete failed: {e}")
-
-        # 2. BM25 – remove postings for this document
-        try:
-            result.bm25_removed = self.bm25.remove_document(
-                source_hash, collection
-            )
-        except Exception as e:
-            result.errors.append(f"BM25 remove failed: {e}")
-
-        # 3. ImageStorage – delete images by doc_hash
-        try:
-            images = self.images.list_images(doc_hash=source_hash)
-            deleted_imgs = 0
-            for img in images:
-                if self.images.delete_image(img["image_id"]):
-                    deleted_imgs += 1
-            result.images_deleted = deleted_imgs
-        except Exception as e:
-            result.errors.append(f"ImageStorage delete failed: {e}")
-
-        # 4. FileIntegrity – remove the ingestion record
-        try:
-            result.integrity_removed = self.integrity.remove_record(
-                source_hash
-            )
-        except Exception as e:
-            result.errors.append(f"FileIntegrity remove failed: {e}")
-
-        if result.errors:
+        def failed(message: str) -> DeleteResult:
             result.success = False
+            result.errors.append(message)
+            try:
+                self.integrity.mark_failed(source_hash, source_path, "; ".join(result.errors), collection=collection)
+            except Exception as exc:
+                result.errors.append(f"FileIntegrity failure-state write failed: {exc}")
+            return result
 
+        # Capture exact IDs before any deletion; a hash prefix cannot identify
+        # BM25 postings because VectorUpserter generates different chunk IDs.
+        try:
+            chunk_ids = self.chroma.collection.get(where={"doc_hash": source_hash}, include=[])["ids"]
+            if (not isinstance(chunk_ids, list) or not chunk_ids
+                    or any(type(value) is not str or not value for value in chunk_ids)):
+                raise ValueError("Exact document chunk IDs are unavailable; BM25 cleanup is unverified.")
+        except Exception as exc:
+            return failed(f"ChromaDB document identity lookup failed: {exc}")
+
+        # Persist invalidation before the first mutation. A partial deletion is
+        # never reusable as successful ingestion of this target collection.
+        try:
+            self.integrity.mark_failed(source_hash, source_path, "Document deletion in progress.", collection=collection)
+        except Exception as exc:
+            result.success = False
+            result.errors.append(f"FileIntegrity deletion-state write failed: {exc}")
+            return result
+
+        # Sparse and image failures leave Chroma's exact IDs available for retry.
+        try:
+            result.bm25_removed = self.bm25.remove_chunks(chunk_ids, collection)
+        except Exception as exc:
+            return failed(f"BM25 remove failed: {exc}")
+
+        try:
+            images = self.images.list_images(collection=collection, doc_hash=source_hash)
+            all_images = self.images.list_images()
+            for img in images:
+                path = img.get("file_path")
+                shared_file = (isinstance(path, str) and any(
+                    row.get("image_id") != img["image_id"]
+                    and isinstance(row.get("file_path"), str)
+                    and Path(row["file_path"]).resolve() == Path(path).resolve()
+                    for row in all_images))
+                if self.images.delete_image(img["image_id"], remove_file=not shared_file):
+                    result.images_deleted += 1
+                    all_images = [row for row in all_images if row.get("image_id") != img["image_id"]]
+        except Exception as exc:
+            return failed(f"ImageStorage delete failed: {exc}")
+
+        # Chroma is last among data stores. If its own outcome is ambiguous,
+        # keep failed history; do not call an empty-ID retry successful. A new
+        # ingestion can reconstruct the target because should_skip is false.
+        try:
+            result.chunks_deleted = self.chroma.delete_by_metadata({"doc_hash": source_hash})
+        except Exception as exc:
+            return failed(f"ChromaDB delete failed: {exc}")
+
+        try:
+            result.integrity_removed = self.integrity.remove_record(source_hash, collection=collection)
+        except Exception as exc:
+            return failed(f"FileIntegrity remove failed: {exc}")
         return result
 
     # ------------------------------------------------------------------
@@ -298,45 +328,57 @@ class DocumentManager:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _count_chunks(self, source_hash: str) -> int:
+    def _count_chunks(self, source_hash: str, collection: Optional[str]) -> int:
         """Count chunks in Chroma that belong to *source_hash*."""
         try:
-            results = self.chroma.collection.get(
+            results = self._vector_collection(collection).get(
                 where={"doc_hash": source_hash}, include=[]
             )
             return len(results.get("ids", []))
         except Exception:
             return 0
 
-    def _get_chunk_ids(self, source_hash: str) -> List[str]:
+    def _get_chunk_ids(self, source_hash: str, collection: Optional[str]) -> List[str]:
         """Return chunk IDs from Chroma matching *source_hash*."""
         try:
-            results = self.chroma.collection.get(
+            results = self._vector_collection(collection).get(
                 where={"doc_hash": source_hash}, include=[]
             )
             return results.get("ids", [])
         except Exception:
             return []
 
-    def _count_images(self, source_hash: str) -> int:
+    def _vector_collection(self, collection: Optional[str]):
+        bound = getattr(self.chroma, "collection_name", None)
+        if collection is None:
+            raise ValueError("Unscoped history does not identify a vector collection.")
+        if isinstance(bound, str) and bound != collection:
+            return self.chroma.client.get_collection(name=collection)
+        return self.chroma.collection
+
+    def _scoped_images(self, source_hash: str, collection: Optional[str]):
+        images = self.images.list_images(collection=collection, doc_hash=source_hash)
+        return images if collection is not None else [row for row in images if row.get("collection") is None]
+
+    def _count_images(self, source_hash: str, collection: Optional[str]) -> int:
         """Count images belonging to *source_hash*."""
         try:
-            return len(self.images.list_images(doc_hash=source_hash))
+            return len(self._scoped_images(source_hash, collection))
         except Exception:
             return 0
 
-    def _get_image_ids(self, source_hash: str) -> List[str]:
+    def _get_image_ids(self, source_hash: str, collection: Optional[str]) -> List[str]:
         """Return image IDs belonging to *source_hash*."""
         try:
-            imgs = self.images.list_images(doc_hash=source_hash)
+            imgs = self._scoped_images(source_hash, collection)
             return [img["image_id"] for img in imgs]
         except Exception:
             return []
 
-    def _hash_from_path(self, source_path: str) -> Optional[str]:
+    def _hash_from_path(self, source_path: str, collection: str) -> Optional[str]:
         """Try to find a source_hash from integrity records by path."""
         try:
-            for rec in self.integrity.list_processed():
+            for rec in self.integrity.list_processed(collection):
                 if rec["file_path"] == source_path:
                     return rec["file_hash"]
         except Exception:

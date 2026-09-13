@@ -226,7 +226,7 @@ class DataService:
         self._ensure_stores(collection)
         from dataclasses import asdict
 
-        detail = self._manager.get_document_detail(doc_id)
+        detail = self._manager.get_document_detail(doc_id, collection=self._current_collection)
         if detail is None:
             return None
         return asdict(detail)
