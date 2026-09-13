@@ -16,6 +16,7 @@ class PatchExecutionTraceConfiguration:
     environment: str = "local"
     sink: Any = None
     shutdown_timeout_millis: int = 1000
+    failure_traces_path: str | Path | None = None
 
     def __post_init__(self):
         if not isinstance(self.environment, str) or not self.environment.strip():
@@ -75,6 +76,10 @@ def product_trace_identity(trace, run_root):
             "path": str(Path(run_root) / "run_manifest.json"),
             "json_pointer": "/execution_observations",
         } if trace.context.metadata.get("local_manifest_ready", True) else {
+            "storage": "execution_trace_file", "persisted": True,
+            "json_pointer": "/execution_observations",
+            **trace.context.metadata["local_failure_ref"],
+        } if "local_failure_ref" in trace.context.metadata else {
             "storage": "exception.execution_observations", "persisted": False,
         }),
     }
@@ -167,6 +172,27 @@ def product_execution_trace(*, run_root, run_id, request_id, artifact_store_root
                 write_manifest(document)
         except Exception:
             pass
+        if business_error is not None and not trace.context.metadata["local_manifest_ready"]:
+            try:
+                from src.core.trace.trace_collector import TraceCollector
+
+                retained_summary = {**product_trace_identity(trace, run_root), **report,
+                    "local_observation_source": {"storage": "execution_trace_file",
+                        "persisted": True, "json_pointer": "/execution_observations"},
+                    "local_persistence": {"status": "persisted"}}
+                # The saved document cannot include its own file hash. The
+                # caller receives that hash only after the strict sink succeeds.
+                reference = TraceCollector(configuration.failure_traces_path).collect_execution({
+                    **trace.context.to_dict(),
+                    "run_id": run_id, "request_id": request_id,
+                    "execution_trace": retained_summary,
+                    "execution_observations": dict(observations),
+                })
+                trace.context.metadata["local_failure_ref"] = reference
+                report["local_persistence"] = {"status": "persisted"}
+            except Exception as persistence_error:
+                report["local_persistence"] = {"status": "failed",
+                    "error_type": type(persistence_error).__name__}
         if business_error is not None:
             try:
                 business_error.execution_trace = {**product_trace_identity(trace, run_root), **report}

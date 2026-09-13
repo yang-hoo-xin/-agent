@@ -11,6 +11,12 @@ from src.mod_agent.patch_execution_trace import product_execution_trace, preserv
 from tests.unit import test_local_entry as original
 
 
+@pytest.fixture(autouse=True)
+def isolate_failure_trace_store(tmp_path, monkeypatch):
+    monkeypatch.setattr("src.core.trace.trace_collector._DEFAULT_TRACES_PATH",
+                        tmp_path / "local-traces" / "traces.jsonl")
+
+
 @pytest.mark.parametrize("scenario,failure_stage", [
     (original.test_pre_graph_restore_failure_records_exact_stage_and_stops, "baseline_restore"),
     (original.test_pre_graph_verifier_failure_persists_terminal_lineage, "baseline_artifact_verification"),
@@ -96,8 +102,9 @@ def test_environment_and_missing_material_failure_keeps_buffered_trace_without_c
     assert next(row for row in rows if row["name"] == stage)["status"] == "failed"
     assert not any(row["kind"] == "generation" for row in rows)
     assert error.execution_trace["failures"]["recorder"]["total"] == 0
-    assert error.execution_trace["local_observation_source"] == {
-        "storage": "exception.execution_observations", "persisted": False}
+    retained = error.execution_trace["local_observation_source"]
+    assert retained["storage"] == "execution_trace_file" and retained["persisted"] is True
+    assert json.loads(Path(retained["path"]).read_text(encoding="utf-8"))["execution_observations"] == error.execution_observations
     assert not (tmp_path / "runs").exists()
     if missing == "source":
         observed = next(row for row in rows if row["name"] == stage)["attributes"]
@@ -116,7 +123,7 @@ def test_buffered_trace_does_not_touch_older_manifest_when_new_invocation_fails(
             with trace_operation("environment.settings"):
                 raise original_error
     assert caught.value is original_error and path.read_bytes() == before
-    assert original_error.execution_trace["local_observation_source"]["persisted"] is False
+    assert original_error.execution_trace["local_observation_source"]["persisted"] is True
 
 
 def test_public_run_request_error_json_exposes_early_trace_without_new_error_surface(tmp_path, capsys):
@@ -130,4 +137,5 @@ def test_public_run_request_error_json_exposes_early_trace_without_new_error_sur
     assert payload["execution_trace"]["logical_request_id"] == "logical-task"
     rows = list(payload["execution_observations"].values())
     assert any(row["name"] == "environment.settings" and row["status"] == "failed" for row in rows)
+    assert payload["execution_trace"]["local_observation_source"]["persisted"] is True
     assert not (tmp_path / "runs").exists()

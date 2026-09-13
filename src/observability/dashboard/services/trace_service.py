@@ -97,6 +97,19 @@ class TraceService:
         for t in self._load_all():
             if t.get("trace_id") == trace_id:
                 return self._sanitize_trace(t)
+        # Pre-manifest product failures use the same local trace storage but a
+        # complete immutable execution file, avoiding an unbounded JSONL join.
+        if isinstance(trace_id, str) and re.fullmatch(r"[a-f0-9]{32}", trace_id):
+            directory = (self.traces_path.parent / "execution").resolve()
+            path = (directory / (trace_id + ".json")).resolve()
+            if not path.is_relative_to(directory):
+                raise ValueError("Retained execution escapes the local trace directory.")
+            if path.is_file():
+                document = json.loads(path.read_text(encoding="utf-8"))
+                summary = document.get("execution_trace") if isinstance(document, dict) else None
+                if not isinstance(summary, dict) or summary.get("trace_id") != trace_id:
+                    raise ValueError("Retained execution identity does not match the requested trace.")
+                return self._sanitize_trace(document)
         return None
 
     def get_stage_timings(self, trace: Dict[str, Any]) -> List[Dict[str, Any]]:

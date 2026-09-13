@@ -32,7 +32,8 @@ Valid-task tracing begins before loading settings. It buffers observations in
 memory until the original code creates the run manifest; it does not create a
 directory early or modify an older run's manifest. Failure before that point is
 available on the original exception and CLI error JSON as
-`execution_observations` and `execution_trace`; persistence is explicitly false.
+`execution_observations` and `execution_trace`. At `ed5234b` this was memory-only;
+the subsequent retention change below adds a checked local file reference.
 Malformed arguments and absent authorization still fail before task creation.
 Existing failure reports already bound by hash are not rewritten.
 
@@ -133,3 +134,49 @@ No real model request, real compilation, Apply, game launch or synthetic Cloud
 upload was performed for this work. New upstream Cloud ingestion/readback is
 **not demonstrated** by these offline results. The next authorized real product
 run can supply that acceptance; older Patch-only histories are not backfilled.
+
+## Handled preflight failure retention
+
+The infrastructure follow-up uses base `ed5234b9e0c6a2c453a0fbc0352e7a43964e958e`
+on `codex/preflight-failure-retention`. The old public CLI was reproduced with
+missing settings: exit 2, `BLOCKED`, two observations, no task directory and
+`persisted=false`. A persistence assertion failed, confirming the reported gap.
+
+When an exception exits the buffered product trace before its manifest exists,
+the existing TraceCollector now writes a complete execution snapshot beside its
+configured trace log: `execution/<trace_id>.json`. The existing manifest fields
+are retained along with TraceContext fields. Bytes are flushed/fsynced before
+exclusive publication; an existing record is never overwritten. The exception
+and CLI result return the file path, SHA-256 and `persisted=true` only after the
+strict sink succeeds. A storage error preserves the original business exception
+and memory observations, reports `local_persistence.status=failed`, and leaves
+`persisted=false`. Existing manifest runs keep their original recorder.
+
+The original TraceService `get_trace` can read these records by trace ID. Its
+normal safe view still sanitizes local details; `include_raw=True` permits an
+explicit local full-document read. The saved native observations are also in
+the format consumed by the existing local/Cloud journal join. No Cloud upload,
+new model invocation, new product directory or business Artifact is introduced.
+
+Eight new focused tests passed in 7.82 seconds. They execute the public CLI in
+one process, then check the returned file hash and read the complete tree through
+TraceService in another process; same-run retries, a retained older manifest,
+bad Cloud, normal manifest recording, invalid input and absent authorization are
+also covered. Storage failure was strengthened to fail the actual fsync step:
+one focused check passed in 0.18 seconds, with no published or temporary file.
+Eleven existing preflight checks passed in 3.70 seconds after changing only their
+old memory-only expectations and isolating local trace output.
+
+Final affected checkpoint: **102 passed in 18.06 seconds**, with no unresolved
+failure. Exact command used the main workspace `.venv/Scripts/python.exe`:
+
+```powershell
+$env:PYTHONUTF8='1'
+python -m pytest -q -n 2 --dist=loadfile --basetemp C:/Users/10160/AppData/Local/Temp/pf-ret-final -o cache_dir=C:/Users/10160/AppData/Local/Temp/pf-ret-cache tests/unit/test_preflight_failure_retention.py tests/unit/test_product_pre_graph_trace.py tests/unit/test_product_trace_lifecycle.py tests/unit/test_trace_context.py tests/unit/test_trace_service.py tests/unit/test_upstream_product_trace.py
+```
+
+Ruff `E9,F63,F7,F821` passed on the five changed Python files. These selections
+overlap and are not independent product tasks. No real model, compilation,
+product Apply, game or network operation was part of these checks. This proves
+retention after handled failure and process exit; it does not claim recovery
+after uncatchable termination, total storage failure or partial product writes.
