@@ -186,6 +186,77 @@ def _covered_excerpt(earlier: Mapping[str, Any], current: Mapping[str, Any]) -> 
     return "".join(lines[requested_start - start:requested_end - start + 1])
 
 
+def _overlapping_excerpt_parts(earlier: Mapping[str, Any], current: Mapping[str, Any]) -> list[Any] | None:
+    """Keep new lines literal and reference only a preceding complete body."""
+    if not current.get("source_identity_sha256") or any(current.get(key) != earlier.get(key)
+            for key in ("source_snapshot_sha256", "source_hash", "source_identity_sha256")):
+        return None
+    before, after = earlier.get("excerpt_span"), current.get("excerpt_span")
+    if (not isinstance(before, Mapping) or not isinstance(after, Mapping)
+            or not isinstance(earlier.get("excerpt"), str) or not isinstance(current.get("excerpt"), str)):
+        return None
+    values = [span.get(key) for span in (before, after) for key in ("start_line", "end_line")]
+    if any(type(value) is not int for value in values):
+        return None
+    start, end = max(values[0], values[2]), min(values[1], values[3])
+    old_lines, new_lines = earlier["excerpt"].splitlines(keepends=True), current["excerpt"].splitlines(keepends=True)
+    if (start > end or len(old_lines) != values[1] - values[0] + 1
+            or len(new_lines) != values[3] - values[2] + 1):
+        return None
+    old_text = "".join(old_lines[start - values[0]:end - values[0] + 1])
+    if old_text != "".join(new_lines[start - values[2]:end - values[2] + 1]):
+        return None
+    prefix = "".join(new_lines[:start - values[2]])
+    suffix = "".join(new_lines[end - values[2] + 1:])
+    if not prefix and not suffix:
+        return None
+    return [*([prefix] if prefix else []), {
+        "observation_id": earlier["observation_id"],
+        "observation_sha256": earlier["observation_sha256"],
+        "excerpt_sha256": hashlib.sha256(earlier["excerpt"].encode("utf-8")).hexdigest(),
+        "source_excerpt_span": {"start_line": start, "end_line": end},
+    }, *([suffix] if suffix else [])]
+
+
+def _expand_excerpt_parts(parts, current, full_by_id):
+    if (not isinstance(parts, list) or not 2 <= len(parts) <= 3
+            or sum(isinstance(part, Mapping) for part in parts) != 1
+            or current.get("observation_kind") == "registered_api_evidence"):
+        raise _excerpt_reference_error("Partial excerpts require literal text and one preceding full-body reference.")
+    span = current.get("excerpt_span")
+    if not isinstance(span, Mapping) or any(type(span.get(key)) is not int for key in ("start_line", "end_line")):
+        raise _excerpt_reference_error("The partial excerpt line interval is invalid.")
+    cursor, text = span["start_line"], []
+    for part in parts:
+        if isinstance(part, str) and part:
+            value = part
+        elif isinstance(part, Mapping) and set(part) == {
+                "observation_id", "observation_sha256", "excerpt_sha256", "source_excerpt_span"}:
+            earlier = full_by_id.get(part["observation_id"]) if isinstance(part["observation_id"], str) else None
+            selected = part["source_excerpt_span"]
+            if (earlier is None or _local_excerpt_key(earlier) is None
+                    or not current.get("source_identity_sha256")
+                    or any(current.get(key) != earlier.get(key) for key in
+                        ("source_snapshot_sha256", "source_hash", "source_identity_sha256"))
+                    or part["observation_sha256"] != earlier["observation_sha256"]
+                    or part["excerpt_sha256"] != hashlib.sha256(earlier["excerpt"].encode("utf-8")).hexdigest()
+                    or not isinstance(selected, Mapping) or set(selected) != {"start_line", "end_line"}
+                    or any(type(selected[key]) is not int for key in selected)
+                    or selected["start_line"] != cursor
+                    or not earlier["excerpt_span"]["start_line"] <= cursor <= selected["end_line"] <= earlier["excerpt_span"]["end_line"]):
+                raise _excerpt_reference_error("A partial excerpt reference is missing, mismatched or noncontiguous.")
+            lines = earlier["excerpt"].splitlines(keepends=True)
+            value = "".join(lines[cursor - earlier["excerpt_span"]["start_line"]:
+                selected["end_line"] - earlier["excerpt_span"]["start_line"] + 1])
+        else:
+            raise _excerpt_reference_error("A partial excerpt component is invalid.")
+        text.append(value)
+        cursor += len(value.splitlines())
+    if cursor != span["end_line"] + 1:
+        raise _excerpt_reference_error("Partial excerpt components do not cover the requested line interval.")
+    return "".join(text)
+
+
 def expand_patch_source_observations(
     ordered_payloads: Sequence[Mapping[str, Any]],
 ) -> tuple[dict[str, Any], ...]:
@@ -217,7 +288,13 @@ def expand_patch_source_observations(
                 or _SHA256_RE.fullmatch(restored["source_identity_sha256"]) is None):
             raise _excerpt_reference_error("The source identity is invalid.")
         has_reference = "excerpt_ref" in restored
+        has_parts = "excerpt_parts" in restored
         reference = restored.pop("excerpt_ref", None)
+        parts = restored.pop("excerpt_parts", None)
+        if has_parts:
+            if has_reference or "excerpt" in restored:
+                raise _excerpt_reference_error("Partial excerpt fields conflict with a literal/full reference.")
+            restored["excerpt"] = _expand_excerpt_parts(parts, restored, full_by_id)
         if has_reference:
             if ("excerpt" in restored or restored.get("observation_kind") == "registered_api_evidence"
                     or not isinstance(reference, Mapping)
@@ -248,7 +325,7 @@ def expand_patch_source_observations(
         if _canonical_sha256(identity_payload) != restored["observation_sha256"]:
             raise _excerpt_reference_error("Expanded observation bytes do not match the original observation identity.")
         seen_ids.add(observation_id)
-        if not has_reference:
+        if not has_reference and not has_parts:
             full_by_id[observation_id] = restored
         expanded.append(restored)
     return tuple(expanded)
@@ -262,6 +339,11 @@ def _encode_source_excerpt(
     full = observation.model_view()
     key = _local_excerpt_key(full)
     earlier = full_excerpts.get(key) if key is not None else None
+    if earlier is not None and "excerpt_parts" in earlier:
+        # Reuse the visible literal-plus-full-reference recipe, not a reference
+        # chain to a body which was never sent as a full excerpt.
+        return {**{name: value for name, value in full.items() if name != "excerpt"},
+                "excerpt_parts": deepcopy(earlier["excerpt_parts"])}
     if earlier is None and reuse_covered and key is not None:
         earlier = next((item for item in full_excerpts.values() if _covered_excerpt(item, full) == full["excerpt"]), None)
     if earlier is not None:
@@ -275,6 +357,18 @@ def _encode_source_excerpt(
             encoded["excerpt_ref"]["source_excerpt_span"] = dict(earlier["excerpt_span"])
         if reuse_covered or len(_canonical_json(encoded).encode("utf-8")) < observation.model_payload_bytes:
             return encoded
+    if reuse_covered and key is not None:
+        choices = []
+        for anchor in full_excerpts.values():
+            parts = _overlapping_excerpt_parts(anchor, full)
+            if parts is not None:
+                encoded = {**{name: value for name, value in full.items() if name != "excerpt"}, "excerpt_parts": parts}
+                choices.append(encoded)
+        if choices:
+            encoded = min(choices, key=lambda item: len(_canonical_json(item).encode("utf-8")))
+            if len(_canonical_json(encoded).encode("utf-8")) < observation.model_payload_bytes:
+                full_excerpts.setdefault(key, encoded)
+                return encoded
     if key is not None:
         full_excerpts.setdefault(key, full)
     return full
@@ -826,7 +920,7 @@ def _validated_visible_excerpts(source_inspector: PlanBoundSourceInspector,
             raise _excerpt_reference_error("Retained observation does not match the current registered source identity.")
         key = _local_excerpt_key(restored)
         if key is not None and "excerpt_ref" not in encoded:
-            anchors.setdefault(key, restored)
+            anchors.setdefault(key, deepcopy(encoded) if "excerpt_parts" in encoded else restored)
     return anchors
 
 
@@ -836,8 +930,9 @@ def _plan_source_reads(source_inspector: PlanBoundSourceInspector, binding_ids: 
     rows = []
     for index, binding_id in enumerate(binding_ids, observation_sequence + 1):
         observation = source_inspector.inspect(binding_id=binding_id, observation_id=f"patch-observation-{index:03d}")
+        already_visible = _local_excerpt_key(observation.model_view()) in anchors
         encoded = _encode_source_excerpt(observation, anchors, reuse_covered=True)
-        cost = 0 if "excerpt_ref" in encoded else 1
+        cost = 0 if "excerpt_ref" in encoded or already_visible else 1
         rows.append((observation, encoded, cost))
     return rows
 
@@ -980,15 +1075,22 @@ def run_patch_agent_loop(
     if resume_request is not None:
         prior_model_floor = max((state.get("budget_state", {}).get("model_turns_used", 0) + 1
             for state in old_states), default=0)
-        prior_read_floor = (sum("excerpt_ref" not in item for item in retained_payloads)
+        prior_read_floor = (len({(item.get("source_snapshot_sha256"), item.get("source_hash"),
+            item.get("source_identity_sha256"), _canonical_sha256(item.get("excerpt_span")))
+            for item in retained_payloads if "excerpt_ref" not in item})
             if reuse_covered else len(inspected_binding_ids))
+        prior_read_floor = max(prior_read_floor, max(
+            (state.get("budget_state", {}).get("tool_rounds_used", 0) for state in old_states), default=0))
+        prior_byte_floor = max((state.get("budget_state", {}).get("observation_bytes_used", 0)
+            for state in old_states), default=0)
         if reuse_covered and any(state.get("read_execution", {}).get("accounting_version") != "new_source_window_v2"
                 for state in old_states):
             raise PatchAgentLoopError("PATCH_AGENT_LOOP_BUDGET_INVALID", stage="loop_admission",
                 reason="A resumed request must retain its original read-accounting version.")
-        if consumed_model_turns < prior_model_floor or consumed_tool_rounds < prior_read_floor:
+        if (consumed_model_turns < prior_model_floor or consumed_tool_rounds < prior_read_floor
+                or consumed_observation_bytes < prior_byte_floor):
             raise PatchAgentLoopError("PATCH_AGENT_LOOP_BUDGET_INVALID", stage="loop_admission",
-                reason="Resume counters cannot discard calls or inspections recorded in the prior request.")
+                reason="Resume counters cannot discard calls, inspections or observation bytes recorded in the prior request.")
     base_request = _without_loop_states(base_request)
     rejected_submissions = {
         message.content["response_sha256"] for message in base_request.messages
@@ -1323,9 +1425,12 @@ def run_patch_agent_loop(
                         "turn_index": turn_index, "tool_call_ids": [call.call_id for call in calls],
                         "provider_response_id": response.request_id, "preparation_only": True,
                         "tool_dispatch_performed": False,
-                    }):
+                    }) as preparation:
                         planned_reads = _plan_source_reads(source_inspector,
                             [call.arguments["binding_id"] for call in calls], full_excerpts, observation_sequence)
+                        preparation.update(prepared_binding_count=len(planned_reads),
+                            prepared_observation_bytes=sum(len(_canonical_json(row[1]).encode("utf-8")) for row in planned_reads),
+                            physical_source_preparation_performed=True)
                 except PatchAgentLoopError as exc:
                     for call in calls:
                         tool_call_trace.append(_tool_trace(call, turn_index=turn_index,
@@ -1399,6 +1504,37 @@ def run_patch_agent_loop(
                 pending_response, pending_tool_results = response, results
                 base_request = _without_loop_states(request)
                 continue
+            if planned_reads is not None and total_observation_bytes + sum(
+                    len(_canonical_json(row[1]).encode("utf-8")) for row in planned_reads) > allowed_observation_end:
+                # The entire read-only exchange is checked before dispatch. A
+                # budget denial still answers every tool call; it does not
+                # pretend that planned bodies were delivered or refund history.
+                code = "PATCH_AGENT_TOOL_RESULT_BUDGET_EXCEEDED"
+                results = tuple(AgentToolResult(call_id=call.call_id, name=call.name, output={
+                    "status": "not_executed", "error_code": code, "binding_id": call.arguments["binding_id"],
+                    "required_action": "Finish using visible context or request upstream. Repeating this fixed window cannot shrink it.",
+                }) for call in calls)
+                feedback_bytes = sum(len(_canonical_json(item.output).encode("utf-8")) for item in results)
+                feedback_fits = total_observation_bytes + feedback_bytes <= allowed_observation_end
+                for call, output in zip(calls, results):
+                    entry = _tool_trace(call, turn_index=turn_index, status="rejected_not_executed",
+                        code=code, dispatch_started=False)
+                    entry.update(feedback_payload_bytes=(len(_canonical_json(output.output).encode("utf-8"))
+                        if feedback_fits else 0), feedback_queued=feedback_fits, read_cost=0)
+                    tool_call_trace.append(entry)
+                availability["selection"] = "rejected_not_executed"
+                if not feedback_fits:
+                    return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                        model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                        total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                        tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                        termination=_termination("PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED",
+                            "Neither this complete source batch nor its per-call budget results fit the remaining allowance.", turn_index))
+                total_observation_bytes += feedback_bytes
+                pending_response, pending_tool_results = response, results
+                base_request = _without_loop_states(request)
+                force_final = True
+                continue
             batch_results: list[AgentToolResult] = []
             for index, call in enumerate(calls):
                 read_cost = planned_reads[index][2] if planned_reads is not None else 1
@@ -1416,6 +1552,8 @@ def run_patch_agent_loop(
                             observation, encoded, _ = planned_reads[index]
                             if "excerpt_ref" not in encoded and (key := _local_excerpt_key(encoded)) is not None:
                                 full_excerpts.setdefault(key, encoded)
+                            elif "excerpt_parts" in encoded:
+                                full_excerpts.setdefault(_local_excerpt_key(observation.model_view()), encoded)
                         else:
                             observation = source_inspector.inspect(binding_id=call.arguments["binding_id"],
                                 observation_id=f"patch-observation-{tool_rounds_used:03d}")
@@ -1860,17 +1998,19 @@ def _source_tool_definition(
     return AgentToolDefinition(
         name=PATCH_SOURCE_INSPECTION_TOOL_NAME,
         description=(
-            "Read existing registered content and return it here; no Evidence/Coverage or Plan reassessment. "
-            "Read bounded, validated Plan-bound original B0 (no generated edits) via listed binding_id; no paths. "
-            "Checked code: full assistant Patch bound by latest failure feedback. "
+            "Read registered content; no Evidence/Coverage or Plan reassessment. "
+            "Read validated Plan-bound B0 (no generated edits) via listed binding_id; no paths. "
+            "Checked code: assistant Patch bound by latest failure feedback. "
             "Supporting reads grant no edits. API bindings return full saved "
             "Evidence, not live inspection. Sequential calls. "
-            + ("New full windows cost 1 read; visible refs cost 0 reads but consume observation bytes. "
+            + ("New windows cost 1 read; visible refs cost 0 but consume bytes. "
                 if inspector.policy.reuse_covered_source_observations else
                 "Each dispatched binding read costs one read, including in a batch. ")
             + ("excerpt_ref reuses full requested text verbatim from a prior observation or earlier same-batch item. "
                if inspector.policy.deduplicate_source_excerpts or inspector.policy.reuse_covered_source_observations else "")
             + ("source_excerpt_span gives prior body lines containing the full requested excerpt_span. "
+               if inspector.policy.reuse_covered_source_observations else "")
+            + ("excerpt_parts joins literal strings and referenced source line spans in order. "
                if inspector.policy.reuse_covered_source_observations else "")
             + "Use current binding target_span; keep full text."
         ),

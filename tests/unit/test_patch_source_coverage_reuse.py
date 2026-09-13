@@ -255,7 +255,11 @@ def test_visible_reference_still_costs_bytes_and_snapshot_drift_blocks(tmp_path)
         final_response_format=_final_format(), source_inspector=inspector,
         consumed_model_turns=2, consumed_tool_rounds=1, consumed_observation_bytes=32767)
     assert result.termination["code"] == "PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED"
-    assert result.tool_rounds_used == 0 and result.total_observation_bytes > 1
+    # The complete exchange is rejected before tool dispatch. Prior consumption
+    # stays intact; an unqueued body is not a newly admitted payload.
+    assert result.tool_rounds_used == 0 and result.total_observation_bytes == 0
+    assert client.requests[0].messages[-1].content["budget_state"]["observation_bytes_used"] == 32767
+    assert all(not row["dispatch_started"] and not row["feedback_queued"] for row in result.tool_call_trace)
     (tmp_path / "Configuration.cs").write_text("changed", encoding="utf-8")
     with pytest.raises(PatchAgentLoopError, match="PATCH_AGENT_SOURCE_SNAPSHOT_DRIFT"):
         estimate_patch_source_reads(source_inspector=inspector, prior_request=first.final_request,

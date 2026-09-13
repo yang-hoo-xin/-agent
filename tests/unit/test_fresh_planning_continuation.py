@@ -392,6 +392,36 @@ class _NativePatchLLM:
         )
 
 
+def _fixture_visible_binding_text(prompt, binding_id, messages):
+    """Read only a literal or the input-only Ck reference actually supplied."""
+    binding = prompt["edit_binding_contexts"][binding_id]
+    if "source_excerpt" in binding:
+        return binding["source_excerpt"]
+    history, views = None, {}
+    for message in messages:
+        role = message.get("role") if isinstance(message, dict) else message.role
+        value = message.get("content") if isinstance(message, dict) else message.content
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                continue
+        if not isinstance(value, dict):
+            continue
+        if role == "assistant" and value.get("input_only") is True:
+            history = value
+        view = value.get("validator_feedback", {}).get("working_code_view")
+        if isinstance(view, dict):
+            views[view["code_sha256"]] = view
+    assert history is not None and history["Ck"] in views
+    change = next(row for row in history["changes"] if row["edit_binding_id"] == binding_id)
+    view = views[history["Ck"]]
+    file = next(row for row in view["files"] if row["path"] == binding["canonical_target_path"])
+    assert file["complete"] is True and len(file["hunks"]) == 1
+    offset, length, *prefix = change["after_text_ref"]
+    return (prefix[0] if prefix else "") + file["hunks"][0]["text"].encode("utf-8")[offset:offset + length].decode("utf-8")
+
+
 class _PatchAgentTurnClient:
     provider = "ollama_chat_local"
     model = "qwen3:4b-instruct"
@@ -425,9 +455,7 @@ class _PatchAgentTurnClient:
         changes = []
         for item in prompt["required_change_units"]:
             binding_id = item["edit_binding_id"]
-            source_excerpt = prompt["edit_binding_contexts"][binding_id][
-                "source_excerpt"
-            ]
+            source_excerpt = _fixture_visible_binding_text(prompt, binding_id, request.messages)
             changes.append(
                 {
                     "edit_binding_id": binding_id,

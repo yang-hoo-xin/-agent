@@ -93,6 +93,11 @@ class _QwenTransport:
                 assert len(tools) == (1 if number == 2 else 2)
                 assert all("tool_call_id" in row for row in tools)
             prompt = _restore_patch_agent_context(next(row for _, row in values if "required_change_units" in row))
+            from tests.unit.test_fresh_planning_continuation import _fixture_visible_binding_text
+            for unit in prompt["required_change_units"]:
+                binding_id = unit["edit_binding_id"]
+                prompt["edit_binding_contexts"][binding_id]["source_excerpt"] = _fixture_visible_binding_text(
+                    prompt, binding_id, payload["messages"])
             assert "PreserveFeedback must remain unchanged." in json.dumps(payload)
             output = json.dumps(_UpstreamTransport._patch(prompt, passed=self.direct or number == 4))
             if self.prose:
