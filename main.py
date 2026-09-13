@@ -1,37 +1,13 @@
-"""
-Evidence-Grounded Controlled Code Generation Agent Platform - Main Entry Point
-
-This is the entry point for the MCP Server. It initializes the configuration,
-sets up logging, and starts the server.
-"""
+"""Compatibility entry point for the actual SDK-based stdio MCP server."""
 
 import sys
-from pathlib import Path
-
-from src.core.settings import SettingsError, load_settings
-from src.observability.logger import get_logger
 
 
 def main() -> int:
-    """
-    Main entry point for the MCP Server.
-    
-    Returns:
-        int: Exit code (0 for success, non-zero for failure)
-    """
-    print("Evidence-Grounded Controlled Code Generation Agent Platform - Starting...")
+    """Keep ``python main.py`` on the same protocol-only entry as installation."""
+    from src.mcp_server.server import main as server_main
 
-    settings_path = Path("config/settings.yaml")
-    try:
-        settings = load_settings(settings_path)
-    except SettingsError as exc:
-        print(f"Configuration error: {exc}", file=sys.stderr)
-        return 1
-
-    logger = get_logger(log_level=settings.observability.log_level)
-    logger.info("Settings loaded successfully.")
-    logger.info("MCP Server will be implemented in Phase E.")
-    return 0
+    return server_main()
 
 
 if __name__ == "__main__":

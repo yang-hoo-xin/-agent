@@ -61,7 +61,7 @@ constraint-dependencies = [
 
 [project.scripts]
 mod-agent = "src.mod_agent.cli:main"
-mcp-server = "main:main"
+mcp-server = "src.mcp_server.server:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
