@@ -562,6 +562,7 @@ def build_graph(
     product_patch_upstream_execution: Any = None,
     patch_upstream_evidence_pack_factory: EvidencePackFactory | None = None,
     patch_upstream_planning_target_selection_factory: PlanningTargetSelectionFactory | None = None,
+    initial_findings_reassessment_factory: EvidencePackFactory | None = None,
     patch_replanning_context: Any = None,
     patch_continuation_max_model_calls: int = 1,
     patch_continuation_attempt_recorder: (
@@ -710,6 +711,9 @@ def build_graph(
     if type(enable_patch_upstream_replanning) is not bool:
         raise ValueError("Automatic upstream replanning must be an explicit boolean.")
     upstream_replanning = patch_upstream_request is not None or enable_patch_upstream_replanning
+    if initial_findings_reassessment_factory is not None and (
+            validated_product_execution_mode is None or not callable(initial_findings_reassessment_factory)):
+        raise ValueError("Initial Findings reassessment requires a Product execution provider.")
     if enable_patch_upstream_replanning:
         if patch_upstream_request is not None:
             raise ValueError("Automatic and explicit upstream entries cannot be combined.")
@@ -1111,6 +1115,10 @@ def build_graph(
                 (patch_upstream_evidence_pack_factory
                  if product_patch_upstream_execution is not None
                  and state["runtime_summary"].get("patch_upstream_return") else evidence_pack_factory),
+                initial_findings_reassessment_factory=initial_findings_reassessment_factory,
+                product_execution_mode=validated_product_execution_mode,
+                enable_initial_findings_reassessment=(initial_findings_reassessment_factory is not None
+                    or product_patch_upstream_execution is not None),
             ),
         ),
     )
@@ -1471,7 +1479,10 @@ def build_graph(
     else:
         _add_traced_conditional_edges(graph,
             "retrieve_evidence",
-            route_after_evidence,
+            (lambda state: "blocked" if state["blockers"]
+                and state["runtime_summary"].get("initial_findings_reassessment")
+                and "implementation_plan" not in state["artifacts"] else route_after_evidence(state))
+                if validated_product_execution_mode is not None else route_after_evidence,
             dict(registry["retrieve_evidence"]),
         )
     _add_traced_conditional_edges(graph,
@@ -1946,6 +1957,10 @@ def _run_retrieve_evidence(
     dense_required: bool,
     dense_top_k: int | None,
     evidence_pack_factory: EvidencePackFactory | None,
+    *,
+    initial_findings_reassessment_factory: EvidencePackFactory | None = None,
+    product_execution_mode: ProductExecutionGraphModeV1 | None = None,
+    enable_initial_findings_reassessment: bool = False,
 ) -> ModAgentState:
     feature_data = _read_artifact_data(state, artifact_store, "feature_spec")
     if evidence_pack_factory is not None:
@@ -1993,6 +2008,33 @@ def _run_retrieve_evidence(
             if state["runtime_summary"].get("patch_upstream_return") else []),
     )
     next_state = _copy_state(state)
+    _record_artifact(next_state, "evidence_pack", artifact_ref)
+    if (product_execution_mode is not None and enable_initial_findings_reassessment and not state["blockers"]
+            and not any(kind in state["artifacts"] for kind in ("evidence_pack", "implementation_plan", "repair_plan", "patch_proposal"))):
+        from src.mod_agent.evidence.reassessment import initial_findings_reassessment_allowed
+
+        if initial_findings_reassessment_allowed(pack.to_artifact_payload(), feature_data):
+            next_state["runtime_summary"]["initial_findings_reassessment"] = {
+                "prior_evidence_hash": artifact_ref.artifact_hash,
+                "provider_configured": initial_findings_reassessment_factory is not None,
+                "maximum_reassessments": 1,
+            }
+            if initial_findings_reassessment_factory is None:
+                next_state["blockers"].append({"stage": "evidence_retrieval",
+                    "code": "INITIAL_FINDINGS_REASSESSMENT_PROVIDER_REQUIRED",
+                    "message": "The current Findings require more evidence, but no reassessment provider is configured."})
+            else:
+                previous_ref = artifact_ref
+                # One bounded semantic pass in the existing Evidence node. Its
+                # original insufficient Artifact stays immutable and queryable.
+                pack = initial_findings_reassessment_factory(next_state, feature_data)
+                artifact_ref = artifact_store.write(
+                    feature_id=state["feature_id"], artifact_type="evidence_pack",
+                    payload=pack.to_artifact_payload(),
+                    status="success" if pack.can_generate_patch else "blocked",
+                    upstream_refs=[_artifact_ref_from_state(state, "feature_spec")],
+                    trace_refs=[f"{previous_ref.path}#sha256={previous_ref.artifact_hash}"],
+                )
     next_state["current_stage"] = "evidence_retrieval"
     next_state["evidence_summary"] = {
         "readiness": pack.readiness,

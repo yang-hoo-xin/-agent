@@ -72,6 +72,38 @@ from src.non_authoritative_projection import (
 )
 
 
+@pytest.mark.parametrize("mismatch", ["prior_evidence_ref", "trace_ref", "projection"])
+def test_initial_findings_reassessment_readback_rejects_changed_lineage(
+    tmp_path, monkeypatch, capsys, mismatch,
+):
+    """Replay an actual public-entry deterministic stop; no provider is called on replay."""
+    from tests.unit.test_mod_agent_cli import _public_patch_upstream_scenario
+
+    observed = _public_patch_upstream_scenario(tmp_path, monkeypatch, capsys,
+        initial_findings_gap=True, findings_still_missing=True)
+    projection = copy.deepcopy(observed.result["product_execution_result"])
+    ProductExecutionResultV1.from_dict(projection)
+    calls_before = len(observed.requests)
+    readback = next(row["payload"] for row in projection["validation_facts"]["details"]
+                    if row["detail_kind"] == "output_readback")
+    evidence = [row for row in readback if row["artifact_type"] == "evidence_pack"]
+    assert len(evidence) == 2
+    prior, reassessed = evidence
+    assert prior["status"] == reassessed["status"] == "blocked"
+    assert prior["data"]["requirement_coverage"]["projection_identity"] == (
+        reassessed["data"]["requirement_coverage"]["projection_identity"])
+    if mismatch == "prior_evidence_ref":
+        reassessed["data"]["budget_summary"]["initial_findings_reassessment"]["prior_evidence_ref"]["artifact_hash"] = "0" * 64
+    elif mismatch == "trace_ref":
+        reassessed["trace_refs"] = []
+    else:
+        reassessed["data"]["requirement_coverage"]["requirements"][0]["text"] = "Changed requirement"
+    with pytest.raises(ProductExecutionContractError, match="Initial Findings reassessment"):
+        ProductExecutionResultV1.from_dict(projection)
+    assert len(observed.requests) == calls_before
+    assert observed.planning == observed.patch_contexts == []
+
+
 def _sha256_json(value: object) -> str:
     canonical = json.dumps(
         value,

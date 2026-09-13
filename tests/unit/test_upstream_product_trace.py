@@ -7,12 +7,69 @@ import httpx
 import pytest
 
 from src.mod_agent import cli, local_entry
+from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.patch_execution_trace import PatchExecutionTraceConfiguration
 from src.mod_agent.upstream_trace import payload_sha256
 from src.observability.patch_langfuse_query import join_local_journal, summarize_execution
 from src.observability.patch_live_langfuse import build_patch_live_otlp
 from tests.unit import test_mod_agent_cli as fixtures
 from tests.unit.test_upstream_langfuse_query import cloud_row
+
+
+def test_initial_findings_reassessment_trace_binds_both_evidence_revisions_without_repair(tmp_path, monkeypatch, capsys):
+    """Offline HTTP/baseline compiler; real rg, original Graph and local trace joins."""
+    observed = fixtures._public_patch_upstream_scenario(tmp_path, monkeypatch, capsys, initial_findings_gap=True)
+    result = observed.result
+    assert observed.exit_code == 0 and result["status"] == "awaiting_approval", result
+    manifest_path = Path(result["run_root"]) / "run_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    rows = list(manifest["execution_observations"].values())
+    roots = [row for row in rows if row["parent_id"] is None]
+    assert len(roots) == 1 and roots[0]["name"] == "product.execution"
+    assert len({row["trace_id"] for row in rows}) == len({row["session_id"] for row in rows}) == 1
+    generations = [row for row in rows if row["kind"] == "generation"]
+    assert len(generations) == len(observed.requests) == manifest["model_call_count"] == 6
+    assert sum(row["name"] == "requirements.project" for row in generations) == 1
+    assert sum(row["name"] == "requirements.findings" for row in generations) == 2
+    assert sum(row["name"] == "planning.select" for row in generations) == 1
+    assert sum(row["name"] == "patch.generate" for row in generations) == 1
+    query = [row for row in generations if row["attributes"].get("model_role") == "initial_findings_queries"]
+    assert len(query) == 1 and query[0]["name"] == "evidence.query"
+    assert all(row["finished_at"] for row in rows)
+    for row in generations:
+        if row["name"] == "patch.generate":
+            continue
+        for role in ("request", "response"):
+            ref = row["attributes"]["local_detail_refs"][role]
+            assert hashlib.sha256(Path(ref["path"]).read_bytes()).hexdigest() == ref["sha256"]
+    store = ArtifactStore(Path(result["run_root"]) / "a")
+    evidence_refs = store.list_feature_artifact_revisions(result["feature_id"], "evidence_pack")
+    evidence = [store.semantic_read_immutable(ref) for ref in evidence_refs]
+    assert len(evidence) == 2
+    initial = next(row for row in evidence if row["status"] == "blocked")
+    final = next(row for row in evidence if row["status"] == "success")
+    for key in ("projection_identity", "requirements", "relations", "input_obligations", "input_dispositions"):
+        assert initial["data"]["requirement_coverage"][key] == final["data"]["requirement_coverage"][key]
+    assert initial["data"]["can_generate_patch"] is False and final["data"]["can_generate_patch"] is True
+    assert store.list_feature_artifact_revisions(result["feature_id"], "repair_plan") == []
+    planning = next(row for row in rows if row["name"] == "planning.decision")
+    assert planning["attributes"]["evidence_payload_sha256"] == payload_sha256(final["data"])
+    assert any(row["name"] == "proposal.review" for row in rows)
+    assert any(row["name"] == "patch.dry_run" for row in rows)
+    projected = [dict(cloud_row(row), traceId=roots[0]["trace_id"]) for row in rows]
+    queried = summarize_execution(roots[0]["trace_id"], projected)
+    joined = join_local_journal(queried, manifest_path,
+        hashlib.sha256(manifest_path.read_bytes()).hexdigest(), artifact_roots=[tmp_path])
+    assert joined["missing_parent_observation_ids"] == []
+    assert all(row["binding"] == "verified_journal_and_observation_mapping"
+        for row in joined["local_evidence"]["observations"])
+    details = [detail for row in joined["local_evidence"]["observations"] for detail in row["details"]]
+    assert details and all(detail["file_binding"] == "verified_bytes" for detail in details)
+    added = observed.searches[-1][1].items[0]
+    links = [row for row in joined["material_consumption_links"]
+        if row["material"]["evidence_id_sha256"] == hashlib.sha256(added.evidence_id.encode()).hexdigest()]
+    assert links and all(row["binding"] == "matched_excerpt_in_responded_request" for row in links)
+    assert result["actual_write_performed"] is False
 
 
 def test_product_patch_upstream_trace_keeps_one_task_and_current_material_lineage(tmp_path, monkeypatch, capsys):
@@ -126,6 +183,16 @@ def test_public_upstream_to_patch_trace_preserves_calls_decisions_and_materials(
     def run_with_model_planning(arguments):
         offset = arguments.index("--planning-target-evidence-id")
         arguments = arguments[:offset] + arguments[offset + 2:]
+        if mode == "missing_findings":
+            # This existing trace case covers a gap with no reassessment provider;
+            # the separate initial-Findings trace exercises actual recovery.
+            adapters_type = local_entry.ProductExecutionAdaptersV1
+
+            def without_reassessment(**kwargs):
+                kwargs["initial_findings_reassessment_factory"] = None
+                return adapters_type(**kwargs)
+
+            monkeypatch.setattr(local_entry, "ProductExecutionAdaptersV1", without_reassessment)
         code = ordinary_main([*arguments, "--defer-approval"])
         completed.append((code, json.loads(capsys.readouterr().out)))
         raise FixtureFinished

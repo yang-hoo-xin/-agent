@@ -18,6 +18,7 @@ _NAMES = {"requirement_projection": "requirements.project",
           "requirement_findings_correction": "requirements.findings",
           "planning": "planning.select",
           "upstream_evidence_queries": "evidence.query",
+          "initial_findings_queries": "evidence.query",
           "patch_upstream_planning": "planning.select"}
 
 

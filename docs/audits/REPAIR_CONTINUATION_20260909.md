@@ -118,3 +118,43 @@ python -X utf8 -B -m pytest tests/unit/test_patch_upstream_replanning.py tests/u
 分别 **2 passed，3.77s** 和 **64 passed / 6 deselected，145.82s**。因此该 299 项选择最终无未解决失败；未重跑已通过的 233 项，也未声称单次 299 项并行全绿。检查期间生产源码与测试未再变化，之后仅添加本节。15 个改动 Python 文件 AST 解析及 `git diff --check` 通过。Ruff 未安装，未安装新工具。未执行全仓或新 hosted CI；此前的历史通过数量不与本次相加。
 
 未覆盖的触发点与下一交付门：初次 Findings 缺证（尚未进入 Patch）仍会停止；普通 Build 后的 Repair worker 若本段尚未生成新代码而提出上游请求，也仍停止。本次补查仅接已有源码检索与完整 Findings，不声明新增程序集 metadata／IL 调查能力。真实模型能否正确使用新材料、热切换业务是否需要修改及能否通过原业务判定，均待单独授权验收；基线已满足时允许不修改。热切换还需固定真实用户操作、统一源码／依赖快照和独立判定，不能预设坐标或向模型提供正确 Hook。原页继续负责前置失败持久留存，部分 Apply 失败事实记录在其后；本提交不声称解决它们。
+
+## 6. 2026-09-13：首次 Findings 缺证后的默认入口补查
+
+本包以已整合的 `dbe18ae89ec53b0c40db206027d346e489757249` 为基线，在 `codex/initial-findings-reassessment` 独立实施，解决上一节未覆盖的首次 Findings 缺证入口。没有从旧分支丢弃前置失败持久化；未修改 `execution/patch_apply.py` 或 Graph 的 `_run_isolated_apply`，后者 AST 与本包基线相同。
+
+默认 `run-request` 的初次完整、已接受模型 Findings 若判缺证，原 `retrieve_evidence` 节点先保存不可变的不足 Evidence，再调用一次已有查询／真实 `rg`／完整 Findings 能力。第二份 Evidence 精确引用第一份，FeatureSpec、需求投影、义务、关系及原查询不重建、不改变；没有 Plan、Patch、Repair 或虚构失败代码／报告。充分时进入原 Planning、worker、Review 和 Dry-run；仍不足或缺 provider 时明确停止。未配置补查的旧适配器保留原路由，不因本次入口接通改变其结果形状。
+
+新增回调是 `initial_findings_reassessment_factory`；`RequirementCoverageReassessmentFactory.reassess_initial` 复用原补查核心。当前已有 EvidencePack 的 `budget_summary` 增加本次精确旧引用和一次补查标记，未增加 Artifact 类型、Graph 或独立控制面。必要的输入修正是：`rg_live` 过去的 query-set 结果只保留空 evidence IDs，无法区分零命中和工具／来源错误；现在保留 owner 已知的 `retrieval_status` 到每条 `per_query_execution`，不从错误文字猜测。合法零命中可补查；语义 provider 失败、格式未接受、检索故障和来源漂移不能冒充可补查的 Findings。补查没有查询时停止，不用一次空检索后重新打分宣称恢复。
+
+`initial_findings_queries` 通过原统一模型追踪，预算计入已有 `repair`；重算 Findings 使用原 `requirement_findings` 余量。默认阶段额度仍为 `2/2/1/2/2`、总额 9，完整正例实际调用顺序是 Projection／Findings／查询／Findings／Planning／Patch，共 6 次确定性传输。已有消费不退款，阶段上限不提高。Trace 验证两份 Evidence、一次原需求投影、6 条 generation 对应6次传输、正文引用哈希、当前 Planning 输入和现有离线联查中的新增材料消费；没有 Cloud 上传。
+
+旧路径复现和新路径聚焦验证：
+
+```powershell
+$env:PYTHONUTF8='1'
+python -B -m pytest tests/unit/test_mod_agent_cli.py::test_cli_run_request_initial_findings_gap_searches_before_first_plan_and_patch -q --tb=short --basetemp="$env:TEMP\ifgap-old-$PID"
+python -B -m pytest tests/unit/test_mod_agent_cli.py::test_cli_run_request_initial_findings_gap_searches_before_first_plan_and_patch tests/unit/test_mod_agent_cli.py::test_cli_run_request_initial_findings_gap_stops_without_first_plan_or_patch tests/unit/test_upstream_product_trace.py::test_initial_findings_reassessment_trace_binds_both_evidence_revisions_without_repair tests/unit/test_upstream_product_trace.py::test_public_upstream_to_patch_trace_preserves_calls_decisions_and_materials[missing_findings] -q --tb=short --basetemp="$env:TEMP\ifgap-new-$PID"
+```
+
+修改前 **1 failed，3.78s**，真实产品入口仅执行 Projection／Findings，合法 missing 后停止，Planning／Patch为0。接通后 **8 passed，21.60s**：完整正例、无provider、阶段／总预算耗尽、再次缺证、查询超时，以及两份Evidence的追踪联查。另有factory 5项通过（2.27s）、空查询新增1项通过（1.62s）、产品读回精确引用／投影错配3项通过（8.72s）；与下面选择集重叠，不相加宣传。
+
+唯一有界检查选择422项，使用可传给Windows子进程的UTF-8环境变量：
+
+```powershell
+$env:PYTHONUTF8='1'
+python -B -m pytest tests/unit/test_requirement_coverage.py tests/unit/test_rg_live_evidence.py tests/unit/test_product_execution.py tests/unit/test_mod_agent_cli.py tests/unit/test_upstream_product_trace.py tests/unit/test_patch_upstream_replanning.py tests/unit/test_patch_upstream_cli.py tests/unit/test_patch_upstream_unchanged_plan.py tests/unit/test_patch_upstream_budget.py tests/unit/test_run_request_shared_worker.py tests/unit/test_run_request_external_worker.py tests/unit/test_deferred_product_approval.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\ifcp-$PID"
+```
+
+首次 **418 passed / 4 failed，192.53s**。三个失败来自初版把所有Product不足Evidence都直接送blocked，改变了旧未配置补查适配器的结果形状；已把新路由限定到实际接入本次补查的流程，原测试断言没有放宽。另一项是既有 `requirement_findings_duplicate_relation_indexes.json` 被Git的Windows签出转换为CRLF；串行复核仍在固定字节哈希断言失败（1 failed，1.43s）。Git中原始LF字节哈希匹配既有固定值，确认只有换行差异后恢复该文件的提交原字节，没有改变内容、预期哈希或Git差异。
+
+修正后只做以下受影响定点检查，**10 passed，23.19s**：
+
+```powershell
+$env:PYTHONUTF8='1'
+python -B -m pytest tests/unit/test_product_execution.py::test_public_product_executor_runs_real_graph_and_strict_store_chain tests/unit/test_product_execution.py::test_product_execution_blocks_unresolved_change_authority_before_patch tests/unit/test_product_execution.py::test_product_execution_actual8_projection_correction_no_progress_fails_closed tests/unit/test_requirement_coverage.py::test_findings_provider_rejects_frozen_duplicate_relation_indexes tests/unit/test_mod_agent_cli.py::test_cli_run_request_initial_findings_gap_searches_before_first_plan_and_patch tests/unit/test_mod_agent_cli.py::test_cli_run_request_initial_findings_gap_stops_without_first_plan_or_patch -q --tb=short --basetemp="$env:TEMP\iffix-$PID"
+```
+
+该422项选择最终无未解决失败；不能表述成一次422项并行全绿，也没有重复整组。检查后只作上述路由修复及定点回归，再写本节。改动Python文件AST及 `git diff --check` 通过；当前运行环境未提供Ruff，未安装新工具。没有运行全仓QA或新CI。
+
+本包全部为确定性传输／编译与行为替身、实际本地检索和原产品流程的工程验证，没有真实模型、产品Apply、真实Build、游戏、封存题或Cloud上传。已接通的是合法完整Findings不足后的现有源码补查；不自动修复未接受的需求投影／Findings格式，不新增metadata／IL调查，不扩大普通Build后Repair入口。真实业务质量仍待单独授权与判定。全包核对和部分Apply失败事实记录由原页继续负责，本包不把它们宣称完成。

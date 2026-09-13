@@ -647,6 +647,7 @@ class ProductExecutionAdaptersV1:
     product_patch_upstream_execution: Any = None
     patch_upstream_evidence_pack_factory: Callable[..., Any] | None = None
     patch_upstream_planning_target_selection_factory: Callable[..., Any] | None = None
+    initial_findings_reassessment_factory: Callable[..., Any] | None = None
 
     def validate_for(self, request: ProductExecutionRequestV1) -> None:
         required = (
@@ -685,7 +686,8 @@ class ProductExecutionAdaptersV1:
                 "callable or null.",
                 side_effects_may_have_started=False,
             )
-        for field in ("patch_upstream_evidence_pack_factory", "patch_upstream_planning_target_selection_factory"):
+        for field in ("patch_upstream_evidence_pack_factory", "patch_upstream_planning_target_selection_factory",
+                      "initial_findings_reassessment_factory"):
             selected = getattr(self, field)
             if selected is not None and not callable(selected):
                 raise ProductExecutionContractError(
@@ -717,6 +719,7 @@ class ProductExecutionAdaptersV1:
                 "product_patch_upstream_execution",
                 "patch_upstream_evidence_pack_factory",
                 "patch_upstream_planning_target_selection_factory",
+                "initial_findings_reassessment_factory",
                 "patch_change_factory",
                 "dry_run_factory",
                 "isolated_apply_factory",
@@ -1641,6 +1644,8 @@ def execute_product_execution(
         product_patch_upstream_execution=adapters.product_patch_upstream_execution,
         patch_upstream_evidence_pack_factory=upstream_evidence_factory,
         patch_upstream_planning_target_selection_factory=adapters.patch_upstream_planning_target_selection_factory,
+        initial_findings_reassessment_factory=recorder.wrap_effect(effect_role="evidence_retrieval",
+            node_name="retrieve_evidence", factory=adapters.initial_findings_reassessment_factory),
     )
     if defer_approval:
         from src.mod_agent.workflow.checkpointing import WorkflowCheckpointStore
@@ -1670,6 +1675,7 @@ def execute_product_execution(
         product_patch_upstream_execution=wrapped.product_patch_upstream_execution,
         patch_upstream_evidence_pack_factory=wrapped.patch_upstream_evidence_pack_factory,
         patch_upstream_planning_target_selection_factory=wrapped.patch_upstream_planning_target_selection_factory,
+        initial_findings_reassessment_factory=wrapped.initial_findings_reassessment_factory,
         **({"checkpointer": WorkflowCheckpointStore.langgraph_memory_checkpointer()} if defer_approval else {}),
     )
     state = create_initial_state(
