@@ -9,6 +9,27 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 Current selection and authority are in [Active Product Contract, 1.1](ACTIVE_PRODUCT_CONTRACT.md#11-current-development-selection). Selectable source symbol/BM25 retrieval, exact-declaration preservation, declaration-check trace/query/scores, and saved-layout isolated Apply have completed local engineering integration through `1b13a93`; see [Repair evidence](audits/REPAIR_CONTINUATION_20260909.md) and [saved Apply evidence](audits/SAVED_PATCH_REASSEMBLY_20260909.md). The original three package defects remain repaired through `47fd506`. Current development addresses the full First Shot tool round trip using deterministic replay and production request serialization, with no new Actual or historical budget refund. The prior `0bef5bc` Actual used 1/5 calls and stopped before new code/verification; old 33/36 remains unresolved. Real configuration delivery remains source-missing blocked. New Cloud readback, alert setup, and live retrieval-quality gains are not established. The checkpoints below retain historical results and do not override this selection.
 
+### 当前承诺的成果对账
+
+用户目标仍是求职可复查成果、技术解释与维护能力、核心产品能力一起推进；广泛易用性和运营成熟度后置。下面区分已发生结果与尚未兑现的验收，不按模块或测试数量计算完成率。
+
+| 成果 | 已有事实 | 当前未完成部分 |
+| --- | --- | --- |
+| 正常自然语言入口完成真实任务 | 原配置任务完成模型选址、生成修改、完整验证编译及配置5/5；保存输出已有零模型公开续接 | 原运行目标源码当前仍缺失；真实批准后Apply／正式Build及声明终点未完成，不能称完整Mod交付 |
+| 模型根据真实失败修订 | 分页7/7、嵌套快照2/4→4/4均到原Review／Dry-run终点 | 属于开发题；连续两次以上新行为失败后最终修对、独立泛化尚缺真实模型证据 |
+| First Shot有界修复机会 | 单次0bef5bc Actual已执行，1/5调用后止于工具结果观察预算；新往返包在原材料离线回放及共享worker接缝通过 | 旧33/36未解决；新包没有新增真实模型修订，旧超额账目不退款，不启动第二Actual |
+| 四类基础设施实际效果 | 真实保存产物复用；源码漂移/错误批准零写入反例；临时隔离文件正常写入；真实任务失败到输入/代码/判定材料的绑定查询 | 临时工程通过不替代真实配置交付；未承诺任意崩溃事务恢复。新声明检查的Cloud上传查回未执行 |
+| 自主补查和检索质量 | 默认初始/A/B/C源码补查已接通；无模型检索对照已完成，主集宽档rg覆盖5/21、索引7/21、全文21/21预设材料事实 | 结果不是模型成功率且标签有披露限制；产品页在修已找到材料被挤出。完整结构导航和语义对照未做，metadata／IL仍按任务补接 |
+| 代表性新业务任务 | 已准备Follow Recoil运行时配置切换需求，保留不指定文件/Hook/根因的边界 | 实际热切换基线和延迟未测，基线可能无需修改；原默认值5项检查不能判定热切换，判定/授权仍待就绪 |
+| 独立任务及公平对照 | 三道新题仍封存，未借本次修复阅读隐藏答案 | 尚未执行；同模型/权限/预算/检查下的简单方案对照、人工技术介入数据仍缺，不将First Shot成功设为前置 |
+| 求职深挖和第二语言 | 已有可进入源码及复现的故障与工程修复案例 | 用户本人讲解/复现/修改演练未验收；第二语言复用、非作者开箱使用均未新验证，继续后置 |
+
+A/B/C阶段不混计。热切换先观察原行为再判是否修改，不预设恢复坐标；验收专用标签/判定器不交给产品模型，工程环境准备与逐题提供正确文件、Hook、根因及修法分别记账。具体准备事实保留在原[产品验收准备文件](C:/Users/10160/.codex/visualizations/2026/09/13/01a0996d-d54a-7452-85d8-1d82c0a6a7f7/product_acceptance_preparation_20260913.json)，其中较早工程HEAD和已修复的布局风险描述不能覆盖当前源码/本表。
+
+无模型对照详见单份[检索对照报告](C:/Users/10160/.codex/visualizations/2026/09/13/01a0996d-d54a-7452-85d8-1d82c0a6a7f7/source_retrieval_comparison_20260913/REPORT.md)。它不否定原“活源词法＋结构导航＋按需语义召回”方向；当前仅完成其中一部分。纯中文直接检索与模型生成查询是不同能力，材料投影字节也不是完整模型请求成本。
+
+下面为历史检查点，不覆盖上述当前对账。
+
 The current bounded implementation addresses the reconciled Repair gaps: shared-budget continuous revisions, submission feedback, current-code views, measured counterexample input, and a same-Plan return from explicit upstream assessment. See [Repair continuation](audits/REPAIR_CONTINUATION_20260909.md) for exact implementation and verification boundaries. No new live-model trial or training is claimed; the earlier SFT profile remains unadopted (reconciliation 0.35). First Shot 014 remains 33/36 despite complete compilation/configuration checks. The separate integration task owns Findings and natural-language product acceptance; no new Mod success is established here.
 
 New execution timing and native model usage from the first four SFT attempts have been explicitly exported and verified in Cloud (0.35); historical imports are unchanged and later SFT attempts remain local. This does not prove automatic future live export or task success. Hosted CI closed its original environment/path/fixture failures but still reports another integration failure set after the product entry migration (0.36); current code is not declared fully green.
