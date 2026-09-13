@@ -108,3 +108,14 @@ python -m pytest -q tests/unit/test_reviewed_patch_continuation.py::test_reviewe
 原退出码/blocked语义保持；2项定向出口测试通过，1.18秒：
 `python -m pytest -q tests/unit/test_apply_failure_projection.py::test_approval_cli_exception_preserves_confirmed_files --basetemp C:/Users/10160/AppData/Local/Temp/partial-cli -o cache_dir=C:/Users/10160/AppData/Local/Temp/partial-cache`。
 未因这次窄改重跑已通过的372项选择；新增CLI与测试Ruff通过。
+
+与首次Findings补查 `bf280231` 合并后的代码为
+`51b7b71a6781765af1da2dfb8918dcb3cce39712`。两线共同触及的公开入口、
+追踪及失败/批准路径共35项通过，45.38秒；全部变动Python Ruff通过：
+
+```powershell
+$env:PYTHONUTF8='1'
+python -m pytest -q --basetemp C:/Users/10160/AppData/Local/Temp/all-pack-integration -o cache_dir=C:/Users/10160/AppData/Local/Temp/partial-cache tests/unit/test_mod_agent_cli.py::test_cli_run_request_initial_findings_gap_searches_before_first_plan_and_patch tests/unit/test_mod_agent_cli.py::test_cli_run_request_initial_findings_gap_stops_without_first_plan_or_patch tests/unit/test_upstream_product_trace.py tests/unit/test_partial_apply_failure.py tests/unit/test_apply_failure_projection.py tests/unit/test_reviewed_patch_continuation.py::test_reviewed_diff_explicit_approval_reaches_original_graph_apply_and_stops_before_build
+```
+
+生产代码在该检查后未变，之后仅补记本记录和当前合同。
