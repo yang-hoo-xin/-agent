@@ -10,7 +10,7 @@ from dataclasses import replace
 from pathlib import Path
 from time import perf_counter
 
-from src.core.trace.execution_trace import trace_operation
+from src.core.trace.execution_trace import current_trace, trace_operation
 from src.mod_agent.knowledge import (
     IncrementalIndexer,
     KnowledgeDatabase,
@@ -75,7 +75,28 @@ class IndexedSourceEvidenceProvider:
         return source_hash, version
 
     def _materialize_hit(self, hit, query, max_items):
+        with trace_operation("evidence.symbol_materialization", attributes={
+                "symbol_lookup_method": hit.retrieval_method,
+                "symbol_check_status": "unknown"}) as observation:
+            check = {"basis": "indexed_declaration_materialization_v1", "status": "unknown",
+                     "lookup_method": hit.retrieval_method, "checks": []}
+            try:
+                return self._materialize_hit_checked(hit, query, max_items, check)
+            finally:
+                # Local identities retain declaration text. Only the mapper's
+                # bounded identity hashes and comparison facts may reach Cloud.
+                try:
+                    trace = current_trace()
+                    check.update(observation_id=observation.observation_id,
+                                 trace_id=trace.context.trace_id if trace is not None else None)
+                    update_observation(observation, symbol_check=check,
+                        symbol_check_sha256=payload_sha256(check), symbol_check_status=check["status"])
+                except Exception:
+                    update_observation(observation, symbol_check_status="unknown")
+
+    def _materialize_hit_checked(self, hit, query, max_items, check):
         if hit.source_type != "target_source" or hit.retrieval_method not in {"symbol_exact", "bm25"}:
+            check["status"] = "not_applicable"
             return []
         relative = Path(hit.source_path)
         path = (self._source_root / relative).resolve()
@@ -93,6 +114,7 @@ class IndexedSourceEvidenceProvider:
             raise ValueError("INDEXED_SOURCE_HIT_SPAN_INVALID")
         terms = [term.lower() for term in self._retriever._terms(query)]
         declarations = {}
+        declaration_checks = {}
         if hit.retrieval_method == "symbol_exact":
             # Chunk spans contain both declarations and uses. Preserve the
             # selected symbol's original declaration instead of ranking its
@@ -101,10 +123,22 @@ class IndexedSourceEvidenceProvider:
                     source_id=self._source_id, source_path=str(path)):
                 if symbol.name != hit.symbol or not span["start_line"] <= symbol.start_line <= span["end_line"]:
                     continue
+                measured = {"declaration": {"source_path": symbol.source_path, "source_hash": symbol.content_hash,
+                    "name": symbol.name, "kind": symbol.kind, "start_line": symbol.start_line,
+                    "end_line": symbol.end_line, "signature": symbol.signature},
+                    "source": {"source_path": str(path), "source_hash": hashlib.sha256(raw).hexdigest(),
+                        "relative_path": path.relative_to(self.workspace_root).as_posix(),
+                        "declaration_line": lines[symbol.start_line - 1].strip()},
+                    "declaration_checked": False, "materialized": None, "status": "not_materialized"}
+                check["checks"].append(measured)
                 if (symbol.content_hash != hit.source_hash
                         or lines[symbol.start_line - 1].strip() != symbol.signature):
+                    measured.update(declaration_checked=True, status="declaration_mismatch")
+                    check["status"] = "declaration_mismatch"
                     raise ValueError("INDEXED_SOURCE_SYMBOL_DECLARATION_MISMATCH")
+                measured["declaration_checked"] = True
                 declarations[symbol.start_line] = symbol
+                declaration_checks[symbol.start_line] = measured
             if not declarations:
                 raise ValueError("INDEXED_SOURCE_SYMBOL_DECLARATION_MISSING")
             locations = tuple(declarations)
@@ -120,18 +154,33 @@ class IndexedSourceEvidenceProvider:
             live = materialize_source_location(workspace_root=self.workspace_root, selected_path=path,
                 selected_line=number, source_bytes=raw, tokens=[])
             declaration = declarations.get(number)
+            if declaration is not None:
+                declaration_checks[number]["materialized"] = {
+                    "source_path": live.source_path, "source_ref": live.source_ref,
+                    "source_hash": live.source_hash, "method_name": live.method_name, "method_kind": live.method_kind,
+                    "span": dict(live.span), "excerpt_sha256": hashlib.sha256(live.excerpt.encode("utf-8")).hexdigest()}
             # Keep the existing verified source-window fallback for syntax the
             # materializer does not expose as a complete method (e.g. inline
             # empty bodies). A positively identified different method is invalid.
             if declaration is not None and declaration.kind == "method" and live.method_name is not None and (
                     live.method_name != declaration.name or live.span["start_line"] != number):
+                declaration_checks[number]["status"] = "declaration_mismatch"
+                check["status"] = "declaration_mismatch"
                 raise ValueError("INDEXED_SOURCE_SYMBOL_DECLARATION_MISMATCH")
+            if declaration is not None:
+                declaration_checks[number]["status"] = ("exact_declaration"
+                    if declaration.kind == "method" and live.method_name is not None else "source_window_unconfirmed")
             identity = f"{live.source_path}:{live.source_hash}:{live.span['start_line']}:{live.span['end_line']}"
             facts.append(replace(live,
                 evidence_id="indexed_source_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16],
                 retrieval_method="indexed_source", score=1.0,
                 symbol=live.symbol if live.declaring_type is not None else None,
                 claim_supported="Indexed lookup resolved this exact current source span; requirement coverage remains unassessed."))
+        results = [item["status"] for item in check["checks"]]
+        check["status"] = ("not_applicable" if hit.retrieval_method == "bm25" else
+            "partial_selection" if "not_materialized" in results else
+            "source_window_unconfirmed" if "source_window_unconfirmed" in results else
+            "exact_declaration" if results and all(value == "exact_declaration" for value in results) else "unknown")
         return facts
 
     def collect_query_set(self, *, queries, search_root, max_items):

@@ -31,6 +31,11 @@ OTLP_ENDPOINT = "/api/public/otel/v1/traces"
 SCORE_ENDPOINT = "/api/public/scores"
 LIVE_BEHAVIOR_SCORE_NAME = "local_check_pass_fraction"
 VERIFIED_SCORE_BASIS = "report_binds_retained_code_and_exact_matrix_local_checks"
+SYMBOL_CHECK_OPERATION = "evidence.symbol_materialization"
+SYMBOL_CHECK_SCORE_NAME = "indexed_symbol_declaration_match"
+SYMBOL_CHECK_BASIS = "indexed_declaration_materialization_v1"
+_SYMBOL_STATUSES = {"exact_declaration", "declaration_mismatch", "source_window_unconfirmed",
+                    "partial_selection", "not_applicable", "unknown"}
 _KINDS = frozenset({"span", "generation", "tool", "agent", "chain", "retriever", "guardrail", "evaluator", "embedding", "event"})
 _DIGEST = re.compile(r"(?:sha256:)?[a-f0-9]{64}\Z")
 _MACHINE_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}\Z")
@@ -42,7 +47,7 @@ _METADATA_LABELS = frozenset({"provider", "response_origin", "tool_name", "sourc
     "decision_status", "readiness", "input_role", "material_delivery_status", "selection_mode", "local_body_status",
     "from_node", "selected_route", "selected_next_node", "route_selector", "material_capture_status",
     "route_input_summary_scope", "route_input_summary_status", "route_output_summary_status",
-    "failure_stage", "execution_phase", "fact_delivery_status"})
+    "failure_stage", "execution_phase", "fact_delivery_status", "symbol_check_status", "symbol_lookup_method"})
 _METADATA_NUMBERS = frozenset({"turn_index", "response_received", "response_complete", "http_status", "usage_available", "byte_count", "reused",
     "evaluation_index", "checks_run", "checks_failed", "transport_started", "request_bytes", "file_count",
     "proposal_admitted", "callback_invoked", "tool_dispatch_performed", "encoded_payload_bytes", "observation_queued",
@@ -59,7 +64,8 @@ _METADATA_HASHES = frozenset({"request_sha256", "response_sha256", "observation_
     "response_content_sha256", "source_snapshot_sha256", "encoded_payload_sha256", "arguments_sha256", "verification_matrix_sha256",
     "input_payload_sha256", "feature_payload_sha256", "evidence_payload_sha256", "structured_output_sha256",
     "materialized_projection_sha256", "output_payload_sha256", "reason_sha256", "query_sha256", "route_input_sha256",
-    "input_member_access_facts_sha256", "output_member_access_facts_sha256", "produced_member_access_facts_sha256"})
+    "input_member_access_facts_sha256", "output_member_access_facts_sha256", "produced_member_access_facts_sha256",
+    "symbol_check_sha256"})
 _IDENTITY_ATTRIBUTES = frozenset({"source_observation_id", "binding_id", "provider_response_id"})
 _GATE_LABELS = {"failure_boundary": "provider_request_gate",
     "failure_classification": "provider_request_context_budget_exceeded",
@@ -75,6 +81,8 @@ _UPSTREAM_ENUM_LABELS = {
     "reason_status": {"reason_unavailable", "model_rationale_local_only"},
     "trace_scope": {"product_execution"},
     "fact_delivery_status": {"evidence_pack_enriched_model_delivery_unproven", "evidence_pack_assembled_model_delivery_unproven"},
+    "symbol_check_status": _SYMBOL_STATUSES,
+    "symbol_lookup_method": {"symbol_exact", "bm25"},
 }
 ALLOWED_ATTRIBUTE_KEYS = _METADATA_LABELS | _METADATA_NUMBERS | _METADATA_HASHES | {
     "model", "usage", "call_id", "tool_call_id", "artifact_refs", "consumed_tool_results", "tool_call_ids",
@@ -105,6 +113,64 @@ def _materials(value: Any) -> list[dict] | None:
         if kept:
             result.append(kept)
     return result
+
+
+def _symbol_check_metadata(attributes):
+    """Read one local check receipt; raw declarations never enter this projection."""
+    receipt = attributes.get("symbol_check")
+    if not isinstance(receipt, Mapping):
+        return {}
+    try:
+        if (_hash_text(_json(receipt).decode("utf-8")) != attributes.get("symbol_check_sha256")
+                or receipt.get("basis") != SYMBOL_CHECK_BASIS or not isinstance(receipt.get("checks"), list)):
+            return {}
+        rows = []
+        for item in receipt["checks"][:64]:
+            if not isinstance(item, Mapping):
+                return {}
+            declaration, source, materialized = item.get("declaration"), item.get("source"), item.get("materialized")
+            if not isinstance(declaration, Mapping) or not isinstance(source, Mapping):
+                return {}
+            kept = {"declaration_sha256": hashlib.sha256(_json(declaration)).hexdigest(),
+                    "declaration_checked": item.get("declaration_checked") is True,
+                    "status": item.get("status") if item.get("status") in _SYMBOL_STATUSES | {"not_materialized"} else "unknown"}
+            for key, value in (("indexed_source_sha256", declaration.get("source_hash")),
+                               ("live_source_sha256", source.get("source_hash"))):
+                if isinstance(value, str) and _DIGEST.fullmatch(value):
+                    kept[key] = value
+            for key, value in (("signature_sha256", declaration.get("signature")),
+                               ("source_declaration_line_sha256", source.get("declaration_line"))):
+                if isinstance(value, str):
+                    kept[key] = _hash_text(value)
+            for key in ("start_line", "end_line"):
+                if type(declaration.get(key)) is int and declaration[key] >= 1:
+                    kept["indexed_" + key] = declaration[key]
+            if isinstance(materialized, Mapping):
+                kept["materialized_sha256"] = hashlib.sha256(_json(materialized)).hexdigest()
+                for key in ("source_hash", "excerpt_sha256"):
+                    value = materialized.get(key)
+                    if isinstance(value, str) and _DIGEST.fullmatch(value):
+                        kept["materialized_" + key] = value
+                span = materialized.get("span", {})
+                if isinstance(span, Mapping):
+                    for key in ("start_line", "end_line"):
+                        if type(span.get(key)) is int and span[key] >= 1:
+                            kept["materialized_" + key] = span[key]
+            rows.append(kept)
+        return {"symbol_check_basis": SYMBOL_CHECK_BASIS, "symbol_declaration_checks": rows,
+                "symbol_declaration_count": len(receipt["checks"]),
+                "symbol_materialized_count": sum(isinstance(item.get("materialized"), Mapping) for item in receipt["checks"]),
+                "symbol_check_projection_complete": len(receipt["checks"]) <= 64,
+                "symbol_check_summary": {
+                    "exact_declaration": "已核对索引声明、当前源码声明及物化方法起点一致。",
+                    "declaration_mismatch": "实际声明一致性检查发现错位，原物化流程已拒绝。",
+                    "source_window_unconfirmed": "仅得到源码窗口，未确认完整方法声明一致。",
+                    "partial_selection": "声明集合只物化了一部分，不计完整检查通过。",
+                    "not_applicable": "本次不属于精确符号声明检查，不计通过分。",
+                    "unknown": "声明检查没有形成可确认结果。",
+                }.get(receipt.get("status"), "声明检查结果未知。") + "不代表需求相关性或任务完成。"}
+    except (TypeError, ValueError, KeyError):
+        return {}
 
 
 def _decision_metadata(attributes: Mapping) -> dict:
@@ -273,6 +339,7 @@ def _usage(attributes: Mapping) -> tuple[dict | None, str]:
 def _metadata(attributes: Mapping) -> dict:
     result = {key: value for key, value in _GATE_LABELS.items() if attributes.get(key) == value}
     result.update(_decision_metadata(attributes))
+    result.update(_symbol_check_metadata(attributes))
     for key in _GATE_NUMBERS:
         value = attributes.get(key)
         if type(value) is int and value >= 0:
@@ -351,6 +418,12 @@ def _metadata(attributes: Mapping) -> dict:
 
 def _native_status(row: Mapping, attributes: Mapping) -> tuple[str, str]:
     """Expose business negatives while preserving the observation's execution status."""
+    if row["name"] == SYMBOL_CHECK_OPERATION:
+        status = attributes.get("symbol_check_status")
+        status = status if isinstance(status, str) and status in _SYMBOL_STATUSES else "unknown"
+        level = "ERROR" if row["status"] == "failed" or status == "declaration_mismatch" else (
+            "DEFAULT" if status in {"exact_declaration", "not_applicable"} else "WARNING")
+        return level, f"symbol_check_status={status};declaration_identity_not_task_quality"
     if row["status"] == "failed":
         exception = _metadata(attributes).get("exception_type")
         return "ERROR", "operation_failed" + (":" + exception if exception else "")
@@ -434,9 +507,64 @@ def verified_behavior_trace_attributes(report: Mapping, model_response: Mapping)
         return {"score_eligible": False, "score_basis": "not_emitted_proof_projection_failed"}
 
 
+def _build_symbol_check_scores(row, attributes):
+    receipt = attributes.get("symbol_check")
+    if not isinstance(receipt, Mapping):
+        return ()
+    try:
+        if (row.get("kind") != "span" or receipt.get("basis") != SYMBOL_CHECK_BASIS
+                or receipt.get("observation_id") != row.get("id") or receipt.get("trace_id") != row.get("trace_id")
+                or receipt.get("lookup_method") != "symbol_exact"
+                or attributes.get("symbol_lookup_method") != "symbol_exact"
+                or attributes.get("symbol_check_status") != receipt.get("status")
+                or hashlib.sha256(_json(receipt)).hexdigest() != attributes.get("symbol_check_sha256")):
+            return ()
+        rows = receipt.get("checks")
+        if not isinstance(rows, list) or not rows or len(rows) > 64:
+            return ()
+        passed, mismatched = [], []
+        for item in rows:
+            declaration, source, actual = item["declaration"], item["source"], item["materialized"]
+            if (item.get("declaration_checked") is not True or not isinstance(declaration, Mapping)
+                    or not isinstance(source, Mapping) or not all(isinstance(part.get("source_hash"), str)
+                    and _DIGEST.fullmatch(part["source_hash"]) for part in (declaration, source))
+                    or not isinstance(declaration.get("signature"), str) or not declaration["signature"]
+                    or not isinstance(source.get("declaration_line"), str)
+                    or type(declaration.get("start_line")) is not int or declaration["start_line"] < 1):
+                return ()
+            declaration_matches = (declaration["source_hash"] == source["source_hash"]
+                                   and declaration["signature"] == source["declaration_line"])
+            positive_method = (isinstance(actual, Mapping) and declaration.get("kind") == "method"
+                               and actual.get("method_name") is not None)
+            materialized_matches = (positive_method and isinstance(actual.get("span"), Mapping)
+                and actual.get("method_name") == declaration.get("name")
+                and actual["span"].get("start_line") == declaration["start_line"])
+            original_guard_mismatch = (not declaration_matches or positive_method and not materialized_matches)
+            mismatched.append(item.get("status") == "declaration_mismatch" and original_guard_mismatch)
+            passed.append(item.get("status") == "exact_declaration" and declaration_matches and materialized_matches
+                and actual.get("method_kind") == "method" and actual.get("source_hash") == source["source_hash"]
+                and declaration.get("source_path") == source.get("source_path") == actual.get("source_ref")
+                and actual.get("source_path") == source.get("relative_path")
+                and isinstance(actual.get("excerpt_sha256"), str) and _DIGEST.fullmatch(actual["excerpt_sha256"]) is not None)
+        if receipt["status"] == "exact_declaration" and row.get("status") == "completed" and all(passed):
+            value = 1
+        elif receipt["status"] == "declaration_mismatch" and row.get("status") == "failed" and any(mismatched):
+            value = 0
+        else:
+            return ()
+        trace_id, span_id = live_trace_id(row["trace_id"]), live_observation_id(row["id"])
+        return ({"id": _hash_text(f"{trace_id}:{span_id}:{SYMBOL_CHECK_SCORE_NAME}"), "traceId": trace_id,
+            "observationId": span_id, "name": SYMBOL_CHECK_SCORE_NAME, "dataType": "NUMERIC", "value": value,
+            "comment": "Executed indexed declaration/materialization consistency check; not relevance, behavior or task acceptance."},)
+    except (KeyError, TypeError, ValueError):
+        return ()
+
+
 def build_patch_live_scores(row: Mapping) -> tuple[dict, ...]:
     """Score executed local checks, never an absent check or task-delivery claim."""
     attrs = row.get("attributes") if isinstance(row.get("attributes"), Mapping) else {}
+    if row.get("name") == SYMBOL_CHECK_OPERATION:
+        return _build_symbol_check_scores(row, attrs)
     status = attrs.get("verification_status")
     checks, failed, executions = (attrs.get(key) for key in ("checks_run", "checks_failed", "verification_executions"))
     if (row.get("name") != "patch.verify" or row.get("status") != "completed"

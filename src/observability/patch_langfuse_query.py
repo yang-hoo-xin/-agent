@@ -17,6 +17,7 @@ from pathlib import Path
 import jsonschema
 
 from src.observability.patch_langfuse import LangfuseHttpTransport, PatchLangfuseError
+from src.observability.patch_live_langfuse import SYMBOL_CHECK_OPERATION, SYMBOL_CHECK_SCORE_NAME
 
 _TOOLS = {"getObservationFieldSchema", "listObservations", "listScores"}
 _FIELDS = (
@@ -26,7 +27,7 @@ _FIELDS = (
 )
 _EXPAND = ("artifact_refs", "consumed_tool_results", "tool_call_id_sha256s", "consumed_materials",
            "produced_materials", "selected_evidence_id_sha256s", "relationship_counts", "decision_summary", "local_detail_refs",
-           "terminal_record_ref")
+           "terminal_record_ref", "symbol_declaration_checks")
 _FACTS = (
     "turn_index", "evaluation_index", "workflow_status", "terminal_stage", "failure_code",
     "verification_status", "failure_owner", "execution_origin", "callback_invoked",
@@ -57,6 +58,8 @@ _FACTS = (
     "fact_delivery_status", "input_member_access_count", "output_member_access_count", "added_member_access_count",
     "removed_member_access_count", "produced_member_access_fact_count", "input_member_access_facts_sha256",
     "output_member_access_facts_sha256", "produced_member_access_facts_sha256",
+    "symbol_check_status", "symbol_lookup_method", "symbol_check_sha256", "symbol_check_basis",
+    "symbol_declaration_count", "symbol_materialized_count", "symbol_check_projection_complete", "symbol_check_summary",
 )
 
 _MATERIAL_KEYS = ("evidence_id_sha256", "excerpt_sha256")
@@ -354,6 +357,12 @@ def summarize_execution(trace_id, observations, scores=()):
         "usage": {"measured_generations": len(known_usage), "missing_generations": len(generations) - len(known_usage),
                   "measured_totals": {k: sum(u[k] for u in known_usage) for k in ("input_tokens", "output_tokens", "total_tokens")} if known_usage else None},
         "verification": verification, "tool_consumption_links": links,
+        "symbol_materialization_checks": [{"observation_id": row["id"], "level": row.get("level"),
+            "facts": {key: row.get("metadata", {})[key] for key in _FACTS if key in row.get("metadata", {})},
+            "scores": [score for score in score_results if score.get("name") == SYMBOL_CHECK_SCORE_NAME
+                and score.get("subject", {}).get("kind") == "observation" and score["subject"].get("id") == row["id"]],
+            "scope": "declaration_identity_not_relevance_or_task_acceptance"}
+            for row in rows if row.get("name") == SYMBOL_CHECK_OPERATION],
         **_upstream_evidence(rows, generations),
         "roots": [{"observation_id": r["id"], "facts": {k: r.get("metadata", {})[k] for k in _FACTS if k in r.get("metadata", {})}} for r in roots],
         "upstream_requests": [{"observation_id": r["id"], "facts": {k: r.get("metadata", {})[k] for k in _FACTS if k in r.get("metadata", {})}}
@@ -430,6 +439,11 @@ def join_local_journal(result, journal_path, journal_sha256, *, artifact_roots=(
             joins.append(entry)
             continue
         entry["binding"] = "verified_journal_and_observation_mapping"
+        if mapped.get("symbol_check_sha256") and isinstance(attrs.get("symbol_check"), dict):
+            pointer_id = str(local["id"]).replace("~", "~0").replace("/", "~1")
+            entry["symbol_check_ref"] = {"path": str(path),
+                "json_pointer": "/execution_observations/" + pointer_id + "/attributes/symbol_check",
+                "value_sha256": mapped["symbol_check_sha256"], "hash_scope": "canonical_json_value"}
         details = attrs.get("local_detail_refs", {})
         for role in ("request", "response", "planning_receipt", "response_tools", "failure", "terminal_record"):
             reference = attrs.get("terminal_record_ref") if role == "terminal_record" else details.get(role) if isinstance(details, dict) else None

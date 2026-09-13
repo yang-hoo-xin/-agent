@@ -204,3 +204,35 @@ python -B -m pytest tests/unit/test_indexed_source_evidence.py::test_indexed_exa
 ```
 
 本次只改provider、对应测试与本记录；Ruff `E9,F63,F7,F821` 和diff检查通过。小检查后只作上述兼容修正和定点回归。没有模型、embedding、Build、产品Apply、游戏或Cloud操作；接线与总体质量收益仍分别验收。
+
+## 8. 声明物化检查进入原追踪、分数和查询
+
+接入前，原材料hash联查只能证明已经返回的片段被继续传递；即使选错了
+`RunAudit`，也可能得到一致的交接记录。现在在第7节的原物化校验位置记录
+`evidence.symbol_materialization`，保留原检查、异常和路由。每条本地
+`symbol_check`绑定当前observation/trace身份、源码hash、原声明行/签名与实际
+物化身份，另有canonical hash，Cloud映射仅保留哈希、行号、有限枚举和固定摘要。
+名称、源码、签名和物理路径不进入Cloud载荷。
+
+原`build_patch_live_scores`新增独立`indexed_symbol_declaration_match`：
+本次明确一致为1，原校验明确错位为0；源码窗口无法确认、重载部分选择、BM25
+及unknown均不评分。必须核对已执行检查、receipt hash和同一observation身份；
+仅文件hash相等或仅方法名相等均不足。此分数只表示声明定位一致性，不表示相关性、
+检索充分、业务行为或任务完成。原query关联该观察和分数，原本地journal联查返回
+经过核验的检查记录JSON pointer，无新Artifact、Graph、CLI、数据库或评估后台。
+
+真实临时本地索引正例，以及两种明确故障注入（不同方法、同名但错误声明位置）
+验证了1/0结果；原生产predicate未被替换。另覆盖未确认/部分结果不评分、篡改、
+敏感内容过滤、坏sink不改变原产品结果，以及既有OTLP和Score endpoint的离线传输。
+聚焦12 passed，3.69秒。唯一小checkpoint67 passed，39.83秒，包含前述12项。
+
+执行目录为本轮`independent_package_fixes_001`，使用主树已安装的`.venv/Scripts/python.exe`：
+
+```powershell
+python -B -m pytest tests/unit/test_symbol_materialization_trace.py -q --tb=short --basetemp="$env:TEMP\symbol-trace-$PID"
+python -B -m pytest tests/unit/test_symbol_materialization_trace.py tests/unit/test_indexed_source_evidence.py tests/unit/test_indexed_source_product_entry.py tests/unit/test_patch_live_verification_scores.py tests/unit/test_patch_langfuse_query.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\symbol-trace-cp-$PID"
+```
+
+Ruff致命规则和diff检查通过。未重跑429项，未调用模型、embedding、Cloud、真实Build、
+游戏或用户Mod Apply。上报/查回使用明确离线transport，不能宣称新Cloud验收或告警
+配置已经完成；后续仅在获授权的真实任务中验证部署后的上传与查询。
