@@ -17,7 +17,7 @@ from src.libs.llm.agent_turn import (
     AgentUsage,
     OllamaChatAgentAdapter,
 )
-from src.libs.llm.transport_observation import transport_started
+from src.libs.llm.transport_observation import observe_transport, transport_started
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.local_entry import (
     LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
@@ -112,6 +112,9 @@ def test_real_pre_send_gate_exports_exact_quantities_before_span_finishes(tmp_pa
     assert not any(row["kind"] == "generation" for row in rows)
     request_row = next(row for row in rows if row["name"] == "model.request")
     assert request_row["status"] == "failed"
+    assert request_row["attributes"]["provider_request_constructed"] is True
+    assert request_row["attributes"]["provider_request_admitted"] is False
+    assert request_row["attributes"]["provider_body_sha256"] == raised.value.diagnostic["request_identity"]["provider_body_sha256"]
     for key, value in {**LABELS, "context_admission_mode": MODE, **MEASUREMENTS}.items():
         assert request_row["attributes"][key] == value
     cloud, payload = _cloud_row(request_row)
@@ -122,6 +125,108 @@ def test_real_pre_send_gate_exports_exact_quantities_before_span_finishes(tmp_pa
     for key, value in {**LABELS, "context_admission_mode": MODE, **MEASUREMENTS}.items():
         assert item["facts"][key] == value
     assert "langfuse.observation.usage_details" not in json.dumps(payload)
+
+
+def test_same_request_warm_preview_and_new_adapter_report_admission_before_send(tmp_path):
+    class PreviewStopped(RuntimeError):
+        pass
+
+    calls = []
+    def stop_second(url, payload, headers):
+        calls.append(deepcopy(payload))
+        if len(calls) == 1:
+            return {"model": "offline-preview", "done": True, "prompt_eval_count": 11,
+                    "eval_count": 1, "message": {"role": "assistant", "content": "{}"}}
+        # Explicit inspection boundary: neither transport_started nor a socket.
+        raise PreviewStopped("development preview stops before network dispatch")
+
+    warm = OllamaChatAgentAdapter(model="offline-preview", base_url="http://127.0.0.1:11434",
+        max_output_tokens=4096, context_window=16384, request_sender=stop_second)
+    warm.complete_turn(AgentTurnRequest(messages=(AgentMessage("user", "seed fixture"),)))
+    request = AgentTurnRequest(messages=(AgentMessage("user", "PRIVATE_BODY" * 1400),))
+    rows = []
+    for client, expected_error in ((warm, PreviewStopped),
+            (OllamaChatAgentAdapter(model=warm.model, base_url=warm.base_url, max_output_tokens=4096,
+                context_window=16384, request_sender=lambda *_: pytest.fail("A cold gate must stop before sender")),
+             AgentTurnProviderError)):
+        recorder = _adapter(tmp_path, client.model)._recording_agent_client(client, f"preview-{len(rows)}")
+        sink = _FirstFinishedSink()
+        trace = ExecutionTrace(("a" if not rows else "b") * 32, "preview-fixture", "offline", sink=sink)
+        with trace.activate(), pytest.raises(expected_error):
+            recorder.complete_turn(request)
+        assert not any(row["kind"] == "generation" for row in sink.finished.values())
+        row = next(row for row in sink.finished.values() if row["name"] == "model.request")
+        cloud, payload = _cloud_row(row)
+        assert "PRIVATE_BODY" not in json.dumps(payload)
+        queried = summarize_execution(trace.context.trace_id, [cloud])
+        facts = queried["execution_tree"][0]["facts"]
+        assert facts["provider_request_constructed"] is True
+        assert facts["transport_started"] is False and facts["response_received"] is False
+        assert facts["exact_prompt_tokens_available_pre_call"] is False
+        assert facts["num_predict"] == 4096
+        rows.append(facts)
+    assert rows[0]["provider_body_sha256"] == rows[1]["provider_body_sha256"]
+    assert rows[0]["provider_request_admitted"] is True
+    assert rows[0]["context_admission_mode"] == "same_model_observed_prompt_ratio_upper_bound_v1"
+    assert rows[0]["observed_calibration_count"] == 1
+    assert rows[0]["context_calibration_used"] is True
+    assert rows[0]["estimated_required_context"] <= 16384
+    assert rows[1]["provider_request_admitted"] is False
+    assert rows[1]["context_admission_mode"] == MODE
+    assert rows[1]["context_calibration_used"] is False
+    assert "observed_calibration_count" not in rows[1]
+    assert rows[1]["conservative_required_context"] > 16384
+    assert len(calls) == 2  # One replay fixture response, then the explicit preview stop.
+
+
+def test_native_sender_marks_dispatch_and_response_only_at_original_http_boundary(tmp_path, monkeypatch):
+    requests = []
+    original_client = httpx.Client
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={"model": "offline-native-stage", "done": True,
+            "prompt_eval_count": 17, "eval_count": 3, "message": {"role": "assistant", "content": "{}"}})
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: original_client(
+        transport=httpx.MockTransport(respond), **kwargs))
+    client = OllamaChatAgentAdapter(model="offline-native-stage", base_url="http://127.0.0.1:11434",
+        max_output_tokens=4096, context_window=16384)
+    recorder = _adapter(tmp_path, client.model)._recording_agent_client(client, "native-stage")
+    sink = _FirstFinishedSink()
+    trace = ExecutionTrace("d" * 32, "native-stage", "offline-http-fixture", sink=sink)
+    with trace.activate():
+        response = recorder.complete_turn(AgentTurnRequest(messages=(AgentMessage("user", "PRIVATE_BODY"),)))
+    assert response.content == "{}" and len(requests) == 1
+    rows = [row for row in sink.finished.values() if row["name"] == "model.request" or row["kind"] == "generation"]
+    assert len(rows) == 2 and sum(row["kind"] == "generation" for row in rows) == 1
+    for row in rows:
+        assert row["attributes"]["provider_request_constructed"] is True
+        assert row["attributes"]["provider_request_admitted"] is True
+        assert row["attributes"]["transport_started"] is True
+        assert row["attributes"]["response_received"] is True
+        assert row["attributes"]["response_complete"] is True
+        assert row["attributes"]["http_status"] == 200
+    generation = next(row for row in rows if row["kind"] == "generation")
+    cloud, payload = _cloud_row(generation)
+    assert "PRIVATE_BODY" not in json.dumps(payload)
+    assert summarize_execution(trace.context.trace_id, [cloud])["generations"][0]["usage"] == {
+        "input_tokens": 17, "output_tokens": 3, "total_tokens": 20}
+
+
+def test_prepared_observer_failure_cannot_change_admission_or_request():
+    requests = []
+    def send(url, payload, headers):
+        requests.append(deepcopy(payload))
+        return {"model": "offline-observer", "done": True, "message": {"content": "{}"}}
+    def broken_observer(**facts):
+        raise RuntimeError("unavailable observation consumer")
+    client = OllamaChatAgentAdapter(model="offline-observer", base_url="http://127.0.0.1:11434",
+        max_output_tokens=512, context_window=4096, request_sender=send)
+    responses = []
+    with observe_transport(None, lambda **facts: responses.append(facts), request_callback=broken_observer):
+        response = client.complete_turn(AgentTurnRequest(messages=(AgentMessage("user", "unchanged input"),)))
+    assert response.content == "{}" and len(requests) == 1
+    assert requests[0]["messages"] == [{"role": "user", "content": "unchanged input"}]
+    assert responses == []  # Request preparation must not call response-only listeners.
 
 
 @pytest.mark.parametrize("context", [None, {},

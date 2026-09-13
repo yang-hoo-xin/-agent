@@ -1710,7 +1710,8 @@ class LocalOllamaInitialPatchAdapter:
                     if call_observation is not None:
                         record["model_request_observation_id"] = call_observation.observation_id
                     with observe_transport(call_observation.transport_started if call_observation else None,
-                            call_observation.update if call_observation else None):
+                            call_observation.update if call_observation else None,
+                            request_callback=call_observation.update if call_observation else None):
                         try:
                             response = client.complete_turn(request)
                         except Exception as exc:

@@ -7,8 +7,8 @@ _observer = ContextVar("agent_transport_observer", default=None)
 
 
 @contextmanager
-def observe_transport(callback, response_callback=None):
-    token = _observer.set((callback, response_callback))
+def observe_transport(callback, response_callback=None, request_callback=None):
+    token = _observer.set((callback, response_callback, request_callback))
     try:
         yield
     finally:
@@ -24,6 +24,40 @@ def transport_started():
         except Exception:
             # Instrumentation cannot block a send already admitted by its owner.
             pass
+
+
+def transport_request_prepared(*, request_identity, context_admission):
+    """Observe the native owner's serialized request and admission, before send.
+
+    Only measured hashes/counts and the selected estimate mode are projected.
+    This callback cannot alter the payload, admit it, or signal a model send.
+    """
+    callbacks = _observer.get()
+    callback = callbacks[2] if callbacks is not None else None
+    if callback is None:
+        return
+    try:
+        facts = {"provider_request_constructed": True, "transport_started": False, "response_received": False}
+        digest = request_identity.get("provider_body_sha256")
+        if isinstance(digest, str) and len(digest) == 64 and all(char in "0123456789abcdef" for char in digest):
+            facts["provider_body_sha256"] = digest
+        for key in ("provider_body_utf8_bytes", "configured_num_ctx", "num_predict", "conservative_required_context",
+                    "estimated_prompt_tokens", "estimated_required_context", "observed_calibration_count"):
+            value = context_admission.get(key)
+            if type(value) is int and value >= 0:
+                facts[key] = value
+        for key, output in (("admitted", "provider_request_admitted"),
+                            ("exact_prompt_tokens_available_pre_call", "exact_prompt_tokens_available_pre_call")):
+            if type(context_admission.get(key)) is bool:
+                facts[output] = context_admission[key]
+        mode = context_admission.get("mode")
+        if mode in {"provider_body_utf8_proxy_plus_output_budget_v1", "same_model_observed_prompt_ratio_upper_bound_v1"}:
+            facts["context_admission_mode"] = mode
+            facts["context_calibration_used"] = mode == "same_model_observed_prompt_ratio_upper_bound_v1"
+        callback(**facts)
+    except Exception:
+        # Optional observation must not change this already-computed decision.
+        pass
 
 
 def transport_response_received(*, http_status, response_complete):

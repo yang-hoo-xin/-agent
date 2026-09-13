@@ -47,7 +47,7 @@ _METADATA_LABELS = frozenset({"provider", "response_origin", "tool_name", "sourc
     "decision_status", "readiness", "input_role", "material_delivery_status", "selection_mode", "local_body_status",
     "from_node", "selected_route", "selected_next_node", "route_selector", "material_capture_status",
     "route_input_summary_scope", "route_input_summary_status", "route_output_summary_status",
-    "failure_stage", "execution_phase", "fact_delivery_status", "symbol_check_status", "symbol_lookup_method"})
+    "failure_stage", "execution_phase", "fact_delivery_status", "symbol_check_status", "symbol_lookup_method", "context_admission_mode"})
 _METADATA_NUMBERS = frozenset({"turn_index", "response_received", "response_complete", "http_status", "usage_available", "byte_count", "reused",
     "evaluation_index", "checks_run", "checks_failed", "transport_started", "request_bytes", "file_count",
     "proposal_admitted", "callback_invoked", "tool_dispatch_performed", "encoded_payload_bytes", "observation_queued",
@@ -58,20 +58,22 @@ _METADATA_NUMBERS = frozenset({"turn_index", "response_received", "response_comp
     "projection_fallback_used", "findings_invocation_performed", "can_generate_patch", "provider_failure_count",
     "callback_returned", "source_directory_exists", "project_file_discovered", "local_manifest_created",
     "input_member_access_count", "output_member_access_count", "added_member_access_count", "removed_member_access_count",
-    "produced_member_access_fact_count"})
+    "produced_member_access_fact_count", "provider_request_constructed", "provider_request_admitted",
+    "exact_prompt_tokens_available_pre_call", "context_calibration_used"})
 _METADATA_HASHES = frozenset({"request_sha256", "response_sha256", "observation_sha256",
     "behavior_report_sha256", "output_code_sha256", "output_sha256", "generated_changes_sha256", "baseline_sha256",
     "response_content_sha256", "source_snapshot_sha256", "encoded_payload_sha256", "arguments_sha256", "verification_matrix_sha256",
     "input_payload_sha256", "feature_payload_sha256", "evidence_payload_sha256", "structured_output_sha256",
     "materialized_projection_sha256", "output_payload_sha256", "reason_sha256", "query_sha256", "route_input_sha256",
     "input_member_access_facts_sha256", "output_member_access_facts_sha256", "produced_member_access_facts_sha256",
-    "symbol_check_sha256"})
+    "symbol_check_sha256", "provider_body_sha256"})
 _IDENTITY_ATTRIBUTES = frozenset({"source_observation_id", "binding_id", "provider_response_id"})
 _GATE_LABELS = {"failure_boundary": "provider_request_gate",
-    "failure_classification": "provider_request_context_budget_exceeded",
-    "context_admission_mode": "provider_body_utf8_proxy_plus_output_budget_v1"}
-_GATE_NUMBERS = frozenset({"provider_body_utf8_bytes", "configured_num_ctx", "num_predict", "conservative_required_context"})
+    "failure_classification": "provider_request_context_budget_exceeded"}
+_GATE_NUMBERS = frozenset({"provider_body_utf8_bytes", "configured_num_ctx", "num_predict", "conservative_required_context",
+    "estimated_prompt_tokens", "estimated_required_context", "observed_calibration_count"})
 _UPSTREAM_ENUM_LABELS = {
+    "context_admission_mode": {"provider_body_utf8_proxy_plus_output_budget_v1", "same_model_observed_prompt_ratio_upper_bound_v1"},
     "decision": {"patch_allowed", "patch_blocked", "select_targets", "needs_evidence", "retain_current_plan"},
     "decision_status": {"preparing", "running", "selected", "blocked", "retained_current_plan"},
     "readiness": {"sufficient", "partial", "insufficient", "contradictory"},

@@ -12,7 +12,7 @@ from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
 
 from src.libs.llm.ollama_llm import build_ollama_context_admission
-from src.libs.llm.transport_observation import transport_response_received, transport_started
+from src.libs.llm.transport_observation import transport_request_prepared, transport_response_received, transport_started
 
 
 @dataclass(frozen=True)
@@ -368,6 +368,7 @@ class OllamaChatAgentAdapter:
         request_url = f"{self.base_url}/api/chat"
         request_identity = _httpx_json_body_identity(request_url, payload)
         context_admission = self._context_admission(payload)
+        transport_request_prepared(request_identity=request_identity, context_admission=context_admission)
         if (
             self.context_window is not None
             and context_admission["admitted"] is not True
