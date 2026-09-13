@@ -80,3 +80,40 @@ def test_indexed_source_rejects_source_change_during_lookup(tmp_path, monkeypatc
     monkeypatch.setattr(provider._retriever, "retrieve", mutate_then_retrieve)
     with pytest.raises(ValueError):
         provider.collect_query_set(queries=(_query("状态同步"),), search_root=root.relative_to(tmp_path), max_items=1)
+
+
+@pytest.mark.parametrize("caller_first", [False, True])
+def test_indexed_exact_symbol_keeps_declaration_when_caller_matches_more_terms(tmp_path, monkeypatch, caller_first):
+    root = tmp_path / "generated_mods" / "Example"
+    root.mkdir(parents=True)
+    declaration = ["    public void HandleState()", "    {", "    }"]
+    caller = ["    public void RunAudit()", "    {", "        // audit",
+              "        HandleState();", "        HandleState();", "    }"]
+    lines = ["namespace Example;", "public sealed class State", "{",
+             *(caller + declaration if caller_first else declaration + caller), "}"]
+    raw = ("\n".join(lines) + "\n").encode("utf-8")
+    source = root / "State.cs"
+    source.write_bytes(raw)
+    provider = IndexedSourceEvidenceProvider(tmp_path, tmp_path / "a" / "source_index")
+    observed_hits = []
+    materialize = provider._materialize_hit
+
+    def record_hit(hit, query, max_items):
+        observed_hits.append(hit)
+        return materialize(hit, query, max_items)
+
+    monkeypatch.setattr(provider, "_materialize_hit", record_hit)
+    pack = provider.collect_query_set(queries=(_query("HandleState audit"),),
+        search_root=root.relative_to(tmp_path), max_items=1)
+    assert observed_hits[0].symbol == "HandleState"
+    assert observed_hits[0].retrieval_method == "symbol_exact"
+    assert observed_hits[0].span == {"start_line": 1, "end_line": len(lines)}
+    assert len(pack.items) == 1 and pack.items[0].method_name == "HandleState"
+    start = lines.index(declaration[0]) + 1
+    assert pack.items[0].span == {"start_line": start, "end_line": start + 2}
+    assert pack.items[0].excerpt == "\n".join(declaration) + "\n"
+    assert pack.items[0].source_hash == hashlib.sha256(raw).hexdigest()
+    assert pack.budget_summary["max_items"] == 1
+    assert pack.budget_summary["per_query_execution"][0]["evidence_ids"] == [pack.items[0].evidence_id]
+    assert pack.can_generate_patch is False
+    assert source.read_bytes() == raw

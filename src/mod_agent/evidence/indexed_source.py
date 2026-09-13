@@ -92,16 +92,40 @@ class IndexedSourceEvidenceProvider:
                 or not 1 <= span["start_line"] <= span["end_line"] <= len(lines)):
             raise ValueError("INDEXED_SOURCE_HIT_SPAN_INVALID")
         terms = [term.lower() for term in self._retriever._terms(query)]
-        matches = tuple((number, lines[number - 1])
-            for number in range(span["start_line"], span["end_line"] + 1)
-            if (hit.symbol in lines[number - 1] if hit.retrieval_method == "symbol_exact" and hit.symbol
-                else any(term in lines[number - 1].lower() for term in terms)))
-        if not matches:
-            raise ValueError("INDEXED_SOURCE_HIT_TEXT_MISMATCH")
+        declarations = {}
+        if hit.retrieval_method == "symbol_exact":
+            # Chunk spans contain both declarations and uses. Preserve the
+            # selected symbol's original declaration instead of ranking its
+            # call sites against the rest of the query a second time.
+            for symbol in self.database.symbols_for_file(
+                    source_id=self._source_id, source_path=str(path)):
+                if symbol.name != hit.symbol or not span["start_line"] <= symbol.start_line <= span["end_line"]:
+                    continue
+                if (symbol.content_hash != hit.source_hash
+                        or lines[symbol.start_line - 1].strip() != symbol.signature):
+                    raise ValueError("INDEXED_SOURCE_SYMBOL_DECLARATION_MISMATCH")
+                declarations[symbol.start_line] = symbol
+            if not declarations:
+                raise ValueError("INDEXED_SOURCE_SYMBOL_DECLARATION_MISSING")
+            locations = tuple(declarations)
+        else:
+            matches = tuple((number, lines[number - 1])
+                for number in range(span["start_line"], span["end_line"] + 1)
+                if any(term in lines[number - 1].lower() for term in terms))
+            if not matches:
+                raise ValueError("INDEXED_SOURCE_HIT_TEXT_MISMATCH")
+            locations = _rank_distinct_match_lines(matches, terms, lines=lines)
         facts = []
-        for number in _rank_distinct_match_lines(matches, terms, lines=lines)[:max_items]:
+        for number in locations[:max_items]:
             live = materialize_source_location(workspace_root=self.workspace_root, selected_path=path,
                 selected_line=number, source_bytes=raw, tokens=[])
+            declaration = declarations.get(number)
+            # Keep the existing verified source-window fallback for syntax the
+            # materializer does not expose as a complete method (e.g. inline
+            # empty bodies). A positively identified different method is invalid.
+            if declaration is not None and declaration.kind == "method" and live.method_name is not None and (
+                    live.method_name != declaration.name or live.span["start_line"] != number):
+                raise ValueError("INDEXED_SOURCE_SYMBOL_DECLARATION_MISMATCH")
             identity = f"{live.source_path}:{live.source_hash}:{live.span['start_line']}:{live.span['end_line']}"
             facts.append(replace(live,
                 evidence_id="indexed_source_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16],

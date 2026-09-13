@@ -185,3 +185,22 @@ python -B -m pytest tests/unit/test_indexed_source_evidence.py tests/unit/test_i
 **429 passed，231.25s**，没有失败或补跑。源码和测试在检查期间未变化，之后只补本节。原主仓库已安装的 `.venv/Scripts/python.exe -B -m ruff check` 对本包七份Python文件执行 `--select E9,F63,F7,F821` 全部通过；`git diff --check` 通过。未安装新依赖、运行全仓或新CI。
 
 本包使用确定性模型传输、基线编译／行为替身及真实本地检索，未运行真实模型、embedding、模型重排、Build、产品Apply、游戏或Cloud。下一项质量判断仍需固定源码／需求／模型／权限／预算与判定，分开索引构建和查询成本、必要材料召回和实际输入覆盖，再看原业务结果与人工帮助；小工程保留充分读取的简单对照。是否默认采用，必须由这种对照决定。First Shot 的独立单次回测与此包不互为前置，其结果由原页单独归档；本包不修改其恢复预算。
+
+### 精确符号物化纠正
+
+独立审阅在 `550029a` 复现：`HandleState audit`、`max_items=1` 的真实索引命中是 `symbol_exact/HandleState`，但命中的chunk包含调用方；物化器再次按词频排序，返回了含两次调用及audit文字的 `RunAudit`，丢掉了原声明。原429项没有覆盖这一信息替换。本页新增声明在调用方前／后的两个回归，修前均失败（**2 failed，1.08s**）。
+
+`IndexedSourceEvidenceProvider` 现在复用数据库已有 `symbols_for_file` 声明记录，在当前文件hash、原chunk范围和源码行签名都匹配后，以已命中名称的精确声明行调用原活源物化器。精确符号不再与调用点重新竞争词频；BM25仍保留原文本定位。原事实身份、全局max_items、版本与权限校验不变，没有新建导航系统。对于原物化器尚不输出完整方法元数据的单行空方法，保留其已验证源码窗口；明确物化成不同方法则拒绝。
+
+两个定点回归修后 **2 passed，0.67s**。唯一小范围检查选择原rg、provider和新产品入口41项，首轮 **36 passed / 5 failed，12.23s**；五项暴露新增后验校验误拒绝既有 `Load() {}` 源码窗口。保留原窗口行为后，只对五个失败入口 `--lf`，**5 passed / 1 deselected，36.84s**，再确认本P2两个回归 **2 passed，0.82s**。该41项选择最终无遗留失败，未重复429项。
+
+```powershell
+$env:PYTHONUTF8='1'
+python -B -m pytest tests/unit/test_indexed_source_evidence.py::test_indexed_exact_symbol_keeps_declaration_when_caller_matches_more_terms -q --tb=short --basetemp="$env:TEMP\ixsym-old-$PID"
+python -B -m pytest tests/unit/test_indexed_source_evidence.py::test_indexed_exact_symbol_keeps_declaration_when_caller_matches_more_terms -q --tb=short --basetemp="$env:TEMP\ixsym-fix-$PID"
+python -B -m pytest tests/unit/test_indexed_source_evidence.py tests/unit/test_indexed_source_product_entry.py tests/unit/test_rg_live_evidence.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\ixsym-check-$PID"
+python -B -m pytest tests/unit/test_indexed_source_product_entry.py --lf -q --tb=short --basetemp="$env:TEMP\ixsym-caller-$PID"
+python -B -m pytest tests/unit/test_indexed_source_evidence.py::test_indexed_exact_symbol_keeps_declaration_when_caller_matches_more_terms -q --tb=short --basetemp="$env:TEMP\ixsym-final-$PID"
+```
+
+本次只改provider、对应测试与本记录；Ruff `E9,F63,F7,F821` 和diff检查通过。小检查后只作上述兼容修正和定点回归。没有模型、embedding、Build、产品Apply、游戏或Cloud操作；接线与总体质量收益仍分别验收。
