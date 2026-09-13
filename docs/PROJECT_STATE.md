@@ -9,6 +9,8 @@ Authority and reading order are defined only by `AGENTS.md` section 2.
 
 Current selection and authority are in [Active Product Contract, 1.1](ACTIVE_PRODUCT_CONTRACT.md#11-current-development-selection). Selectable source symbol/BM25 retrieval, exact-declaration preservation, declaration-check trace/query/scores, and saved-layout isolated Apply have completed local engineering integration through `1b13a93`; see [Repair evidence](audits/REPAIR_CONTINUATION_20260909.md) and [saved Apply evidence](audits/SAVED_PATCH_REASSEMBLY_20260909.md). The original three package defects remain repaired through `47fd506`. The complete First Shot tool roundtrip is now integrated at `9155a88`, with original-material offline serialization and a 41-test combined selection passed; no new Actual or historical budget refund occurred. The prior `0bef5bc` Actual used 1/5 calls and stopped before new code/verification; old 33/36 remains unresolved. Real configuration delivery remains source-missing blocked. New Cloud readback, alert setup, and live retrieval-quality gains are not established. The checkpoints below retain historical results and do not override this selection.
 
+补充验收已完成：同一第二wire在新Python进程无校准时按原保守门明确拒绝，未恢复发送能力；中间tool-call响应不能进入完成Patch的保存重组。原生请求构造/准入/发送/响应事实已接入原trace与查询，63项检查通过（详见Repair记录第11节）。同额度材料选取修复也已整合，改进与负面交换均保留在第10节；这些都不是新增真实模型修复或Cloud验收。
+
 ### 当前承诺的成果对账
 
 用户目标仍是求职可复查成果、技术解释与维护能力、核心产品能力一起推进；广泛易用性和运营成熟度后置。下面区分已发生结果与尚未兑现的验收，不按模块或测试数量计算完成率。
@@ -17,9 +19,9 @@ Current selection and authority are in [Active Product Contract, 1.1](ACTIVE_PRO
 | --- | --- | --- |
 | 正常自然语言入口完成真实任务 | 原配置任务完成模型选址、生成修改、完整验证编译及配置5/5；保存输出已有零模型公开续接 | 原运行目标源码当前仍缺失；真实批准后Apply／正式Build及声明终点未完成，不能称完整Mod交付 |
 | 模型根据真实失败修订 | 分页7/7、嵌套快照2/4→4/4均到原Review／Dry-run终点 | 属于开发题；连续两次以上新行为失败后最终修对、独立泛化尚缺真实模型证据 |
-| First Shot有界修复机会 | 单次0bef5bc Actual已执行，1/5调用后止于工具结果观察预算；新往返包在原材料离线回放及共享worker接缝通过 | 旧33/36未解决；新包没有新增真实模型修订，旧超额账目不退款，不启动第二Actual |
+| First Shot有界修复机会 | 原材料往返/共享worker接缝已通过；补验真实新进程重建同一第二wire并按保守门停止，中间回复不冒充Patch | 旧33/36未解决；新进程未恢复校准且不能发送该请求；没有新模型修订，旧超额账目不退款 |
 | 四类基础设施实际效果 | 真实保存产物复用；源码漂移/错误批准零写入反例；临时隔离文件正常写入；真实任务失败到输入/代码/判定材料的绑定查询 | 临时工程通过不替代真实配置交付；未承诺任意崩溃事务恢复。新声明检查的Cloud上传查回未执行 |
-| 自主补查和检索质量 | 默认初始/A/B/C源码补查已接通；无模型检索对照已完成，主集宽档rg覆盖5/21、索引7/21、全文21/21预设材料事实 | 结果不是模型成功率且标签有披露限制；产品页在修已找到材料被挤出。完整结构导航和语义对照未做，metadata／IL仍按任务补接 |
+| 自主补查和检索质量 | 初始/A/B/C接通；无模型主集宽档rg5/21、索引7/21、全文21/21；同额度材料准入修复已整合，窄档索引3→6/21 | 宽档总数仍7/21且有事实替换退步；不是模型成功率。结构导航、语义对照和按需metadata／IL仍未完成 |
 | 代表性新业务任务 | 已准备Follow Recoil运行时配置切换需求，保留不指定文件/Hook/根因的边界 | 实际热切换基线和延迟未测，基线可能无需修改；原默认值5项检查不能判定热切换，判定/授权仍待就绪 |
 | 独立任务及公平对照 | 三道新题仍封存，未借本次修复阅读隐藏答案 | 尚未执行；同模型/权限/预算/检查下的简单方案对照、人工技术介入数据仍缺，不将First Shot成功设为前置 |
 | 求职深挖和第二语言 | 已有可进入源码及复现的故障与工程修复案例 | 用户本人讲解/复现/修改演练未验收；第二语言复用、非作者开箱使用均未新验证，继续后置 |

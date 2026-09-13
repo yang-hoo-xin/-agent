@@ -404,3 +404,58 @@ python -B -m pytest tests/unit/test_indexed_source_evidence.py tests/unit/test_i
 最终变更文件的 Ruff `E9,F63,F7,F821` 和 `git diff --check` 通过。
 最终测试及质量测量期间生产代码未再变化；未运行全仓测试，因为最终只修改该源码适配器，
 其直接消费者及重叠／预算／声明合同已有上述检查。索引结构导航和语义召回仍为独立后续工作。
+
+## 11. 工具中间响应、新进程和发送前阶段的补充验收
+
+本节按用户明确补充的边界验收，不执行新的First Shot Actual，也不把原33/36改成新成绩。
+验收输入为保存的首轮tool-call回复及其绑定源码；不再在第二请求后提供旧C1来表示完成。
+
+`test_patch_tool_roundtrip_restart.py`真实启动新Python进程。中间请求序列化保存后，
+新进程重建相同消息及provider状态，并由原引用/源码检查和原native adapter进行预检。
+五次调用均有各自结果；从实际wire中的tool内容展开后与当前源码逐字核对，而非只在
+Python缓存中找到正文。另换成第二项拼接及反向suffix，证明不针对第五调用写特判；
+缺少可见锚点或源码hash漂移均在provider前停止。五项检查通过，6.45秒。
+
+原First Shot材料的整合验收结果见[唯一合并回执](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/firstshot_tool_roundtrip_001/restart_acceptance_integrated/acceptance-result.json)。
+其中两进程的第二HTTP请求body SHA均为
+`2b9e13baedea4bd30beb33624de8dd69f9e45b5b7b3fb453c848c23a1cfe5b77`，60,977 bytes：
+
+| 状态 | 原准入结论 | 实际到达边界 |
+| --- | --- | --- |
+| 同一存活adapter，首响应为明确历史fixture | 原启发式校准估计38,325 ≤49,152，输出预留4,096 | 第二sender替身入口以sentinel停止，未发生真实发送或新响应 |
+| 新Python进程、全新adapter | 不恢复内存校准，原保守60,977＋4,096＝65,073 >49,152 | 原context gate拒绝；sender、socket、新模型回复均0 |
+
+新进程选择的是用户允许的“明确退回保守估计”，不是已实现校准恢复或重启后继续发送。
+两条路径都不是第二请求的实测token验收；旧首响应计量仅作fixture。原journal SHA
+`040bb403b329514eb3598a1f38c9592579428116897849f775b27648a9d46bc7`未变，旧超额账目没有退款。
+回执保留两个不同物理进程的独立trace，用相同wire hash关联，不虚构共享内存父树。
+
+保存响应类型也有独立负例：即使提供有效文件引用和匹配hash，只有`tool_calls`的正文
+仍在原native parser因缺`changes`被拒，不能创建Proposal、进入Review/Dry-run或调用网络。
+`test_saved_patch_response_boundary.py` 1 passed，2.45秒。正常中间journal还会因缺少
+已准入Proposal和原Review更早被拒。只有符合原条件的完整Patch能零模型走保存重组；
+原配置产物当前仍缺真实目标文件，本节没有恢复它。
+
+原native owner现在在HTTP body已编码、原准入已计算后，通过现有transport observer的
+独立`request_callback`通知构造/准入/hash/字节/模式/估计事实。它不改变payload或决定。
+该回调与response回调分开，避免构造被误当成收到响应；发送及响应仍由原HTTP边界通知。
+原mapper/query可显示这些安全元数据，不上传正文，不填假token或由查询重新裁决任务成功。
+两条实际开发trace均为0 generation、0新响应；首响应单列`saved_response_replay`。
+
+阶段缺口原两项先失败（1.47秒），修后两项通过（1.13秒）；新增HTTP MockTransport
+验证发送/响应通知以及坏observer不改结果。唯一相关checkpoint在整合树执行：
+
+```powershell
+$env:PYTHONUTF8='1'
+python -B -m pytest tests/unit/test_patch_provider_gate_trace.py tests/unit/test_agent_turn_adapters.py tests/unit/test_patch_tool_roundtrip_restart.py tests/unit/test_saved_patch_response_boundary.py tests/unit/test_patch_langfuse_query.py -q --tb=short -n 2 --dist=loadfile --basetemp=C:/Users/10160/AppData/Local/Temp/restart-stage-cp -o cache_dir=C:/Users/10160/AppData/Local/Temp/restart-stage-cache
+```
+
+使用原主树`.venv/Scripts/python.exe`，63 passed，7.88秒；Ruff致命规则和diff检查通过。
+私有原材料两进程验收2.157秒，文件单独留在原scratch的新`restart_acceptance_integrated`目录，
+不覆盖先前回放。没有模型、Cloud、Embedding、游戏、真实Build或用户Mod Apply。
+这项验收通过的是声明范围内的工程处理及明确停止边界，不是First Shot修复成功。
+
+另外，交回的同额度检索修复`73b739d`整合为`84e553f`；只发生本文件第9/10节追加位置冲突，
+两节完整保留。与当前原生阶段通知组合的检索/声明直接消费者25 passed，29.08秒：
+`python -B -m pytest tests/unit/test_indexed_source_evidence.py tests/unit/test_indexed_source_product_entry.py tests/unit/test_symbol_materialization_trace.py -q --tb=short -n 2 --dist=loadfile --basetemp=C:/Users/10160/AppData/Local/Temp/fact-merge-integrated -o cache_dir=C:/Users/10160/AppData/Local/Temp/fact-merge-cache`。
+不将这25项与本节63项相加为独立任务数，也不把该检索修复作为First Shot验收前置。
