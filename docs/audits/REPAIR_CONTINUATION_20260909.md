@@ -236,3 +236,7 @@ python -B -m pytest tests/unit/test_symbol_materialization_trace.py tests/unit/t
 Ruff致命规则和diff检查通过。未重跑429项，未调用模型、embedding、Cloud、真实Build、
 游戏或用户Mod Apply。上报/查回使用明确离线transport，不能宣称新Cloud验收或告警
 配置已经完成；后续仅在获授权的真实任务中验证部署后的上传与查询。
+
+与保存布局修复`dd43117`整合后，代码身份`1b13a93`补一组共同入口/追踪接缝检查：
+`python -B -m pytest tests/unit/test_saved_apply_layout.py tests/unit/test_symbol_materialization_trace.py -q --tb=short -n 2 --dist=loadfile --basetemp=C:/Users/10160/AppData/Local/Temp/bound-integration-0913 -o cache_dir=C:/Users/10160/AppData/Local/Temp/bound-integration-cache`，
+使用同一主树解释器并设置`PYTHONUTF8=1`，16 passed，12.97秒；未重跑两包的完整选择。
