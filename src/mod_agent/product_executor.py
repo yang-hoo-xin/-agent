@@ -644,6 +644,9 @@ class ProductExecutionAdaptersV1:
     source_change_verifier: Callable[..., Any] | None
     proposal_review_context_factory: Callable[..., Any] | None = None
     planning_target_selection_factory: Callable[..., Any] | None = None
+    product_patch_upstream_execution: Any = None
+    patch_upstream_evidence_pack_factory: Callable[..., Any] | None = None
+    patch_upstream_planning_target_selection_factory: Callable[..., Any] | None = None
 
     def validate_for(self, request: ProductExecutionRequestV1) -> None:
         required = (
@@ -682,6 +685,22 @@ class ProductExecutionAdaptersV1:
                 "callable or null.",
                 side_effects_may_have_started=False,
             )
+        for field in ("patch_upstream_evidence_pack_factory", "patch_upstream_planning_target_selection_factory"):
+            selected = getattr(self, field)
+            if selected is not None and not callable(selected):
+                raise ProductExecutionContractError(
+                    f"Product adapter {field} must be callable or null.",
+                    side_effects_may_have_started=False,
+                )
+        if self.product_patch_upstream_execution is not None:
+            from src.mod_agent.request_patch_execution import RequestPatchExecution
+
+            if (not isinstance(self.product_patch_upstream_execution, RequestPatchExecution)
+                    or self.product_patch_upstream_execution is not self.patch_change_factory):
+                raise ProductExecutionContractError(
+                    "Product upstream execution must be the current product Patch worker owner.",
+                    side_effects_may_have_started=False,
+                )
         runtime_required = request.requested_completion_scope == "runtime_workflow"
         if runtime_required is not callable(self.runtime_evidence_factory):
             raise _ProductExecutionAdmissionError(
@@ -695,6 +714,9 @@ class ProductExecutionAdaptersV1:
             for field in (
                 "evidence_pack_factory",
                 "planning_target_selection_factory",
+                "product_patch_upstream_execution",
+                "patch_upstream_evidence_pack_factory",
+                "patch_upstream_planning_target_selection_factory",
                 "patch_change_factory",
                 "dry_run_factory",
                 "isolated_apply_factory",
@@ -1583,6 +1605,25 @@ def execute_product_execution(
             "Deferred approval resumes only through its persisted exact checkpoint and approved diff.",
             side_effects_may_have_started=False)
 
+    upstream_evidence_factory = adapters.patch_upstream_evidence_pack_factory
+    if upstream_evidence_factory is not None:
+        from src.mod_agent.evidence.reassessment import RequirementCoverageReassessmentFactory
+
+        if isinstance(upstream_evidence_factory, RequirementCoverageReassessmentFactory):
+            recorded_reassessment = recorder.wrap_effect(effect_role="evidence_retrieval",
+                node_name="retrieve_evidence", factory=upstream_evidence_factory)
+
+            class RecordedReassessment(RequirementCoverageReassessmentFactory):
+                def __init__(self):
+                    # Provider identity is checked above; only effect accounting
+                    # is added around this exact admitted factory.
+                    pass
+
+                def __call__(self, state, feature_data):
+                    return recorded_reassessment(state, feature_data)
+
+            upstream_evidence_factory = RecordedReassessment()
+
     wrapped = ProductExecutionAdaptersV1(
         evidence_pack_factory=recorder.wrap_effect(effect_role="evidence_retrieval", node_name="retrieve_evidence", factory=adapters.evidence_pack_factory),
         patch_change_factory=recorder.wrap_effect(effect_role="patch_generation", node_name="generate_patch_proposal", factory=adapters.patch_change_factory),
@@ -1597,6 +1638,9 @@ def execute_product_execution(
         planning_target_selection_factory=(
             adapters.planning_target_selection_factory
         ),
+        product_patch_upstream_execution=adapters.product_patch_upstream_execution,
+        patch_upstream_evidence_pack_factory=upstream_evidence_factory,
+        patch_upstream_planning_target_selection_factory=adapters.patch_upstream_planning_target_selection_factory,
     )
     if defer_approval:
         from src.mod_agent.workflow.checkpointing import WorkflowCheckpointStore
@@ -1622,6 +1666,10 @@ def execute_product_execution(
         product_execution_mode=ProductExecutionGraphModeV1(
             contract_version="1", request=request
         ),
+        enable_patch_upstream_replanning=adapters.product_patch_upstream_execution is not None,
+        product_patch_upstream_execution=wrapped.product_patch_upstream_execution,
+        patch_upstream_evidence_pack_factory=wrapped.patch_upstream_evidence_pack_factory,
+        patch_upstream_planning_target_selection_factory=wrapped.patch_upstream_planning_target_selection_factory,
         **({"checkpointer": WorkflowCheckpointStore.langgraph_memory_checkpointer()} if defer_approval else {}),
     )
     state = create_initial_state(

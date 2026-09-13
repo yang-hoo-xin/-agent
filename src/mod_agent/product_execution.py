@@ -1194,6 +1194,7 @@ PRODUCT_EXECUTION_DECLARATION = ProductExecutionDeclarationV1(
 def _validate_store_trace(
     attempts: tuple[ProductExecutionStoreAttemptV1, ...],
     outputs: tuple[ProductExecutionOutputV1, ...],
+    *, upstream_sequences: frozenset[int] = frozenset(),
 ) -> None:
     declaration = PRODUCT_EXECUTION_DECLARATION
     roles = declaration.role_by_node
@@ -1250,7 +1251,8 @@ def _validate_store_trace(
     # Store-role order within a node is exact, including critic before review and
     # BuildResult before WorkflowCheckpoint.
     for index, item in enumerate(attempts):
-        if index and attempts[index - 1].node_name == item.node_name:
+        if (index and attempts[index - 1].node_name == item.node_name
+                and item.sequence not in upstream_sequences):
             declared = roles[item.node_name]
             previous = attempts[index - 1].artifact_role
             if declared.index(item.artifact_role) <= declared.index(previous):
@@ -1441,6 +1443,7 @@ def _output_readback_envelopes(
 
 def _validate_repair_plan_lifecycle_predicates(
     facts: "ProductExecutionFactsV1",
+    *, upstream_sequences: frozenset[int] = frozenset(),
 ) -> None:
     envelopes = _output_readback_envelopes(facts)
     if envelopes is None:
@@ -1463,7 +1466,7 @@ def _validate_repair_plan_lifecycle_predicates(
     grammar = PRODUCT_EXECUTION_DECLARATION.lifecycle_grammar
     for index, item in enumerate(attempts):
         if (item.node_name != "create_repair_plan" or item.artifact_role != "repair_plan"
-                or item.store_result.outcome != "committed"):
+                or item.store_result.outcome != "committed" or item.sequence in upstream_sequences):
             continue
         envelope = envelopes.get(item.sequence)
         if envelope is None:
@@ -1570,6 +1573,113 @@ def _validate_repair_plan_lifecycle_predicates(
             )
 
 
+def _validated_product_upstream_sequences(facts: "ProductExecutionFactsV1") -> frozenset[int]:
+    """Recognize one exact assessment insertion before applying the original grammar.
+
+    Assessment can precede the first Proposal, so it has no invented failure
+    ancestor. Its stored selected inputs and semantic boundary identify the
+    insertion; ordinary RepairPlan and approval/Apply ordering stay unchanged.
+    """
+    envelopes = _output_readback_envelopes(facts)
+    if envelopes is None:
+        return frozenset()
+    excluded: set[int] = set()
+    admitted = False
+    attempts = facts.store_attempts
+
+    def require(condition):
+        if not condition:
+            raise ProductExecutionContractError(
+                "Product upstream assessment violates its exact input or lifecycle boundary.",
+                side_effects_may_have_started=True)
+
+    for index, item in enumerate(attempts):
+        envelope = envelopes.get(item.sequence, {})
+        data = envelope.get("data", {})
+        if (item.artifact_role != "repair_plan" or not isinstance(data, Mapping)
+                or data.get("failure_class") != "patch_upstream_assessment"):
+            continue
+        require(not admitted and index > 0 and item.node_name == "create_repair_plan")
+        admitted = True
+        context = data.get("repair_context") or {}
+        upstream = context.get("upstream_request") or {}
+        decision = data.get("semantic_decision") or {}
+        owner = upstream.get("required_owner")
+        previous = attempts[index - 1]
+        require(previous.node_name in {"create_implementation_plan", "create_repair_plan"}
+                and previous.repair_attempt == item.repair_attempt
+                and envelope.get("status") == "success"
+                and owner in {"evidence", "planning"}
+                and upstream.get("origin") == "model"
+                and decision.get("decision") == "upstream_assessment_ready"
+                and decision.get("required_next_owner") == owner
+                and decision.get("authority_granted") is False
+                and context.get("approval_inherited") is False
+                and data.get("scope_expansion_allowed") is False
+                and data.get("minimal_changes") == [] and data.get("blockers") == []
+                and data.get("allowed_next_stage") is None and data.get("source_proposal") == {}
+                and data.get("retry_count") == item.repair_attempt
+                and data.get("retry_budget") == PRODUCT_EXECUTION_DECLARATION.lifecycle_grammar.max_repair_attempt
+                and data.get("retry_budget_remaining") == data["retry_budget"] - item.repair_attempt
+                and data.get("retry_exhausted") is False)
+        _require_sha256(context.get("product_context_sha256"), "product_context_sha256")
+        _require_sha256(context.get("source_snapshot_sha256"), "source_snapshot_sha256")
+        _require_sha256(context.get("workspace_snapshot_sha256"), "workspace_snapshot_sha256")
+        response_ref = upstream.get("source_worker_response_ref") or {}
+        _require_non_empty(response_ref.get("path"), "source_worker_response_ref.path")
+        _require_sha256(response_ref.get("sha256"), "source_worker_response_ref.sha256")
+        expected = {}
+        for kind in ("feature_spec", "evidence_pack", "implementation_plan"):
+            prior = next((row for row in reversed(facts.outputs)
+                          if row.sequence < item.sequence and row.artifact_role == kind), None)
+            require(prior is not None)
+            ref = prior.artifact_ref
+            expected[kind] = {"feature_id": ref.feature_id, "artifact_type": ref.artifact_type,
+                              "path": ref.path, "artifact_hash": ref.artifact_hash}
+        require(context.get("selected_artifacts") == expected
+                and envelope.get("inputs", {}).get("upstream_artifacts") == [
+                    {"artifact_type": kind, "path": ref["path"], "artifact_hash": ref["artifact_hash"],
+                     "require_latest": False} for kind, ref in expected.items()])
+        failure = context.get("failure_report")
+        if context.get("current_failure_available") is True:
+            require(isinstance(failure, Mapping) and failure.get("execution_origin") == "executed"
+                    and failure.get("status") in {"behavior_failed", "needs_evidence"}
+                    and data.get("failure_source") == "behavior_report"
+                    and data.get("failure_findings") == failure.get("observations")
+                    and failure.get("source_snapshot_sha256") == context.get("source_snapshot_sha256")
+                    and failure.get("generated_changes_sha256") == context.get("generated_changes_sha256")
+                    and upstream.get("failure_report_ref") == context.get("failure_report_ref"))
+            for field in ("failed_response_ref", "failure_report_ref"):
+                ref = context.get(field) or {}
+                _require_non_empty(ref.get("path"), field + ".path")
+                _require_sha256(ref.get("sha256"), field + ".sha256")
+        else:
+            require(context.get("current_failure_available") is False and failure is None
+                    and data.get("failure_source") == "patch_upstream_request"
+                    and data.get("failure_findings") == [] and data.get("failure_evidence") == []
+                    and all(context.get(key) is None for key in (
+                        "failed_response_ref", "failure_report_ref", "generated_changes_sha256"))
+                    and upstream.get("failure_report_ref") is None)
+        excluded.add(item.sequence)
+        # A retained Plan produces no new Plan Artifact. Evidence assessment must
+        # still publish Evidence before a new Plan, or stop at its first failure.
+        expected_nodes = (["retrieve_evidence", "create_implementation_plan"]
+                          if owner == "evidence" else ["create_implementation_plan"])
+        following = index + 1
+        for expected_node in expected_nodes:
+            if following >= len(attempts) or attempts[following].node_name in {"blocked", "generate_patch_proposal"}:
+                require(owner == "planning" or following >= len(attempts)
+                        or attempts[following].node_name == "blocked")
+                break
+            row = attempts[following]
+            require(row.node_name == expected_node and row.repair_attempt == item.repair_attempt)
+            excluded.add(row.sequence)
+            following += 1
+        if following < len(attempts):
+            require(attempts[following].node_name in {"generate_patch_proposal", "blocked"})
+    return frozenset(excluded)
+
+
 def _validate_terminal_effect_boundary(facts: "ProductExecutionFactsV1") -> None:
     if not facts.store_attempts or facts.store_attempts[-1].node_name != "blocked":
         return
@@ -1607,10 +1717,11 @@ class ProductExecutionFactsV1:
 def _validate_product_execution_result_facts(
     facts: ProductExecutionFactsV1,
 ) -> None:
-    _validate_store_trace(facts.store_attempts, facts.outputs)
+    upstream_sequences = _validated_product_upstream_sequences(facts)
+    _validate_store_trace(facts.store_attempts, facts.outputs, upstream_sequences=upstream_sequences)
     _validate_effect_trace(facts.effect_events)
-    _validate_lifecycle(facts.store_attempts)
-    _validate_repair_plan_lifecycle_predicates(facts)
+    _validate_lifecycle(tuple(item for item in facts.store_attempts if item.sequence not in upstream_sequences))
+    _validate_repair_plan_lifecycle_predicates(facts, upstream_sequences=upstream_sequences)
     _validate_terminal_effect_boundary(facts)
     if facts.feature_id is not None:
         _require_non_empty(facts.feature_id, "feature_id")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
@@ -17,7 +18,7 @@ from src.mod_agent.proposal.models import (
 )
 from src.mod_agent.runtime.evidence import normalize_runtime_failure_ownership
 
-FailureSource = Literal["build", "runtime", "eval", "proposal_review", "behavior_report"]
+FailureSource = Literal["build", "runtime", "eval", "proposal_review", "behavior_report", "patch_upstream_request"]
 RepairSemanticDecisionKind = Literal[
     "repair_ready",
     "evidence_insufficient",
@@ -91,6 +92,8 @@ class RepairPlan:
             "node_name": "create_repair_plan",
             "stage": "repair_plan",
             "message": (
+                "Product Patch requested upstream assessment; no failure is inferred."
+                if self.failure_source == "patch_upstream_request" else
                 "Repair plan created from failure evidence."
                 if not self.retry_exhausted
                 else "Repair retry budget exhausted; repair is blocked."
@@ -217,6 +220,45 @@ class RepairPlanner:
             requires_new_evidence=owner == "evidence", allowed_next_stage=(
                 "evidence_retrieval" if owner == "evidence" else "implementation_plan"),
             repair_context={**base.repair_context, "upstream_request": upstream},
+            semantic_decision={"decision": "upstream_assessment_ready", "required_next_owner": owner,
+                "origin": upstream["origin"], "authority_granted": False, "reason": upstream["reason"]})
+
+    def from_product_patch_upstream_request(self, *, context: dict[str, Any], upstream: dict[str, Any],
+            feature_id: str, target_behavior: str, retry_count: int) -> RepairPlan:
+        """Record a Product assessment without inventing a Proposal or failed check."""
+        from src.mod_agent.fresh_planning_continuation import _canonical_sha256
+
+        owner = upstream["required_owner"]
+        if owner not in {"evidence", "planning"}:
+            raise ValueError("Only Evidence or Planning assessment can be requested here.")
+        failure = context["failure_report"]
+        refs = ((context["failure_report_ref"]["path"],) if failure is not None else ())
+        source = "behavior_report" if failure is not None else "patch_upstream_request"
+        return RepairPlan(
+            repair_id=stable_repair_id(feature_id=feature_id, failure_source=source,
+                failure_class="patch_upstream_assessment", retry_count=retry_count,
+                evidence_refs=(upstream["source_worker_response_ref"]["path"],)),
+            feature_id=feature_id, failure_source=source, failure_class="patch_upstream_assessment",
+            evidence_refs=refs, hypothesis=upstream["reason"], minimal_changes=(), retry_count=retry_count,
+            retry_budget=self.retry_budget, retry_budget_remaining=max(self.retry_budget - retry_count, 0),
+            retry_exhausted=False, scope_expansion_allowed=False,
+            stop_condition="One upstream assessment in the original task budget; never inherit approval.",
+            forbidden_regressions=tuple(upstream["preserved_plan_boundaries"]),
+            requires_new_evidence=owner == "evidence",
+            # This assessment grants no Patch execution. Graph conditional edges
+            # consume the named semantic owner and later re-admit a complete Plan.
+            allowed_next_stage=None, target_behavior=target_behavior,
+            failure_findings=tuple(deepcopy(item) for item in failure["observations"]) if failure is not None else (),
+            repair_context={"upstream_request": deepcopy(upstream),
+                "product_context_sha256": _canonical_sha256(context),
+                "selected_artifacts": deepcopy(context["selected_artifacts"]),
+                "failure_report_ref": deepcopy(context["failure_report_ref"]),
+                "failed_response_ref": deepcopy(context["failed_response_ref"]),
+                "generated_changes_sha256": context["generated_changes_sha256"],
+                "source_snapshot_sha256": context["source_snapshot_sha256"],
+                "workspace_snapshot_sha256": context["workspace_snapshot_sha256"],
+                "failure_report": deepcopy(failure), "current_failure_available": failure is not None,
+                "approval_inherited": False},
             semantic_decision={"decision": "upstream_assessment_ready", "required_next_owner": owner,
                 "origin": upstream["origin"], "authority_granted": False, "reason": upstream["reason"]})
 

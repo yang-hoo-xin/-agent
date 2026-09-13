@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +13,7 @@ import httpx
 import pytest
 import yaml
 
+import src.mod_agent.cli as cli_module
 import src.mod_agent.local_entry as local_entry_module
 from src.libs.llm import (
     AgentToolCall,
@@ -2168,6 +2170,260 @@ def test_cli_run_request_real_public_product_executor_compile_success(
         )
     )
     assert manifest["ollama_patch_generation_profile"]["timeout_seconds"] == 600.0
+
+
+def _public_patch_upstream_scenario(
+    tmp_path, monkeypatch, capsys, *, owner="evidence", repair_limit=2,
+    task_limit=9, planning_timeout=False, repeat_upstream=False,
+    fail_first=False, retain_plan=False,
+):
+    """Deterministic HTTP/baseline compiler; stop before product Apply or Build."""
+    from src.mod_agent.evidence.rg_live import RgLiveEvidenceProvider
+    from src.mod_agent.proposal.patch_agent_loop import PATCH_UPSTREAM_REQUEST_TOOL_NAME
+
+    ordinary_install = _install_public_run_request_native_chat
+    ordinary_main = main
+    actual_chat = local_entry_module.OllamaLLM.chat
+    observed = SimpleNamespace(
+        roles=[], requests=[], patch_contexts=[], findings=[], planning=[], searches=[],
+        result=None, exit_code=None, source_bytes=None,
+        evaluations=[], worker_requests=[], generated_responses=[],
+    )
+
+    def collect(provider, **kwargs):
+        result = actual_collect(provider, **kwargs)
+        observed.searches.append((kwargs, result))
+        return result
+
+    actual_collect = RgLiveEvidenceProvider.collect_query_set
+    monkeypatch.setattr(RgLiveEvidenceProvider, "collect_query_set", collect)
+
+    if fail_first:
+        from dataclasses import replace
+        from src.mod_agent.request_patch_execution import RequestPatchExecution
+        ordinary_init = RequestPatchExecution.__init__
+
+        def evaluate(context):
+            passed = "PRODUCT_TEST_REPAIRED" in json.dumps(context["generated_changes"])
+            report = {
+                "status": "passed" if passed else "behavior_failed",
+                "failure_owner": None if passed else "patch_implementation",
+                "owner_binding_ids": [row["edit_binding_id"] for row in context["generated_changes"]],
+                "observations": [{"check_id": "synthetic_product_marker", "passed": passed,
+                    "detail": "Deterministic evaluator requires the repaired marker."}],
+                "generated_changes_sha256": context["generated_changes_sha256"],
+                "source_snapshot_sha256": context["source_snapshot_sha256"],
+                "execution_origin": "executed",
+            }
+            path = tmp_path / f"behavior-{len(observed.evaluations) + 1}.json"
+            raw = json.dumps(report).encode("utf-8")
+            path.write_bytes(raw)
+            report["report_ref"] = {"path": str(path), "sha256": hashlib.sha256(raw).hexdigest()}
+            observed.evaluations.append((context, report))
+            return report
+
+        evaluate.verification_identity = lambda: {
+            "validator_sha256": "1" * 64, "inputs_sha256": "2" * 64,
+            "environment_sha256": "3" * 64, "deterministic_reuse_allowed": True,
+        }
+
+        def initialize(self, **kwargs):
+            kwargs["behavior_evaluator"] = evaluate
+            # Select this scenario's three-turn worker before its first call.
+            kwargs["policy"] = replace(kwargs["policy"], max_total_model_turns=3)
+            return ordinary_init(self, **kwargs)
+
+        monkeypatch.setattr(RequestPatchExecution, "__init__", initialize)
+
+    def install_transport(patcher, deterministic_chat):
+        ordinary_install(patcher, deterministic_chat)
+
+        def transport(_transport, request):
+            assert str(request.url) == "http://127.0.0.1:11434/api/chat"
+            payload = json.loads(request.content)
+            observed.requests.append(payload)
+            contexts = []
+            for message in payload["messages"]:
+                if message["role"] != "user":
+                    continue
+                try:
+                    context = json.loads(message["content"])
+                except (ValueError, TypeError):
+                    continue
+                if "patch_agent_context_encoding" in context:
+                    context = local_entry_module._restore_patch_agent_context(context)
+                contexts.append(context)
+            context = next((value for value in contexts if value.get("message_type") in {
+                "product_requirement_projection", "product_requirement_findings",
+                "patch_upstream_evidence_queries",
+            }), None)
+            if context is not None:
+                message_type = context["message_type"]
+                observed.roles.append(message_type)
+                if message_type == "patch_upstream_evidence_queries":
+                    content = {"queries": [{"query": "RefreshSharedState",
+                        "requirement_id": context["requirements"][0]["requirement_id"]}]}
+                else:
+                    content = _formal_coverage_model_response(context)
+                    if message_type == "product_requirement_findings":
+                        observed.findings.append(context)
+                        ids = [row["evidence_id"] for row in context["source_observations"]]
+                        for row in content["findings"]:
+                            row["evidence_ids"] = ids
+                            if row["edit_target_evidence_ids"]:
+                                row["edit_target_evidence_ids"] = ids
+            else:
+                planning = next((value for value in contexts if "allowed_edit_evidence_ids" in value), None)
+                if planning is not None:
+                    observed.roles.append("planning")
+                    observed.planning.append(planning)
+                    if len(observed.planning) > 1 and planning_timeout:
+                        raise httpx.ReadTimeout("Offline product upstream timeout.", request=request)
+                    content = {"decision": "select_targets",
+                        "selected_evidence_ids": planning["allowed_edit_evidence_ids"],
+                        "rationale": "Deterministic product-entry reassessment over current source evidence.",
+                        "missing_evidence": []}
+                    if len(observed.planning) > 1 and retain_plan:
+                        content.update(decision="retain_current_plan", selected_evidence_ids=[])
+                else:
+                    observed.roles.append("patch")
+                    context = next(value for value in contexts if "required_change_units" in value)
+                    observed.patch_contexts.append(context)
+                    observed.worker_requests.append(contexts)
+                    upstream_turn = 2 if fail_first else 1
+                    if len(observed.patch_contexts) == upstream_turn or (
+                        repeat_upstream and len(observed.patch_contexts) > upstream_turn
+                    ):
+                        tool = next(row["function"] for row in payload["tools"]
+                            if row["function"]["name"] == PATCH_UPSTREAM_REQUEST_TOOL_NAME)
+                        binding_id = context["required_change_units"][0]["edit_binding_id"]
+                        message = {"role": "assistant", "content": "", "tool_calls": [{"function": {
+                            "name": tool["name"], "arguments": {"required_owner": owner,
+                                "reason": "Offline fixture needs the unobserved shared-state source before patching.",
+                                "source_refs": [f"binding://{binding_id}"]}}}]}
+                        return response(request, payload, message)
+                    content = json.loads(deterministic_chat(
+                        SimpleNamespace(), [SimpleNamespace(content=json.dumps(context))]).content)
+                    if fail_first and len(observed.patch_contexts) > upstream_turn:
+                        for row in content["changes"]:
+                            row["after_text"] += "\n// PRODUCT_TEST_REPAIRED\n"
+                    observed.generated_responses.append(json.dumps(content))
+            return response(request, payload, {"role": "assistant", "content": json.dumps(content)})
+
+        def response(request, payload, message):
+            return httpx.Response(200, request=request, json={"model": payload["model"],
+                "message": message, "done": True, "done_reason": "stop",
+                "prompt_eval_count": 10, "eval_count": 20})
+
+        patcher.setattr(httpx.HTTPTransport, "handle_request", transport)
+        patcher.setattr(local_entry_module.OllamaLLM, "chat", actual_chat)
+
+    class ScenarioComplete(Exception):
+        pass
+
+    def run_without_approval(arguments):
+        (tmp_path / "Example" / "SharedState.cs").write_text(
+            "namespace Example;\npublic sealed class SharedState\n{\n"
+            "    public void RefreshSharedState() {}\n}\n", encoding="utf-8")
+        observed.source_bytes = {path.name: path.read_bytes()
+            for path in (tmp_path / "Example").glob("*.cs")}
+        offset = arguments.index("--planning-target-evidence-id")
+        arguments = arguments[:offset] + arguments[offset + 2:]
+        run_local = cli_module.run_local_request
+
+        def run_with_budget(**kwargs):
+            kwargs.update(task_model_call_limit=task_limit, stage_model_call_limits={
+                "requirement_projection": 2, "requirement_findings": 2, "planning": 1,
+                "initial_patch": 3 if fail_first else 2, "repair": repair_limit,
+            })
+            return run_local(**kwargs)
+
+        monkeypatch.setattr(cli_module, "run_local_request", run_with_budget)
+        observed.exit_code = ordinary_main([*arguments, "--defer-approval"])
+        observed.result = json.loads(capsys.readouterr().out)
+        raise ScenarioComplete
+
+    monkeypatch.setattr(sys.modules[__name__], "_install_public_run_request_native_chat", install_transport)
+    monkeypatch.setattr(sys.modules[__name__], "main", run_without_approval)
+    monkeypatch.setattr("socket.socket.connect", lambda *_args, **_kwargs:
+        pytest.fail("No actual network or model request is permitted."))
+    with pytest.raises(ScenarioComplete):
+        test_cli_run_request_real_public_product_executor_compile_success(tmp_path, monkeypatch, capsys)
+    assert {path.name: path.read_bytes() for path in (tmp_path / "Example").glob("*.cs")} == observed.source_bytes
+    return observed
+
+
+def test_cli_run_request_patch_evidence_return_executes_new_search_and_reaches_original_review(
+    tmp_path, monkeypatch, capsys,
+):
+    observed = _public_patch_upstream_scenario(tmp_path, monkeypatch, capsys)
+    assert observed.roles == ["product_requirement_projection", "product_requirement_findings",
+        "planning", "patch", "patch_upstream_evidence_queries", "product_requirement_findings",
+        "planning", "patch"], observed.result
+    assert observed.exit_code == 0 and observed.result["status"] == "awaiting_approval", observed.result
+    assert len(observed.searches) == 2
+    added_queries, added_pack = observed.searches[-1]
+    assert [row["query"] for row in added_queries["queries"]] == ["RefreshSharedState"]
+    assert len(added_pack.items) == 1 and "RefreshSharedState" in added_pack.items[0].excerpt
+    old_ids = {row["evidence_id"] for row in observed.findings[0]["source_observations"]}
+    new_ids = {row["evidence_id"] for row in observed.findings[-1]["source_observations"]}
+    assert new_ids - old_ids == {added_pack.items[0].evidence_id}
+    assert set(observed.planning[-1]["allowed_edit_evidence_ids"]) == new_ids
+    assert len(observed.patch_contexts[0]["required_change_units"]) == 1
+    assert len(observed.patch_contexts[-1]["required_change_units"]) == 2
+    assert "RefreshSharedState" in json.dumps(observed.patch_contexts[-1])
+    resumed = next(row for row in observed.worker_requests[-1]
+        if row.get("message_type") == "patch_replanned_context")
+    assert resumed["prior_code_role"] == "no_failed_code_generated"
+    assert "validator_feedback" not in resumed
+    repair_path = next((tmp_path / "runs").rglob("repair_plan.json"))
+    repair = json.loads(repair_path.read_text(encoding="utf-8"))["data"]
+    assert repair["failure_findings"] == []
+    assert repair["repair_context"]["failure_report"] is None
+    assert repair["repair_context"]["failed_response_ref"] is None
+    assert repair["repair_context"]["current_failure_available"] is False
+    result = observed.result
+    assert result["actual_write_performed"] is False and result["approval_recorded"] is False
+    assert result["builds_performed"] == result["runtime_executions_performed"] == 0
+    assert result["canonical_source_unchanged"] is True
+    budget = result["model_call_budget"]
+    assert budget["maximum"] == 9 and budget["consumed"] == len(observed.requests) == 8
+    assert budget["by_stage"]["planning"] == {"maximum": 1, "consumed": 1, "remaining": 0}
+    assert budget["by_stage"]["repair"] == {"maximum": 2, "consumed": 2, "remaining": 0}
+
+
+@pytest.mark.parametrize("stop", ["repair_budget", "task_budget", "planning_timeout"])
+def test_cli_run_request_patch_upstream_stops_with_consumed_original_budget(
+    tmp_path, monkeypatch, capsys, stop,
+):
+    observed = _public_patch_upstream_scenario(tmp_path, monkeypatch, capsys,
+        owner="planning" if stop == "planning_timeout" else "evidence",
+        repair_limit=1 if stop == "repair_budget" else 2,
+        task_limit=6 if stop == "task_budget" else 9,
+        planning_timeout=stop == "planning_timeout")
+    assert observed.exit_code != 0, observed.result
+    assert "product_execution_result" in observed.result, observed.result
+    machine = observed.result["product_execution_result"]
+    assert machine["execution_disposition"] == "domain_blocked"
+    assert any(row["code"] == "PLANNING_MODEL_SELECTION_FAILED" for row in machine["blockers"])
+    assert not any(row["artifact_role"] in {"patch_proposal", "proposal_review", "dry_run_result"}
+        for row in machine["outputs"])
+    assert len(observed.patch_contexts) == 1
+    budget = observed.result["model_call_budget"]
+    assert budget["consumed"] == len(observed.requests)
+    assert budget["by_stage"]["planning"] == {"maximum": 1, "consumed": 1, "remaining": 0}
+    if stop == "planning_timeout":
+        assert observed.roles == ["product_requirement_projection", "product_requirement_findings",
+            "planning", "patch", "planning"]
+        assert budget["consumed"] == 5
+        assert budget["by_stage"]["repair"] == {"maximum": 2, "consumed": 1, "remaining": 1}
+    else:
+        assert observed.roles == ["product_requirement_projection", "product_requirement_findings",
+            "planning", "patch", "patch_upstream_evidence_queries", "product_requirement_findings"]
+        assert budget["consumed"] == 6
+        assert budget["by_stage"]["requirement_findings"] == {"maximum": 2, "consumed": 2, "remaining": 0}
+        assert "PRODUCT_MODEL_CALL_BUDGET_EXHAUSTED" in json.dumps(machine["blockers"])
+    assert observed.result["actual_write_performed"] is False
 
 
 def test_cli_run_request_real_public_product_executor_runtime_success(

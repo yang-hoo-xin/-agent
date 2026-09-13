@@ -105,13 +105,31 @@ def test_evidence_return_recomputes_complete_coverage_before_model_planning(tmp_
         "relationship", "evidence_ids", "edit_target_evidence_ids", "unresolved_gaps")}}
         for i, row in enumerate(normalized, 1)]})
     client = _Client()
+    evidence_factory = _evidence_factory(inputs, findings)
+    select_queries = evidence_factory.query_selector
+    query_feedback = []
+
+    def checked_queries(feature, projection, previous, feedback):
+        from src.mod_agent.local_entry import _assert_no_absolute_local_paths
+
+        _assert_no_absolute_local_paths(feedback)
+        query_feedback.append(deepcopy(feedback))
+        return select_queries(feature, projection, previous, feedback)
+
+    evidence_factory.query_selector = checked_queries
     state = run_patch_upstream_replanning(request=request, selection=_selection("evidence"),
-        evidence_pack_factory=_evidence_factory(inputs, findings), planning_target_selection_factory=_selector(inputs, client))
+        evidence_pack_factory=evidence_factory, planning_target_selection_factory=_selector(inputs, client))
     assert not state["blockers"]
     assert len(findings.calls) == len(client.calls) == 1
     received_ids = {item.evidence_id for item in findings.calls[0]["retrieved_pack"].items}
     assert {item["evidence_id"] for item in old["items"]} <= received_ids
     assert findings.calls[0]["semantic_feedback"]["observed_failure"]
+    feedback = findings.calls[0]["semantic_feedback"]
+    repair = _artifact(inputs, state, "repair_plan")["data"]
+    assert query_feedback == [feedback]
+    assert feedback["recommendation"]["failure_report_ref"] == {
+        "sha256": repair["repair_context"]["upstream_request"]["failure_report_ref"]["sha256"]}
+    assert repair["repair_context"]["upstream_request"]["failure_report_ref"]["path"]
     new = _artifact(inputs, state, "evidence_pack")["data"]
     assert new["requirement_coverage"]["projection_identity"] == old["requirement_coverage"]["projection_identity"]
     assert "fresh_coverage_model_execution" not in new["budget_summary"]

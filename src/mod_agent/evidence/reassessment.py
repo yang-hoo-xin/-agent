@@ -44,7 +44,17 @@ class RequirementCoverageReassessmentFactory:
         materialized = {key: deepcopy(old.requirement_coverage[key]) for key in (
             "schema_version", "feature_spec_identity", "request_identity", "projection_identity",
             "input_obligations", "input_dispositions", "requirements", "relations", "queries")}
-        feedback = {"recommendation": deepcopy(upstream), "observed_failure": deepcopy(repair["failure_findings"]),
+        recommendation = {key: deepcopy(upstream[key]) for key in (
+            "required_owner", "reason", "source_refs", "preserved_plan_boundaries")}
+        for key in ("source_worker_response_ref", "source_attempt_ref", "failure_report_ref"):
+            if key in upstream:
+                ref = upstream[key]
+                recommendation[key] = {"sha256": ref["sha256"]} if ref is not None else None
+        observations = deepcopy(repair["failure_findings"])
+        for observation in observations:
+            if isinstance(observation.get("result_ref"), dict):
+                observation["result_ref"] = {"sha256": observation["result_ref"]["sha256"]}
+        feedback = {"recommendation": recommendation, "observed_failure": observations,
             "interpretation_is_not_observation": True}
         selected = self.query_selector(deepcopy(feature_data), deepcopy(materialized), deepcopy(old), deepcopy(feedback))
         requirement_ids = {item["requirement_id"] for item in materialized["requirements"]}

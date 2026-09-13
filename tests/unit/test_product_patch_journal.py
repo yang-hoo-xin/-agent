@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -205,3 +207,102 @@ def test_product_journal_rejects_workspace_inside_store(graph_inputs, child):
             **dict(arguments, workspace_root=workspace),
         )
     assert not (inputs.store.root / "cr").exists()
+
+
+@pytest.mark.parametrize("provider,owner,code", [
+    ("patch_upstream_evidence_pack_factory", "evidence", "PATCH_UPSTREAM_EVIDENCE_PROVIDER_REQUIRED"),
+    ("patch_upstream_planning_target_selection_factory", "planning", "PATCH_UPSTREAM_PLANNING_PROVIDER_REQUIRED"),
+])
+def test_product_upstream_missing_provider_stops_current_public_request(
+    tmp_path, monkeypatch, capsys, provider, owner, code,
+):
+    """Deterministic transport; the real Product Graph receives a missing provider."""
+    from src.mod_agent import product_executor
+    from tests.unit.test_mod_agent_cli import _public_patch_upstream_scenario
+
+    ordinary_build = product_executor.build_graph
+
+    def build(*args, **kwargs):
+        kwargs[provider] = None
+        return ordinary_build(*args, **kwargs)
+
+    monkeypatch.setattr(product_executor, "build_graph", build)
+    observed = _public_patch_upstream_scenario(tmp_path, monkeypatch, capsys, owner=owner)
+    assert code in json.dumps(observed.result), observed.result
+    assert observed.roles == ["product_requirement_projection", "product_requirement_findings", "planning", "patch"]
+    assert observed.result["actual_write_performed"] is False
+    assert observed.result["model_call_budget"]["consumed"] == 4
+    loop_state = next(item for item in observed.worker_requests[0]
+        if item.get("message_type") == "patch_agent_loop_state")
+    assert loop_state["upstream_effects"][owner] == "provider_unavailable_stop"
+    assert len(observed.searches) == len(observed.planning) == 1
+    assert observed.evaluations == []
+
+
+def test_product_upstream_second_request_stops_without_new_assessment(tmp_path, monkeypatch, capsys):
+    """The current logical task keeps its consumed budget and one-cycle limit."""
+    from tests.unit.test_mod_agent_cli import _public_patch_upstream_scenario
+
+    observed = _public_patch_upstream_scenario(tmp_path, monkeypatch, capsys,
+        owner="planning", repeat_upstream=True)
+    assert "PATCH_UPSTREAM_CONTINUATION_BUDGET_EXHAUSTED" in json.dumps(observed.result), observed.result
+    assert observed.roles == ["product_requirement_projection", "product_requirement_findings",
+        "planning", "patch", "planning", "patch"]
+    assert observed.result["model_call_budget"]["consumed"] == 6
+    assert observed.result["actual_write_performed"] is False
+    assert len(observed.searches) == 1 and len(observed.planning) == 2
+    assert observed.evaluations == []
+    assert observed.result["model_call_budget"]["by_stage"]["initial_patch"] == {
+        "maximum": 2, "consumed": 2, "remaining": 0}
+
+
+@pytest.mark.parametrize("mismatch", ["failed_response", "failure_feedback", "product_task"])
+def test_product_upstream_rejects_mismatched_current_failure_before_planning(
+    tmp_path, monkeypatch, capsys, mismatch,
+):
+    """Real worker/evaluator fixtures; mutate one retained identity at admission."""
+    from src.mod_agent.request_patch_execution import RequestPatchExecution
+    from tests.unit.test_mod_agent_cli import _public_patch_upstream_scenario
+
+    ordinary_validate = RequestPatchExecution.validate_upstream
+    bound_contexts = []
+
+    def validate(execution, state, artifact_store):
+        # Prove the unmodified failure is valid against this worker's actual
+        # source, generated response, persisted report and current Product task.
+        context, _ = ordinary_validate(execution, state, artifact_store)
+        bound_contexts.append(deepcopy(context))
+        receipt = deepcopy(execution.patch_attempt_receipt())
+        if mismatch == "failed_response":
+            receipt["patch_agent_loop"]["behavior_evaluations"][-1]["model_response_sha256"] = "f" * 64
+        elif mismatch == "failure_feedback":
+            receipt["patch_agent_loop"]["behavior_correction"]["validator"]["generated_changes_sha256"] = "f" * 64
+        else:
+            execution.last_state["request_id"] = "unrelated_product_task"
+        execution.last_worker._receipt = deepcopy(receipt)
+        execution.receipts[-1] = deepcopy(receipt)
+        execution.journals[-1].record({"phase": "test_mismatched_identity", "factory_receipt": receipt})
+        return ordinary_validate(execution, state, artifact_store)
+
+    monkeypatch.setattr(RequestPatchExecution, "validate_upstream", validate)
+    observed = _public_patch_upstream_scenario(tmp_path, monkeypatch, capsys,
+        owner="planning", fail_first=True, retain_plan=True, task_limit=10)
+    expected = ("PATCH_UPSTREAM_ATTEMPT_MISMATCH" if mismatch == "product_task"
+                else "PATCH_UPSTREAM_FAILURE_BINDING_REQUIRED")
+    assert expected in json.dumps(observed.result), observed.result
+    assert observed.roles == ["product_requirement_projection", "product_requirement_findings",
+        "planning", "patch", "patch"]
+    assert len(observed.evaluations) == 1
+    assert observed.result["actual_write_performed"] is False
+    assert len(bound_contexts) == 1 and bound_contexts[0]["current_failure_available"] is True
+    current = bound_contexts[0]
+    evaluated, report = observed.evaluations[0]
+    assert current["generated_changes_sha256"] == evaluated["generated_changes_sha256"]
+    assert current["source_snapshot_sha256"] == evaluated["source_snapshot_sha256"]
+    assert current["failed_response_ref"]["sha256"] == evaluated["model_response"]["output_sha256"]
+    assert current["failure_report_ref"] == report["report_ref"]
+    for ref in (current["failed_response_ref"], current["failure_report_ref"]):
+        assert hashlib.sha256(Path(ref["path"]).read_bytes()).hexdigest() == ref["sha256"]
+    assert current["failure_report"]["owner_binding_ids"] == [
+        unit["edit_binding_id"] for unit in observed.patch_contexts[0]["required_change_units"]]
+    assert len(observed.planning) == len(observed.searches) == 1

@@ -5,6 +5,7 @@ import hashlib
 import json
 from collections.abc import Mapping
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from src.libs.llm.agent_turn import AgentToolCall
@@ -27,6 +28,188 @@ from src.mod_agent.proposal.patch_agent_loop import (
     PlanBoundSourceInspector,
     _validate_upstream_request,
 )
+
+
+def validate_product_worker_upstream(*, execution, state, artifact_store):
+    """Admit a request from this Product worker, with optional current failure.
+
+    A request before the first generated Patch has no failed-code/report lineage.
+    The Product journal owns both cases; no Fresh continuation is constructed.
+    """
+    from src.mod_agent.artifacts import ArtifactRef
+    from src.mod_agent.fresh_planning_continuation import (
+        _csharp_source_snapshot, _validate_selected_plan, _validate_source_items,
+    )
+
+    def require(condition, message):
+        if not condition:
+            raise PatchContinuationError("PATCH_UPSTREAM_ATTEMPT_MISMATCH", "upstream_admission", message)
+
+    if execution.replan_count:
+        raise PatchContinuationError("PATCH_UPSTREAM_CONTINUATION_BUDGET_EXHAUSTED", "upstream_admission",
+            "This logical Product task has already consumed its one upstream cycle.")
+    require(execution.last_worker is not None and execution.last_state is not None
+            and bool(execution.journals), "No current Product worker journal owns this request.")
+    selected = {kind: _artifact_ref_dict(ArtifactRef(feature_id=state["feature_id"], artifact_type=kind,
+        path=state["artifacts"][kind], artifact_hash=state["artifact_hashes"][kind]))
+        for kind in ("feature_spec", "evidence_pack", "implementation_plan")}
+    original = execution.last_state
+    require(all(state[key] == original[key] for key in ("run_id", "request_id", "feature_id"))
+            and all(original["artifacts"].get(kind) == ref["path"]
+                    and original["artifact_hashes"].get(kind) == ref["artifact_hash"]
+                    for kind, ref in selected.items()), "The upstream request belongs to another Product task or Plan.")
+    journal = json.loads(Path(execution.journals[-1].path).read_text(encoding="utf-8"))
+    receipt = execution.patch_attempt_receipt()
+    snapshot = _source_tree_snapshot_sha256(_csharp_source_snapshot(execution.workspace_root))
+    require(journal.get("continuation_selection") == "product_graph_current_implementation_plan"
+            and journal.get("request_id") == state["request_id"]
+            and journal.get("parent_run_id") == state["run_id"]
+            and journal.get("selected_artifacts") == selected
+            and journal.get("factory_receipt") == receipt
+            and receipt == execution.last_worker.patch_attempt_receipt()
+            and journal.get("generated_against_snapshot_sha256") == snapshot
+            and journal.get("current_snapshot_sha256") == snapshot,
+            "The current Product journal, worker output and live source must agree.")
+    payloads = {kind: artifact_store.semantic_read_immutable(ArtifactRef(**ref))["data"]
+                for kind, ref in selected.items()}
+    _validate_selected_plan(payloads["implementation_plan"], payloads["evidence_pack"], feature_id=state["feature_id"])
+    _validate_source_items(payloads["evidence_pack"], execution.workspace_root)
+    policy = execution.last_worker.patch_agent_loop_policy
+    inspector = PlanBoundSourceInspector(workspace_root=execution.workspace_root,
+        implementation_plan=payloads["implementation_plan"], evidence_pack=payloads["evidence_pack"], policy=policy)
+    terminal = receipt.get("upstream_decision") or {}
+    arguments = terminal.get("upstream_request") or {}
+    require(terminal.get("code") == "PATCH_AGENT_UPSTREAM_REQUESTED", "There is no explicit worker upstream request.")
+    call_arguments = {key: arguments.get(key) for key in ("required_owner", "reason", "source_refs")}
+    code, validated = _validate_upstream_request(AgentToolCall(call_id="product-upstream-admission",
+        name=PATCH_UPSTREAM_REQUEST_TOOL_NAME, arguments=call_arguments), inspector, policy, tool_available=True)
+    require(validated is not None and arguments == validated, f"Current upstream request failed source admission: {code}.")
+    turns = receipt.get("worker_turns") or []
+    require(bool(turns) and turns[-1].get("status") == "responded", "No retained final worker response exists.")
+    response = _repair_json(turns[-1].get("response_ref"))
+    calls = response.get("tool_calls") or []
+    require(len(calls) == 1 and calls[0].get("name") == PATCH_UPSTREAM_REQUEST_TOOL_NAME
+            and calls[0].get("arguments") == call_arguments, "The retained worker response requests different upstream material.")
+    context = {**deepcopy(payloads), "selected_artifacts": selected,
+        "workspace_snapshot_sha256": snapshot, "source_snapshot_sha256": inspector.source_snapshot_sha256,
+        "failure_report": None, "failed_response_ref": None, "failure_report_ref": None,
+        "previous_response": None, "generated_changes_sha256": None,
+        "current_failure_available": False, "approval_inherited": False}
+    evaluations = (receipt.get("patch_agent_loop") or {}).get("behavior_evaluations") or []
+    if evaluations:
+        context.update(_product_current_worker_failure(context=context, receipt=receipt,
+            workspace_root=execution.workspace_root))
+        _validate_current_failure_feedback(context, receipt)
+    else:
+        require(not receipt.get("model_response") and not receipt.get("model_responses")
+                and execution.last_worker._repair_context is None,
+                "Generated or inherited code cannot be treated as a request before the first Patch.")
+    upstream = {"origin": "model", **call_arguments, "validated_request": validated,
+        "source_worker_response_ref": deepcopy(turns[-1]["response_ref"]),
+        "source_attempt_id": journal["run_id"], "failure_report_ref": deepcopy(context["failure_report_ref"]),
+        "preserved_plan_boundaries": deepcopy(payloads["implementation_plan"].get("side_effect_boundaries", []))}
+    return context, upstream
+
+
+def _product_current_worker_failure(*, context, receipt, workspace_root):
+    """Reconstruct the latest executed output from the current Product receipt."""
+    from src.libs.llm import ChatResponse
+    from src.mod_agent.execution.patch_apply import materialize_exact_text_patch
+    from src.mod_agent.local_entry import _external_evidence_items, _patch_generation_obligation_projection
+    from src.mod_agent.proposal.code_generator import LLMExactPatchGenerator
+
+    try:
+        evaluations = receipt["patch_agent_loop"]["behavior_evaluations"]
+        latest = evaluations[-1]
+        if (latest.get("admission") != "accepted" or latest.get("execution_origin") != "executed"
+                or latest.get("status") not in {"behavior_failed", "needs_evidence"}):
+            raise ValueError("Upstream recovery requires the current admitted executed failure.")
+        report_ref = latest["report_ref"]
+        report = _repair_json(report_ref)
+        if any(latest.get(key) != report.get(key) for key in (
+                "status", "failure_owner", "owner_binding_ids", "observations", "source_snapshot_sha256",
+                "generated_changes_sha256", "execution_origin")):
+            raise ValueError("The failure differs from its saved result.")
+        if report["source_snapshot_sha256"] != context["source_snapshot_sha256"]:
+            raise ValueError("The failure belongs to different selected source bytes.")
+        response_hash = latest.get("model_response_sha256") or report.get("model_response_sha256")
+        if "model_response_sha256" in report and report["model_response_sha256"] != response_hash:
+            raise ValueError("The failure names a different model response.")
+        identities = [receipt.get("model_response"), *(receipt.get("model_responses") or []),
+            ((receipt.get("patch_agent_loop") or {}).get("behavior_correction") or {}).get("response")]
+        identities = [item for item in identities if isinstance(item, Mapping) and item.get("output_sha256") == response_hash]
+        if not identities or not response_hash:
+            raise ValueError("No current retained response matches this checked output.")
+        response = identities[-1]
+        response_ref = {"path": response["path"], "sha256": response_hash}
+        raw = _read_hashed_repair_file(response_ref).decode("utf-8")
+        implementation = context["implementation_plan"]
+        obligations = _patch_generation_obligation_projection(feature_spec=context["feature_spec"],
+            implementation=implementation, planned_changes=list(implementation["proposed_changes"]))
+        generator = LLMExactPatchGenerator(None)
+        prepared = generator.prepare_native_contract(user_request=context["feature_spec"]["user_request"],
+            evidence_items=_external_evidence_items(context["evidence_pack"]["items"]),
+            binding_registry=implementation["binding_registry"], constraints=obligations["side_effect_boundaries"],
+            target_behavior=obligations["target_behavior"], acceptance_criteria=obligations["acceptance_criteria"],
+            runtime_verification_plan=obligations["runtime_verification_plan"],
+            required_change_units=obligations["required_change_units"], required_validation_by_binding={
+                item["edit_binding_id"]: item["expected_validation"] for item in obligations["required_change_units"]})
+        generated = generator.materialize_prepared_native(prepared, ChatResponse(content=raw, model=response["model"]))
+        if _canonical_sha256(generated.changes) != report["generated_changes_sha256"]:
+            raise ValueError("The observations were measured against different generated changes.")
+        materialized = materialize_exact_text_patch(workspace_root=workspace_root,
+            diff_intent=generated.changes, implementation_plan=implementation)
+        if latest.get("materialized_code_identity") != {"baseline_sha256": materialized.baseline_sha256,
+                "code_sha256": materialized.code_sha256, "files": sorted(materialized.files)}:
+            raise ValueError("The observations do not match the actual materialized code.")
+        if "verification_ref" in report:
+            _read_hashed_repair_file(report["verification_ref"])
+        for observation in report["observations"]:
+            if "result_ref" in observation:
+                _read_hashed_repair_file(observation["result_ref"])
+        return {"previous_response": raw, "failed_response_ref": response_ref,
+            "failed_diff_intent": list(generated.changes), "generated_changes_sha256": _canonical_sha256(generated.changes),
+            "failure_report_ref": deepcopy(report_ref), "failure_report": report,
+            "active_failure_evaluation_index": len(evaluations), "current_failure_available": True}
+    except (ValueError, TypeError, KeyError, OSError) as exc:
+        raise PatchContinuationError("PATCH_UPSTREAM_FAILURE_BINDING_REQUIRED", "upstream_admission", str(exc)) from exc
+
+
+def prepare_product_upstream_assessment(*, execution, state, artifact_store):
+    """Revalidate Product dependencies and the retained current request before assessment."""
+    from src.mod_agent.artifacts import ArtifactRef
+
+    original = execution.last_state
+    context, upstream = validate_product_worker_upstream(execution=execution, state=original, artifact_store=artifact_store)
+    repair_ref = ArtifactRef(feature_id=state["feature_id"], artifact_type="repair_plan",
+        path=state["artifacts"]["repair_plan"], artifact_hash=state["artifact_hashes"]["repair_plan"])
+    repair = artifact_store.semantic_read_immutable(repair_ref)["data"]
+    recorded = state["runtime_summary"].get("patch_upstream_return") or {}
+    if (recorded.get("assessment_only") is not True or recorded.get("repair_plan_hash") != repair_ref.artifact_hash
+            or repair["repair_context"]["upstream_request"] != upstream
+            or repair["repair_context"]["product_context_sha256"] != _canonical_sha256(context)
+            or context != execution.upstream_context):
+        raise PatchContinuationError("PATCH_UPSTREAM_ASSESSMENT_INVALID", "upstream_admission",
+            "The current Product assessment no longer matches its admitted worker context.")
+    unchanged = all(state["artifacts"].get(kind) == ref["path"]
+                    and state["artifact_hashes"].get(kind) == ref["artifact_hash"]
+                    for kind, ref in context["selected_artifacts"].items())
+    model_report = deepcopy(context["failure_report"])
+    if model_report is not None:
+        for observation in model_report["observations"]:
+            if isinstance(observation.get("result_ref"), dict):
+                observation["result_ref"] = {"sha256": observation["result_ref"]["sha256"]}
+        if isinstance(model_report.get("verification_ref"), dict):
+            model_report["verification_ref"] = {"sha256": model_report["verification_ref"]["sha256"]}
+    return {"current_plan": deepcopy(context["implementation_plan"]),
+        "selected_artifact_hashes": {kind: ref["artifact_hash"] for kind, ref in context["selected_artifacts"].items()},
+        "repair_plan_hash": repair_ref.artifact_hash, "previous_response": context["previous_response"],
+        "failed_response_sha256": (context["failed_response_ref"] or {}).get("sha256"),
+        "failure_report": model_report, "failure_report_sha256": (context["failure_report_ref"] or {}).get("sha256"),
+        "generated_changes_sha256": context["generated_changes_sha256"],
+        "source_snapshot_sha256": context["source_snapshot_sha256"],
+        "current_failure_available": context["current_failure_available"],
+        "retain_current_plan_allowed": unchanged, "approval_inherited": False}
 
 
 def prepare_patch_upstream_assessment(*, request, state, artifact_store):

@@ -16,7 +16,9 @@ _NAMES = {"requirement_projection": "requirements.project",
           "requirement_projection_correction": "requirements.project",
           "requirement_findings": "requirements.findings",
           "requirement_findings_correction": "requirements.findings",
-          "planning": "planning.select"}
+          "planning": "planning.select",
+          "upstream_evidence_queries": "evidence.query",
+          "patch_upstream_planning": "planning.select"}
 
 
 def _json(value):
