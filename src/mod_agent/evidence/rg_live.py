@@ -207,115 +207,13 @@ class RgLiveEvidenceProvider:
                 "source_decode_failed",
                 reason=f"Selected live C# source is not valid UTF-8: {exc}",
             )
-        items: list[EvidenceItem] = []
-        for selected_path, selected_line in selected_locations:
-            _, lines, file_hash = source_cache[selected_path]
-            method_spans = _csharp_method_source_spans(lines)
-            method_context = _enclosing_csharp_method(
-                lines,
-                selected_line=selected_line,
-                method_spans=method_spans,
+        items = [
+            materialize_source_location(
+                workspace_root=self.workspace_root, selected_path=selected_path,
+                selected_line=selected_line, source_bytes=source_cache[selected_path][0], tokens=tokens,
             )
-            source_context = method_context or _enclosing_csharp_field(
-                lines, selected_line=selected_line
-            )
-            start_line = (
-                int(source_context["start_line"])
-                if source_context is not None
-                else max(1, selected_line - 10)
-            )
-            end_line = (
-                int(source_context["end_line"])
-                if source_context is not None
-                else min(len(lines), selected_line + 18)
-            )
-            excerpt = (
-                str(source_context["source_text"])
-                if source_context is not None
-                else "".join(lines[start_line - 1 : end_line])
-            )
-            relative = selected_path.relative_to(self.workspace_root).as_posix()
-            evidence_id = "rg_live_" + hashlib.sha256(
-                f"{relative}:{file_hash}:{start_line}:{end_line}".encode()
-            ).hexdigest()[:16]
-            symbol = (
-                str(source_context["symbol"])
-                if source_context is not None
-                else _best_symbol(excerpt, tokens)
-            )
-            declared_members = (
-                _declared_csharp_members(
-                    lines,
-                    declaring_type=str(source_context["declaring_type"]),
-                    declaring_type_full_name=str(
-                        source_context["declaring_type_full_name"]
-                    ),
-                )
-                if source_context is not None
-                and source_context.get("declaring_type") is not None
-                and source_context.get("declaring_type_full_name") is not None
-                else None
-            )
-            items.append(
-                EvidenceItem(
-                    evidence_id=evidence_id,
-                    source_type="target_source",
-                    source_path=relative,
-                    symbol=symbol,
-                    span={"start_line": start_line, "end_line": end_line},
-                    retrieval_method="rg_live_read",
-                    score=1.0,
-                    claim_supported=(
-                        f"Live source contains request terms near {symbol or relative}."
-                    ),
-                    excerpt=excerpt,
-                    chunk_id=f"live:{relative}:{start_line}:{end_line}",
-                    document_id=f"live:{relative}",
-                    source_ref=str(selected_path),
-                    source_hash=file_hash,
-                    file_hash=file_hash,
-                    doc_hash=file_hash,
-                    authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
-                    declaring_type=(
-                        str(source_context["declaring_type"])
-                        if source_context is not None
-                        and source_context.get("declaring_type") is not None
-                        else None
-                    ),
-                    method_name=(
-                        str(method_context["method_name"])
-                        if method_context is not None
-                        else None
-                    ),
-                    parameter_types=(
-                        tuple(method_context["parameter_types"])
-                        if method_context is not None
-                        and method_context.get("parameter_types") is not None
-                        else None
-                    ),
-                    return_type=(
-                        str(method_context["return_type"])
-                        if method_context is not None
-                        else None
-                    ),
-                    method_kind="method" if method_context is not None else None,
-                    declared_member_types=(
-                        {
-                            name: str(identity["declared_type"])
-                            for name, identity in (declared_members or {}).items()
-                        }
-                        if declared_members is not None
-                        else None
-                    ),
-                    declaring_type_full_name=(
-                        str(source_context["declaring_type_full_name"])
-                        if source_context is not None
-                        and source_context.get("declaring_type_full_name") is not None
-                        else None
-                    ),
-                    declared_members=declared_members,
-                )
-            )
+            for selected_path, selected_line in selected_locations
+        ]
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         update_observation(span, retrieval_status="source_observations_returned", tool_exit_code=completed.returncode)
         coverage_blocker = {
@@ -525,6 +423,121 @@ class RgLiveEvidenceProvider:
                 "coverage remains owned by the requirement coverage projection."
             ),
         )
+
+
+def materialize_source_location(
+    *, workspace_root: Path, selected_path: Path, selected_line: int,
+    source_bytes: bytes, tokens: list[str],
+) -> EvidenceItem:
+    """Project exact live bytes into the existing complete source-unit contract."""
+    lines = source_bytes.decode("utf-8").splitlines(keepends=True)
+    if not 1 <= selected_line <= len(lines):
+        raise ValueError("LIVE_SOURCE_SELECTED_LINE_INVALID")
+    file_hash = hashlib.sha256(source_bytes).hexdigest()
+    method_spans = _csharp_method_source_spans(lines)
+    method_context = _enclosing_csharp_method(
+        lines,
+        selected_line=selected_line,
+        method_spans=method_spans,
+    )
+    source_context = method_context or _enclosing_csharp_field(
+        lines, selected_line=selected_line
+    )
+    start_line = (
+        int(source_context["start_line"])
+        if source_context is not None
+        else max(1, selected_line - 10)
+    )
+    end_line = (
+        int(source_context["end_line"])
+        if source_context is not None
+        else min(len(lines), selected_line + 18)
+    )
+    excerpt = (
+        str(source_context["source_text"])
+        if source_context is not None
+        else "".join(lines[start_line - 1 : end_line])
+    )
+    relative = selected_path.relative_to(workspace_root).as_posix()
+    evidence_id = "rg_live_" + hashlib.sha256(
+        f"{relative}:{file_hash}:{start_line}:{end_line}".encode()
+    ).hexdigest()[:16]
+    symbol = (
+        str(source_context["symbol"])
+        if source_context is not None
+        else _best_symbol(excerpt, tokens)
+    )
+    declared_members = (
+        _declared_csharp_members(
+            lines,
+            declaring_type=str(source_context["declaring_type"]),
+            declaring_type_full_name=str(
+                source_context["declaring_type_full_name"]
+            ),
+        )
+        if source_context is not None
+        and source_context.get("declaring_type") is not None
+        and source_context.get("declaring_type_full_name") is not None
+        else None
+    )
+    return EvidenceItem(
+        evidence_id=evidence_id,
+        source_type="target_source",
+        source_path=relative,
+        symbol=symbol,
+        span={"start_line": start_line, "end_line": end_line},
+        retrieval_method="rg_live_read",
+        score=1.0,
+        claim_supported=(
+            f"Live source contains request terms near {symbol or relative}."
+        ),
+        excerpt=excerpt,
+        chunk_id=f"live:{relative}:{start_line}:{end_line}",
+        document_id=f"live:{relative}",
+        source_ref=str(selected_path),
+        source_hash=file_hash,
+        file_hash=file_hash,
+        doc_hash=file_hash,
+        authority=DETERMINISTIC_EVIDENCE_AUTHORITY,
+        declaring_type=(
+            str(source_context["declaring_type"])
+            if source_context is not None
+            and source_context.get("declaring_type") is not None
+            else None
+        ),
+        method_name=(
+            str(method_context["method_name"])
+            if method_context is not None
+            else None
+        ),
+        parameter_types=(
+            tuple(method_context["parameter_types"])
+            if method_context is not None
+            and method_context.get("parameter_types") is not None
+            else None
+        ),
+        return_type=(
+            str(method_context["return_type"])
+            if method_context is not None
+            else None
+        ),
+        method_kind="method" if method_context is not None else None,
+        declared_member_types=(
+            {
+                name: str(identity["declared_type"])
+                for name, identity in (declared_members or {}).items()
+            }
+            if declared_members is not None
+            else None
+        ),
+        declaring_type_full_name=(
+            str(source_context["declaring_type_full_name"])
+            if source_context is not None
+            and source_context.get("declaring_type_full_name") is not None
+            else None
+        ),
+        declared_members=declared_members,
+    )
 
 
 def _query_tokens(query: str) -> list[str]:

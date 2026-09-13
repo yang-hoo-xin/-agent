@@ -6703,6 +6703,7 @@ def run_local_request(
     ) = None,
     planning_target_evidence_ids: tuple[str, ...] = (),
     patch_worker_configuration: Any = None,
+    source_retrieval_mode: str = "rg_live",
     task_model_call_limit: int | None = None,
     stage_model_call_limits: Mapping[str, int] | None = None,
     execution_trace_configuration: Any = None,
@@ -6725,6 +6726,8 @@ def run_local_request(
         raise LocalEntryError("run-request explicit run identity is invalid.")
     if not description.strip():
         raise LocalEntryError("run-request requires a non-empty natural-language request.")
+    if type(source_retrieval_mode) is not str or source_retrieval_mode not in {"rg_live", "indexed_source"}:
+        raise LocalEntryError("RUN_REQUEST_SOURCE_RETRIEVAL_MODE_INVALID")
     if not isinstance(planning_target_evidence_ids, tuple) or any(
         type(value) is not str or not value
         for value in planning_target_evidence_ids
@@ -7054,6 +7057,7 @@ def run_local_request(
         base.mkdir(parents=True, exist_ok=True)
         run_root.mkdir(parents=True)
         initial_manifest = {
+            "source_retrieval_mode": source_retrieval_mode,
             "run_id": run_id,
             "request_id": request_id,
             "status": "admitted",
@@ -7439,7 +7443,13 @@ def run_local_request(
                 },
             )
         applier = ExactTextPatchApplier()
-        evidence_provider = RgLiveEvidenceProvider(run_root)
+        if source_retrieval_mode == "indexed_source":
+            from src.mod_agent.evidence.indexed_source import IndexedSourceEvidenceProvider
+
+            evidence_provider = IndexedSourceEvidenceProvider(
+                workspace_root=run_root, index_root=run_root / "a" / "source_index")
+        else:
+            evidence_provider = RgLiveEvidenceProvider(run_root)
         member_access_resolver = None
         if inspector_path is not None:
             member_access_resolver = _run_pre_graph_step(
@@ -7987,6 +7997,7 @@ def run_local_request(
         )
 
         manifest = {
+            "source_retrieval_mode": source_retrieval_mode,
             "run_id": run_id,
             "request_id": request_id,
             "status": "baseline_verified",
@@ -8185,6 +8196,7 @@ def run_local_request(
             except ProductApprovalDeferred as pending:
                 waiting = pending.to_dict()
                 waiting.update(
+                    source_retrieval_mode=source_retrieval_mode,
                     current_stage="awaiting_approval", run_root=str(run_root),
                     model_call_count=model_call_count, model_call_budget=model_budget_snapshot(),
                     graph_invoked=True, patch_payload_parser_entered=True,
@@ -8314,6 +8326,7 @@ def run_local_request(
             "local_model_input_audit": local_model_input_audit,
             "model_call_count": model_call_count,
             "model_call_budget": model_budget_snapshot(),
+            "source_retrieval_mode": source_retrieval_mode,
             "patch_execution_receipts": [journal.projection() for journal in patch_change_factory.journals],
             "graph_invoked": True,
             "patch_payload_parser_entered": patch_payload_parser_entered,

@@ -1148,6 +1148,8 @@ def build_parser(
         "--ollama-max-output-tokens", type=int, default=4096
     )
     run_parser.add_argument("--ollama-context-window", type=int)
+    run_parser.add_argument("--source-retrieval", choices=("rg_live", "indexed_source"), default="rg_live",
+        help="Select current-source retrieval for initial Evidence and every reassessment; rg_live remains the default.")
     run_parser.add_argument("--patch-worker-config",
         help="Explicit existing PatchWorkerConfiguration JSON for the shared worker and optional evaluator.")
     run_parser.add_argument("--defer-approval", action="store_true",
@@ -2541,6 +2543,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 **({"ollama_timeout_seconds": args.ollama_timeout_seconds}
                    if args.ollama_timeout_seconds is not None else {}),
                 patch_worker_configuration=worker_configuration,
+                source_retrieval_mode=args.source_retrieval,
                 task_model_call_limit=args.task_model_call_limit,
                 stage_model_call_limits=stage_limits,
                 execution_trace_configuration=_execution_trace_configuration(args),

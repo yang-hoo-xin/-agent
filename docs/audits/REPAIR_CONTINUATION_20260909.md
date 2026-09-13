@@ -158,3 +158,30 @@ python -B -m pytest tests/unit/test_product_execution.py::test_public_product_ex
 该422项选择最终无未解决失败；不能表述成一次422项并行全绿，也没有重复整组。检查后只作上述路由修复及定点回归，再写本节。改动Python文件AST及 `git diff --check` 通过；当前运行环境未提供Ruff，未安装新工具。没有运行全仓QA或新CI。
 
 本包全部为确定性传输／编译与行为替身、实际本地检索和原产品流程的工程验证，没有真实模型、产品Apply、真实Build、游戏、封存题或Cloud上传。已接通的是合法完整Findings不足后的现有源码补查；不自动修复未接受的需求投影／Findings格式，不新增metadata／IL调查，不扩大普通Build后Repair入口。真实业务质量仍待单独授权与判定。全包核对和部分Apply失败事实记录由原页继续负责，本包不把它们宣称完成。
+
+## 7. 2026-09-13：可选 symbol／BM25 源码检索进入默认产品入口
+
+本包在 `codex/indexed-source-provider` 从 `03225b37f5f9a5b2907d8eeb74ecc26c062c2486` 接续，先按原页交接只 cherry-pick 知识索引修复 `bb6b5eb936b7c9adbd937acaf205135d7fd5162b`，本树对应 `52a16b8fcf3e19dde56f373b03cd81aa2fabe9ae`。未使用旧 v1 索引运行产品事实，也未等待无关的 MCP 安装入口或 PDF collection 修复。
+
+`run-request` 新增 `--source-retrieval indexed_source`；默认仍是 `rg_live`，Python 入口对应 `source_retrieval_mode`。模式写入原 manifest 与结果，不新增 Graph 或问答入口。`IndexedSourceEvidenceProvider` 是现有 `IncrementalIndexer`、`DeterministicEvidenceRetriever` 和活源物化的薄适配，复用真实 symbol／BM25 检索；没有接入 embedding、模型重排、PDF 问答或完整 Roslyn 平台。
+
+初始需求检索与 A／B／C 的 Evidence 补查共用这一选定实例及 `collect_query_set` 接口。每次只索引当前隔离目标项目的 `.cs`，索引文件留在原任务 `a/source_index` 下。只接受 `bounded_source_chunks_v2`；扫描未完成、文件失败、查询/范围/源码版本失配时停止，不偷偷回退 `rg`。索引只定位，输出的原文、物理 hash、完整方法／字段 span 和成员信息仍由当前源码重建。共同物化代码从原 `rg_live` 抽出，未复制另一套声明解析器。
+
+原 query_id、requirement_id 和全局 `max_items` 保留，不调用旧策略的额外标识符扩展与扩额。symbol／BM25 原分数和索引命中记录在 `per_query_execution.indexed_hits`，不与 `rg` 的固定分数未经校准相加。最终同一源码版本／范围的事实身份不随查询或检索通道改变；仍以 `can_generate_patch=False` 交给原完整 Findings，再进入原 Planning、worker、Review 和 Dry-run。
+
+旧入口复现：新增模式未接入时，公开CLI精确用例因 `unrecognized arguments: --source-retrieval indexed_source` 失败，**1 failed，2.03s**，没有索引、模型或编译执行。接线首轮暴露 ArtifactStore 赋值前引用，已改用原确定的 `run_root/a` 路径，不提前改变 Store 生命周期。随后测试夹具的 Plan 引用路径与输出尾空格已按实际合同修正，没有放宽产品静态检查。
+
+局部验证：原 `rg` **30 passed，2.59s**；新 provider **3 passed，1.90s**，覆盖 CRLF／跨80行索引窗口的完整方法、跨查询事实一致、原查询与全局上限及来源漂移拒绝。新产品选择集共6项：索引失败停止1项先通过，其余5项 `--lf` **5 passed / 1 deselected，29.50s**。initial／A／B／C 四路径均使用真实本地数据库和symbol／BM25；跟踪回归核对实际命中、源码字节、Plan依赖、原失败报告/检查、generation与传输数量以及原离线材料联查。
+
+固定开发夹具中的中文查询实际暴露 `rg_live` 的 ASCII 取词边界；增强方案通过现有分词与BM25找到该方法，材料进入后续请求。此项证明这条具体输入及生产接线，不隔离证明BM25排序算法优于其他算法，不代表真实模型自主查询或总体质量提升。默认方案未切换。
+
+唯一有界检查：
+
+```powershell
+$env:PYTHONUTF8='1'
+python -B -m pytest tests/unit/test_indexed_source_evidence.py tests/unit/test_indexed_source_product_entry.py tests/unit/test_rg_live_evidence.py tests/unit/test_source_index_lifecycle.py tests/unit/test_mod_agent_cli.py tests/unit/test_product_execution.py tests/unit/test_upstream_product_trace.py tests/unit/test_patch_upstream_replanning.py tests/unit/test_patch_upstream_cli.py tests/unit/test_patch_upstream_unchanged_plan.py tests/unit/test_requirement_coverage.py tests/unit/test_run_request_external_worker.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\ixcp-$PID"
+```
+
+**429 passed，231.25s**，没有失败或补跑。源码和测试在检查期间未变化，之后只补本节。原主仓库已安装的 `.venv/Scripts/python.exe -B -m ruff check` 对本包七份Python文件执行 `--select E9,F63,F7,F821` 全部通过；`git diff --check` 通过。未安装新依赖、运行全仓或新CI。
+
+本包使用确定性模型传输、基线编译／行为替身及真实本地检索，未运行真实模型、embedding、模型重排、Build、产品Apply、游戏或Cloud。下一项质量判断仍需固定源码／需求／模型／权限／预算与判定，分开索引构建和查询成本、必要材料召回和实际输入覆盖，再看原业务结果与人工帮助；小工程保留充分读取的简单对照。是否默认采用，必须由这种对照决定。First Shot 的独立单次回测与此包不互为前置，其结果由原页单独归档；本包不修改其恢复预算。

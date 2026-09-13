@@ -2178,6 +2178,8 @@ def _public_patch_upstream_scenario(
     fail_first=False, retain_plan=False,
     initial_findings_gap=False, findings_still_missing=False, findings_limit=2,
     initial_provider_available=True, initial_query_timeout=False,
+    source_retrieval_mode=None, source_setup=None, upstream_query="RefreshSharedState",
+    request_patch_upstream=True, patch_response_transform=None,
 ):
     """Deterministic HTTP/baseline compiler; stop before product Apply or Build."""
     from src.mod_agent.evidence.rg_live import RgLiveEvidenceProvider
@@ -2265,7 +2267,7 @@ def _public_patch_upstream_scenario(
                 if message_type in {"patch_upstream_evidence_queries", "initial_findings_evidence_queries"}:
                     if message_type == "initial_findings_evidence_queries" and initial_query_timeout:
                         raise httpx.ReadTimeout("Offline initial-Findings query timeout.", request=request)
-                    content = {"queries": [{"query": "RefreshSharedState",
+                    content = {"queries": [{"query": upstream_query,
                         "requirement_id": context["requirements"][0]["requirement_id"]}]}
                 else:
                     content = _formal_coverage_model_response(context)
@@ -2300,7 +2302,7 @@ def _public_patch_upstream_scenario(
                     observed.patch_contexts.append(context)
                     observed.worker_requests.append(contexts)
                     upstream_turn = 2 if fail_first else 1
-                    if not initial_findings_gap and (
+                    if request_patch_upstream and not initial_findings_gap and (
                         len(observed.patch_contexts) == upstream_turn or (
                             repeat_upstream and len(observed.patch_contexts) > upstream_turn
                         )
@@ -2318,6 +2320,8 @@ def _public_patch_upstream_scenario(
                     if fail_first and len(observed.patch_contexts) > upstream_turn:
                         for row in content["changes"]:
                             row["after_text"] += "\n// PRODUCT_TEST_REPAIRED\n"
+                    if patch_response_transform is not None:
+                        content = patch_response_transform(content)
                     observed.generated_responses.append(json.dumps(content))
             return response(request, payload, {"role": "assistant", "content": json.dumps(content)})
 
@@ -2336,10 +2340,14 @@ def _public_patch_upstream_scenario(
         (tmp_path / "Example" / "SharedState.cs").write_text(
             "namespace Example;\npublic sealed class SharedState\n{\n"
             "    public void RefreshSharedState() {}\n}\n", encoding="utf-8")
+        if source_setup is not None:
+            source_setup(tmp_path / "Example")
         observed.source_bytes = {path.name: path.read_bytes()
             for path in (tmp_path / "Example").glob("*.cs")}
         offset = arguments.index("--planning-target-evidence-id")
         arguments = arguments[:offset] + arguments[offset + 2:]
+        if source_retrieval_mode is not None:
+            arguments = [*arguments, "--source-retrieval", source_retrieval_mode]
         run_local = cli_module.run_local_request
 
         def run_with_budget(**kwargs):
