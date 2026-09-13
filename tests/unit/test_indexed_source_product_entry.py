@@ -184,3 +184,30 @@ def test_run_request_indexed_source_failure_stops_without_rg_fallback(tmp_path, 
     assert observed.findings == observed.planning == observed.patch_contexts == []
     assert "INDEXED_SOURCE_INDEXING_FAILED" in json.dumps(observed.result["product_execution_result"]["blockers"])
     assert observed.result["actual_write_performed"] is False
+
+
+def test_overlapping_symbol_and_bm25_hits_preserve_two_distinct_current_source_facts(tmp_path):
+    """Actual local index; duplicate cross-lane hits must not consume final slots."""
+    from src.mod_agent.evidence.indexed_source import IndexedSourceEvidenceProvider
+
+    root = tmp_path / "generated_mods" / "Example"
+    root.mkdir(parents=True)
+    for name, repetitions in (("A", 4), ("B", 1)):
+        (root / f"{name}.cs").write_text(
+            f"public sealed class {name}\n{{\n    public void Refresh()\n    {{\n"
+            f"        // {' '.join(['Refresh shared'] * repetitions)}\n    }}\n}}\n", encoding="utf-8")
+    provider = IndexedSourceEvidenceProvider(tmp_path, tmp_path / "a" / "source_index")
+    pack = provider.collect_query_set(
+        queries=({"query_id": "query_refresh", "requirement_id": "requirement_refresh", "query": "Refresh shared"},),
+        search_root="generated_mods/Example", max_items=2)
+    rows = pack.budget_summary["per_query_execution"]
+    assert len(rows) == 1
+    assert next(row for row in rows[0]["deterministic_lane_coverage"]
+        if row["lane"] == "symbol_metadata")["hit_count"] == 2
+    assert next(row for row in rows[0]["deterministic_lane_coverage"]
+        if row["lane"] == "sparse_bm25")["hit_count"] == 2
+    assert {item.source_path for item in pack.items} == {
+        "generated_mods/Example/A.cs", "generated_mods/Example/B.cs",
+    }
+    assert len(pack.items) == pack.budget_summary["max_items"] == 2
+    assert len({item.evidence_id for item in pack.items}) == 2

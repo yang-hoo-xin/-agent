@@ -207,25 +207,46 @@ class IndexedSourceEvidenceProvider:
                     "tool_dispatch_performed": False}) as span:
                 if not self._retriever._terms(query["query"]):
                     raise ValueError("INDEXED_SOURCE_QUERY_TERMS_MISSING")
+                # Both lanes already search up to max_items hits. Retain that
+                # existing pool until live spans have canonical identities:
+                # symbol and BM25 hits may denote the same source fact. The
+                # final material allowance below remains max_items.
                 result = self._retriever.retrieve(EvidenceRequest(query=query["query"],
-                    requires_hook_evidence=False, source_ids=(self._source_id,), max_items=max_items),
+                    requires_hook_evidence=False, source_ids=(self._source_id,), max_items=2 * max_items),
                     lane_max_items=max_items)
                 coverage = result.budget_summary["deterministic_lane_coverage"]
                 if any(row["status"] == "failed" for row in coverage if row["lane"] in {"symbol_metadata", "sparse_bm25"}):
                     raise ValueError("INDEXED_SOURCE_RETRIEVAL_FAILED")
                 facts, indexed_hits = {}, []
+                known_facts = {}
+                materialized_lanes = {"symbol_exact": {}, "bm25": {}}
                 for hit in result.items:
                     if hit.retrieval_method not in {"symbol_exact", "bm25"}:
                         continue
                     materialized = self._materialize_hit(hit, query["query"], max_items)
                     for fact in materialized:
-                        if fact.evidence_id in facts and facts[fact.evidence_id] != fact:
+                        if fact.evidence_id in known_facts and known_facts[fact.evidence_id] != fact:
                             raise ValueError("INDEXED_SOURCE_FACT_IDENTITY_CONFLICT")
-                        if len(facts) < max_items:
-                            facts[fact.evidence_id] = fact
+                        known_facts.setdefault(fact.evidence_id, fact)
+                        materialized_lanes[hit.retrieval_method].setdefault(fact.evidence_id, fact)
                     indexed_hits.append({"evidence_id": hit.evidence_id, "retrieval_method": hit.retrieval_method,
                         "score": hit.score, "chunk_id": hit.chunk_id, "source_hash": hit.source_hash,
                         "span": dict(hit.span), "materialized_evidence_ids": [item.evidence_id for item in materialized]})
+                # Share the allowance between unique live facts, not index
+                # hits. Keep each lane's hit/span order; a cross-lane duplicate
+                # consumes neither a material slot nor that lane's turn.
+                pending = [iter(values.values()) for values in materialized_lanes.values()]
+                while pending and len(facts) < max_items:
+                    remaining = []
+                    for lane_items in pending:
+                        for fact in lane_items:
+                            if fact.evidence_id not in facts:
+                                facts[fact.evidence_id] = fact
+                                remaining.append(lane_items)
+                                break
+                        if len(facts) == max_items:
+                            break
+                    pending = remaining
                 lane = tuple(facts.values())
                 status = "source_observations_returned" if lane else "no_matches"
                 lanes.append(lane)

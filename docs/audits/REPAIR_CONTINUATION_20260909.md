@@ -310,3 +310,97 @@ python -B -m pytest tests/unit/test_patch_tool_roundtrip_budget.py tests/unit/te
 
 41 passed，38.83秒。Ruff致命规则和diff检查通过。原始pytest结果仅在工具输出中，
 未把测试数当任务数。本包没有真实模型、Cloud、Embedding、游戏、真实Build或用户Mod Apply。
+
+## 10. 2026-09-13：同材料额度下将已找到的配置事实交付给 Findings
+
+用户选择：在相同材料额度内，让已经找到的配置证据进入后续输入。本轮最终生产修改仅在
+`src/mod_agent/evidence/indexed_source.py`；共享检索器、默认 `rg_live`、查询和条数／字节上限不变。
+
+### 漏点、机制及消费者
+
+冻结对照中的配置查询，BM25 已找到 Configuration.cs，但原共享输出先由符号命中占满。
+索引命中也不是最终材料：不同通道的命中 ID 可以指向同一份源码事实，单个命中又能展开多段源码。
+因此最终修复在知道真实源码身份的适配器中执行，而不是在原始命中列表上混用材料条数。
+
+两路仍各检索原上限 K 个命中。适配器用 2*K 的内部合并容器保留这批已找到的命中，再按原始
+`hit.retrieval_method` 分路物化、去重，保留路内原命中及跨度顺序；轮流取下一份尚未交付的事实，
+跨路重复不占轮次。最终交付仍为 K 项，source path/hash/span、冲突检查及跨查询合并沿用原合同。
+这不是增加检索查询或外部材料额度，但会增加部分本地物化工作。
+
+新增真实临时源码用例从真实索引进入 `StructuredModelRequirementCoverageProvider.findings`，
+在实际 `complete_json` 输入处捕获完整 payload 后用测试异常中止。它核对配置正文、CRLF、
+行跨度、来源哈希、4 项／16 KiB 原文／32 KiB 材料投影上限；没有返回虚构 Findings 或调用模型。
+另一真实 A/B 源码用例验证：symbol 与 BM25 重复命中 A 时，最终两项仍能保留 A、B。
+
+### 相同条件的终局结果
+
+原报告与标签保持不变。问题已用于开发，不声称独立泛化。标签 SHA256：
+`0bef93b2cf65ddb3f66acc7402589e4c855dea60436383aaf814344776a202ed`。
+执行基线 `cf974fb328087343776b48e9d777508444379793` 加本轮唯一生产文件 diff，
+diff SHA256 `7ce966548452a04cf737027699651fb10ffc8d8571fe3dfb374f90f738268a54`。
+8 问题 × 2 档 × 3 方案 × 首次／重复，共 96 份观察；0 provider error，所有源文件前后哈希不变。
+
+| 主集问题 | 4 项额度，修前→修后 | 10 项额度，修前→修后 |
+|---|---:|---:|
+| 配置默认值与读回 | 0→2/3 | 3→3/3 |
+| 运行期重载与位置路径 | 0→0/5 | 0→0/5 |
+| 首发模式与开火重置 | 0→1/5 | 1→1/5 |
+| 霰弹枪／瞄准分支 | 0→0/4 | 0→0/4 |
+| 可选颜色集成 | 3→3/4 | 3→3/4 |
+| 合计 | 3→6/21；完整题仍 0/5 | 仍 7/21；完整题仍 1/5 |
+
+窄档配置新增 `ac_bind_saved_value` 和 `ac_reload_saved_value`，首发新增
+`ac_first_shot_key_binding`。宽档首发**存在证据交换退步**：获得配置绑定，却丢失
+`ac_inner_indicator_display`，不能用总数 1/5 不变遮掩。两个既有单文件校准题仍为 4/4；
+缺网络实现题无召回率分母，也没有模型不存在性判断结果。rg／全文的材料结果保持一致。
+
+配置标签把运行期读回算为启动问题的必要材料，要求偏严；除去该项，窄档主集仍从 3/20 到 5/20。
+所有分数仅是预设材料集合覆盖，不是回答正确率或任务成功率。
+
+### 成本和失败边界
+
+- 窄档配置交付仍为 4 项：原文 2,493→4,759 字节，材料投影编码 4,007→6,305 字节；
+  仍在原 16,384／32,768 上限内。窄档首发编码 2,699→4,487；宽档首发 6,832→10,095。
+- 每路实际检索 hit_count 均未增加。6 个主集问题每轮的物化命中数，窄档 16→24，宽档 26→31；
+  这是实际增加的本地工作，不能称成本不变。
+- 本机 6 个主集问题的耗时中位数：窄档首次 393.59→310.54 ms、重复 234.46→206.43 ms；
+  宽档首次 368.76→308.43 ms、重复 241.26→217.16 ms。未清空 OS 缓存，索引准备耗时也有变化，
+  样本少且未做随机交错，不把上述数值归因为性能提升。
+- 本次没有补齐纯中文查询、跨文件调用链、外部 API 或运行期判据；也不保证原单路内部截断之前
+  被重复索引项挤掉的事实能自动补回。宽档首发的丢失仍是当前分配策略的限制。
+- 32 KiB 在这里限制源码材料投影，不是完整模型请求。真实 Findings 模型理解、规划、Patch、
+  Build、Apply、Runtime、Cloud 均未执行，不据此次改动切换默认 provider。
+
+终局原始数据：[summary.json](C:/Users/10160/.codex/visualizations/2026/09/13/01a0996d-d54a-7452-85d8-1d82c0a6a7f7/source_retrieval_fact_merge_20260913/summary.json)。
+同目录保留协议、原标签、96 份观察、分析驱动及精确生产差异。对照命令：
+
+```powershell
+$env:PYTHONUTF8='1'
+python -B scratch/run_source_retrieval_merge_comparison.py --labels scratch/source_retrieval_comparison_labels.json --expected-source-diff-sha256 7ce966548452a04cf737027699651fb10ffc8d8571fe3dfb374f90f738268a54 --output 'C:/Users/10160/.codex/visualizations/2026/09/13/01a0996d-d54a-7452-85d8-1d82c0a6a7f7/source_retrieval_fact_merge_20260913'
+```
+
+复现时在基线 cf974fb 应用归档的生产差异，放回 scratch 分析驱动／标签，并选择新的输出目录。
+标签、查询及评分函数没有按结果修改。已有输出不覆盖。
+
+### 工程验证与开发中发现的问题
+
+配置消费者用例在原实现红测：1 failed，1.94 秒。开发中发现仅交错原始命中会让不同 ID 的同一事实
+提前占满 K=2：同一真实 `Refresh shared` 用例，旧基线 retriever 为 1 passed／1.13 秒，
+中间实现为 1 failed／1.86 秒。这促使最终修改收敛到规范化后的事实合并；通用 retriever 的本轮修改
+及其两项专用测试已撤回，保留真实重叠用例。首次两个质量尝试保留在
+`source_retrieval_merge_20260913`、`source_retrieval_merge_final_20260913`，均不是终局结果。
+
+开发中一次有限 checkpoint 为 273 passed／44.34 秒，对应中间实现，不用它冒充最终版本的完整检查。
+最终代码直接受影响的 25 项为 **25 passed／36.83 秒**，含两个新增回归、原初始／A／B／C 产品入口、
+精确声明及追踪接缝。最终执行：
+
+```powershell
+$env:PYTHONUTF8='1'
+python -B -m pytest tests/unit/test_indexed_source_evidence.py tests/unit/test_indexed_source_product_entry.py tests/unit/test_symbol_materialization_trace.py -q --tb=short --basetemp="$env:TEMP\sml-$PID"
+```
+
+中间 checkpoint 命令为同一 Python 执行
+`-B -m pytest tests/unit/test_evidence_retrieval.py tests/unit/test_indexed_source_evidence.py tests/unit/test_indexed_source_product_entry.py tests/unit/test_symbol_materialization_trace.py tests/unit/test_intelligent_evidence_discovery.py tests/unit/test_source_index_lifecycle.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\smc-$PID"`。
+最终变更文件的 Ruff `E9,F63,F7,F821` 和 `git diff --check` 通过。
+最终测试及质量测量期间生产代码未再变化；未运行全仓测试，因为最终只修改该源码适配器，
+其直接消费者及重叠／预算／声明合同已有上述检查。索引结构导航和语义召回仍为独立后续工作。
