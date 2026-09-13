@@ -1680,6 +1680,86 @@ def _validated_product_upstream_sequences(facts: "ProductExecutionFactsV1") -> f
     return frozenset(excluded)
 
 
+def _validated_initial_findings_reassessment_sequences(
+    facts: "ProductExecutionFactsV1",
+) -> frozenset[int]:
+    """Admit one second Evidence revision inside the initial retrieval owner."""
+    from src.mod_agent.evidence.models import EvidencePack
+    from src.mod_agent.evidence.reassessment import initial_findings_reassessment_allowed
+
+    envelopes = _output_readback_envelopes(facts)
+    admitted: set[int] = set()
+    attempts = facts.store_attempts
+    initial_prefix = PRODUCT_EXECUTION_DECLARATION.lifecycle_grammar.initial_prefix[:4]
+
+    def require(condition):
+        if not condition:
+            raise ProductExecutionContractError(
+                "Initial Findings reassessment changed its retained Evidence or requirement boundary.",
+                side_effects_may_have_started=True)
+
+    def read_pack(payload):
+        try:
+            return EvidencePack.from_artifact_payload(payload)
+        except (ValueError, TypeError, KeyError) as exc:
+            raise ProductExecutionContractError(
+                "Initial Findings reassessment Evidence readback is invalid.",
+                side_effects_may_have_started=True) from exc
+
+    for index, item in enumerate(attempts):
+        if (index == 0 or item.node_name != "retrieve_evidence"
+                or attempts[index - 1].node_name != "retrieve_evidence"):
+            continue
+        previous = attempts[index - 1]
+        require(not admitted and tuple(row.node_name for row in attempts[:index]) == initial_prefix
+                and item.artifact_role == previous.artifact_role == "evidence_pack"
+                and item.repair_attempt == previous.repair_attempt == 0
+                and previous.store_result.outcome == "committed")
+        if envelopes is None:
+            # Failed readback can retain a partial execution, never validate a
+            # successful reassessment or let this unreadable result continue.
+            require(facts.failure_stage == "post_execution_validation")
+            admitted.add(item.sequence)
+            continue
+        prior_envelope = envelopes.get(previous.sequence, {})
+        prior_payload = prior_envelope.get("data", {})
+        prior_pack = read_pack(prior_payload)
+        feature = next((output for output in facts.outputs
+                        if output.sequence < previous.sequence and output.artifact_role == "feature_spec"), None)
+        require(feature is not None)
+        feature_data = envelopes[feature.sequence]["data"]
+        require(prior_envelope.get("status") == "blocked"
+                and initial_findings_reassessment_allowed(prior_payload, feature_data)
+                and prior_envelope.get("inputs", {}).get("upstream_artifacts") == [{
+                    "artifact_type": "feature_spec", "path": feature.artifact_ref.path,
+                    "artifact_hash": feature.artifact_ref.artifact_hash, "require_latest": True}])
+        if item.store_result.outcome != "committed":
+            # There is no second output to read back after a failed Store write.
+            # Keep the first negative revision and the exact terminal Store fact.
+            require(index == len(attempts) - 1 and item.sequence not in envelopes)
+            admitted.add(item.sequence)
+            continue
+        envelope = envelopes.get(item.sequence, {})
+        payload = envelope.get("data", {})
+        pack = read_pack(payload)
+        metadata = pack.budget_summary.get("initial_findings_reassessment") or {}
+        prior_ref = previous.store_result.artifact_ref
+        require(isinstance(metadata, Mapping) and prior_ref is not None
+                and metadata.get("prior_evidence_ref") == {
+                    "feature_id": prior_ref.feature_id, "artifact_type": prior_ref.artifact_type,
+                    "path": prior_ref.path, "artifact_hash": prior_ref.artifact_hash}
+                and envelope.get("feature_id") == prior_envelope.get("feature_id")
+                and envelope.get("inputs") == prior_envelope.get("inputs")
+                and f"{prior_ref.path}#sha256={prior_ref.artifact_hash}" in envelope.get("trace_refs", [])
+                and pack.query == prior_pack.query and isinstance(pack.requirement_coverage, Mapping)
+                and all(pack.requirement_coverage.get(key) == prior_pack.requirement_coverage.get(key) for key in (
+                    "schema_version", "feature_spec_identity", "request_identity", "projection_identity",
+                    "input_obligations", "input_dispositions", "requirements", "relations", "queries"))
+                and envelope.get("status") == ("success" if pack.can_generate_patch else "blocked"))
+        admitted.add(item.sequence)
+    return frozenset(admitted)
+
+
 def _validate_terminal_effect_boundary(facts: "ProductExecutionFactsV1") -> None:
     if not facts.store_attempts or facts.store_attempts[-1].node_name != "blocked":
         return
@@ -1718,7 +1798,9 @@ def _validate_product_execution_result_facts(
     facts: ProductExecutionFactsV1,
 ) -> None:
     upstream_sequences = _validated_product_upstream_sequences(facts)
-    _validate_store_trace(facts.store_attempts, facts.outputs, upstream_sequences=upstream_sequences)
+    initial_reassessment_sequences = _validated_initial_findings_reassessment_sequences(facts)
+    _validate_store_trace(facts.store_attempts, facts.outputs,
+                         upstream_sequences=upstream_sequences | initial_reassessment_sequences)
     _validate_effect_trace(facts.effect_events)
     _validate_lifecycle(tuple(item for item in facts.store_attempts if item.sequence not in upstream_sequences))
     _validate_repair_plan_lifecycle_predicates(facts, upstream_sequences=upstream_sequences)

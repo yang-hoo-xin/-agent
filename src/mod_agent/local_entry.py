@@ -7556,6 +7556,7 @@ def run_local_request(
                 "requirement_findings": "requirement_findings",
                 "requirement_findings_correction": "requirement_findings",
                 "upstream_evidence_queries": "repair",
+                "initial_findings_queries": "repair",
             }[role]
             reserve_model_call(stage_role)
             response, provider_request = request_requirement_coverage_model(
@@ -7773,11 +7774,15 @@ def run_local_request(
                         }},
                 }},
             }
-            result = complete_requirement_coverage_json("upstream_evidence_queries", {
-                "message_type": "patch_upstream_evidence_queries", "feature": feature,
+            initial = "initial_findings_reassessment" in feedback
+            result = complete_requirement_coverage_json(
+                "initial_findings_queries" if initial else "upstream_evidence_queries", {
+                "message_type": "initial_findings_evidence_queries" if initial else "patch_upstream_evidence_queries",
+                "feature": feature,
                 "requirements": projection["requirements"], "relations": projection["relations"],
                 "source_observations": [_source_observation_model_view(item.to_dict()) for item in old.items],
-                "failure_feedback": feedback, "search_root": upstream_search_root,
+                ("coverage_feedback" if initial else "failure_feedback"): feedback,
+                "search_root": upstream_search_root,
                 "instruction": (
                     "Choose bounded source queries needed to resolve the observed gap. "
                     "Queries grant no edit permission."
@@ -8132,6 +8137,7 @@ def run_local_request(
             product_patch_upstream_execution=patch_change_factory,
             patch_upstream_evidence_pack_factory=upstream_evidence_factory,
             patch_upstream_planning_target_selection_factory=upstream_planning_selector,
+            initial_findings_reassessment_factory=upstream_evidence_factory.reassess_initial,
             dry_run_factory=dry_run_factory,
             isolated_apply_factory=isolated_apply_factory,
             build_result_factory=build_result_factory,

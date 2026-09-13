@@ -2176,6 +2176,8 @@ def _public_patch_upstream_scenario(
     tmp_path, monkeypatch, capsys, *, owner="evidence", repair_limit=2,
     task_limit=9, planning_timeout=False, repeat_upstream=False,
     fail_first=False, retain_plan=False,
+    initial_findings_gap=False, findings_still_missing=False, findings_limit=2,
+    initial_provider_available=True, initial_query_timeout=False,
 ):
     """Deterministic HTTP/baseline compiler; stop before product Apply or Build."""
     from src.mod_agent.evidence.rg_live import RgLiveEvidenceProvider
@@ -2255,12 +2257,14 @@ def _public_patch_upstream_scenario(
                 contexts.append(context)
             context = next((value for value in contexts if value.get("message_type") in {
                 "product_requirement_projection", "product_requirement_findings",
-                "patch_upstream_evidence_queries",
+                "patch_upstream_evidence_queries", "initial_findings_evidence_queries",
             }), None)
             if context is not None:
                 message_type = context["message_type"]
                 observed.roles.append(message_type)
-                if message_type == "patch_upstream_evidence_queries":
+                if message_type in {"patch_upstream_evidence_queries", "initial_findings_evidence_queries"}:
+                    if message_type == "initial_findings_evidence_queries" and initial_query_timeout:
+                        raise httpx.ReadTimeout("Offline initial-Findings query timeout.", request=request)
                     content = {"queries": [{"query": "RefreshSharedState",
                         "requirement_id": context["requirements"][0]["requirement_id"]}]}
                 else:
@@ -2272,6 +2276,11 @@ def _public_patch_upstream_scenario(
                             row["evidence_ids"] = ids
                             if row["edit_target_evidence_ids"]:
                                 row["edit_target_evidence_ids"] = ids
+                        if initial_findings_gap and (len(observed.findings) == 1 or findings_still_missing):
+                            for row in content["findings"]:
+                                row.update(relationship="missing", evidence_ids=[],
+                                    edit_target_evidence_ids=[],
+                                    unresolved_gaps=["Offline fixture requires the unobserved shared-state source."])
             else:
                 planning = next((value for value in contexts if "allowed_edit_evidence_ids" in value), None)
                 if planning is not None:
@@ -2291,8 +2300,10 @@ def _public_patch_upstream_scenario(
                     observed.patch_contexts.append(context)
                     observed.worker_requests.append(contexts)
                     upstream_turn = 2 if fail_first else 1
-                    if len(observed.patch_contexts) == upstream_turn or (
-                        repeat_upstream and len(observed.patch_contexts) > upstream_turn
+                    if not initial_findings_gap and (
+                        len(observed.patch_contexts) == upstream_turn or (
+                            repeat_upstream and len(observed.patch_contexts) > upstream_turn
+                        )
                     ):
                         tool = next(row["function"] for row in payload["tools"]
                             if row["function"]["name"] == PATCH_UPSTREAM_REQUEST_TOOL_NAME)
@@ -2333,12 +2344,20 @@ def _public_patch_upstream_scenario(
 
         def run_with_budget(**kwargs):
             kwargs.update(task_model_call_limit=task_limit, stage_model_call_limits={
-                "requirement_projection": 2, "requirement_findings": 2, "planning": 1,
+                "requirement_projection": 2, "requirement_findings": findings_limit, "planning": 1,
                 "initial_patch": 3 if fail_first else 2, "repair": repair_limit,
             })
             return run_local(**kwargs)
 
         monkeypatch.setattr(cli_module, "run_local_request", run_with_budget)
+        if not initial_provider_available:
+            adapters_type = local_entry_module.ProductExecutionAdaptersV1
+
+            def without_initial_reassessment(**kwargs):
+                kwargs["initial_findings_reassessment_factory"] = None
+                return adapters_type(**kwargs)
+
+            monkeypatch.setattr(local_entry_module, "ProductExecutionAdaptersV1", without_initial_reassessment)
         observed.exit_code = ordinary_main([*arguments, "--defer-approval"])
         observed.result = json.loads(capsys.readouterr().out)
         raise ScenarioComplete
@@ -2390,6 +2409,80 @@ def test_cli_run_request_patch_evidence_return_executes_new_search_and_reaches_o
     assert budget["maximum"] == 9 and budget["consumed"] == len(observed.requests) == 8
     assert budget["by_stage"]["planning"] == {"maximum": 1, "consumed": 1, "remaining": 0}
     assert budget["by_stage"]["repair"] == {"maximum": 2, "consumed": 2, "remaining": 0}
+
+
+def test_cli_run_request_initial_findings_gap_searches_before_first_plan_and_patch(
+    tmp_path, monkeypatch, capsys,
+):
+    observed = _public_patch_upstream_scenario(tmp_path, monkeypatch, capsys, initial_findings_gap=True)
+    assert observed.exit_code == 0 and observed.result["status"] == "awaiting_approval", observed.result
+    assert len(observed.findings) == 2
+    assert observed.roles == ["product_requirement_projection", "product_requirement_findings",
+        "initial_findings_evidence_queries", "product_requirement_findings", "planning", "patch"]
+    assert len(observed.planning) == len(observed.patch_contexts) == 1
+    assert len(observed.searches) == 2
+    assert observed.roles.count("product_requirement_projection") == 1
+    added_queries, added_pack = observed.searches[-1]
+    assert [row["query"] for row in added_queries["queries"]] == ["RefreshSharedState"]
+    assert len(added_pack.items) == 1 and "RefreshSharedState" in added_pack.items[0].excerpt
+    old_ids = {row["evidence_id"] for row in observed.findings[0]["source_observations"]}
+    current_ids = {row["evidence_id"] for row in observed.findings[-1]["source_observations"]}
+    assert current_ids - old_ids == {added_pack.items[0].evidence_id}
+    assert observed.findings[0]["relations"] == observed.findings[-1]["relations"]
+    assert set(observed.planning[0]["allowed_edit_evidence_ids"]) == current_ids
+    assert "RefreshSharedState" in json.dumps(observed.patch_contexts[0])
+    assert len(observed.patch_contexts[0]["required_change_units"]) == 2
+    assert observed.evaluations == []
+    assert not list((tmp_path / "runs").rglob("repair_plan.json"))
+    assert not any(row.get("message_type") == "patch_replanned_context"
+        for contexts in observed.worker_requests for row in contexts)
+    result = observed.result
+    assert result["actual_write_performed"] is False and result["approval_recorded"] is False
+    assert result["builds_performed"] == result["runtime_executions_performed"] == 0
+    assert result["model_call_budget"]["maximum"] == 9
+    assert result["model_call_budget"]["consumed"] == len(observed.requests) == 6
+    assert result["model_call_budget"]["by_stage"]["requirement_projection"] == {
+        "maximum": 2, "consumed": 1, "remaining": 1,
+    }
+    assert result["model_call_budget"]["by_stage"]["requirement_findings"] == {
+        "maximum": 2, "consumed": 2, "remaining": 0,
+    }
+
+
+@pytest.mark.parametrize("stop", ["still_missing", "missing_provider", "findings_budget", "task_budget", "query_timeout"])
+def test_cli_run_request_initial_findings_gap_stops_without_first_plan_or_patch(
+    tmp_path, monkeypatch, capsys, stop,
+):
+    observed = _public_patch_upstream_scenario(tmp_path, monkeypatch, capsys,
+        initial_findings_gap=True, findings_still_missing=stop == "still_missing",
+        initial_provider_available=stop != "missing_provider",
+        findings_limit=1 if stop == "findings_budget" else 2,
+        task_limit=2 if stop == "task_budget" else 9,
+        initial_query_timeout=stop == "query_timeout")
+    assert observed.exit_code != 0, observed.result
+    assert "product_execution_result" in observed.result, observed.result
+    result = observed.result
+    machine = result["product_execution_result"]
+    assert machine["blockers"]
+    assert observed.planning == observed.patch_contexts == []
+    assert not any(row["artifact_role"] in {
+        "implementation_plan", "repair_plan", "patch_proposal", "proposal_review", "dry_run_result",
+    } for row in machine["outputs"])
+    assert not list((tmp_path / "runs").rglob("repair_plan.json"))
+    expected_calls = {"still_missing": 4, "missing_provider": 2, "findings_budget": 3,
+        "task_budget": 2, "query_timeout": 3}[stop]
+    assert result["model_call_budget"]["consumed"] == len(observed.requests) == expected_calls
+    assert observed.roles[:2] == ["product_requirement_projection", "product_requirement_findings"]
+    assert observed.roles.count("product_requirement_projection") == 1
+    assert observed.roles.count("initial_findings_evidence_queries") == (1 if expected_calls > 2 else 0)
+    assert len(observed.findings) == (2 if stop == "still_missing" else 1)
+    assert len(observed.searches) == (2 if stop in {"still_missing", "findings_budget"} else 1)
+    assert result["actual_write_performed"] is False
+    if stop in {"task_budget", "findings_budget"}:
+        assert "PRODUCT_MODEL_CALL_BUDGET_EXHAUSTED" in json.dumps(machine["blockers"])
+    if stop == "still_missing":
+        assert machine["execution_disposition"] == "domain_blocked"
+        assert "required_requirement_unresolved" in json.dumps(machine["blockers"])
 
 
 @pytest.mark.parametrize("stop", ["repair_budget", "task_budget", "planning_timeout"])

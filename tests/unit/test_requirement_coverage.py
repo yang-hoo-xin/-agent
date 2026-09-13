@@ -4958,3 +4958,169 @@ def test_formal_model_provider_invalid_json_uses_one_correction_then_blocks(
     assert terminal_diagnostic["error_code"] == (
         "REQUIREMENT_COVERAGE_MODEL_INVALID_JSON"
     )
+
+
+def _initial_findings_reassessment_case(tmp_path, *, empty_initial=False):
+    """Real source retrieval and schema admission; semantic turns are deterministic."""
+    from types import SimpleNamespace
+
+    _write_sources(tmp_path)
+    source = tmp_path / "generated_mods" / "SyntheticMod" / "Additional.cs"
+    source.write_text("public sealed class Additional\n{\n    public void ResolveCoverageGap() {}\n}\n", encoding="utf-8")
+    feature = _feature_data()
+    projection = _projection()
+    if empty_initial:
+        for requirement in projection["requirements"]:
+            requirement["query_leads"] = ["NoInitialSourceMatch"]
+    materialized = materialize_requirement_coverage_projection(
+        feature_data=feature, request=feature["user_request"], projection=projection)
+    source_provider = RgLiveEvidenceProvider(tmp_path)
+    retrieved = source_provider.collect_query_set(queries=tuple(materialized["queries"]),
+        search_root="generated_mods/SyntheticMod", max_items=len(materialized["queries"]))
+
+    def missing_findings(role, payload, _schema):
+        assert role == "requirement_findings"
+        return {"findings": [{"relation_index": relation["relation_index"], "relationship": "missing",
+            "evidence_ids": [], "edit_target_evidence_ids": [], "unresolved_gaps": ["Source support remains unknown."]}
+            for relation in payload["relations"]]}
+
+    semantic = StructuredModelRequirementCoverageProvider(missing_findings)
+    findings = semantic.findings(materialized_projection=materialized, retrieved_pack=retrieved,
+        request=feature["user_request"])
+    retrieved = replace(retrieved, budget_summary={**retrieved.budget_summary,
+        "requirement_findings_attempt_audit": list(semantic.findings_attempt_audit)})
+    pack = build_requirement_coverage_pack(query=feature["user_request"], materialized_projection=materialized,
+        retrieved_pack=retrieved, findings=findings)
+    store = ArtifactStore(tmp_path / "artifacts")
+    feature_ref = store.write(feature_id=feature["feature_id"], artifact_type="feature_spec", payload=feature, status="success")
+    evidence_ref = store.write(feature_id=feature["feature_id"], artifact_type="evidence_pack",
+        payload=pack.to_artifact_payload(), status="blocked", upstream_refs=[feature_ref])
+    state = create_initial_state(run_id="initial_findings_test", request_id="initial_findings_request",
+        user_request=feature["user_request"], target_mod=feature["target_mod"])
+    state["feature_id"] = feature["feature_id"]
+    state["current_stage"] = "evidence_retrieval"
+    for ref in (feature_ref, evidence_ref):
+        state["artifacts"][ref.artifact_type] = ref.path
+        state["artifact_hashes"][ref.artifact_type] = ref.artifact_hash
+    return SimpleNamespace(feature=feature, materialized=materialized, pack=pack, state=state,
+        store=store, evidence_ref=evidence_ref, source_provider=source_provider)
+
+
+def _initial_findings_factory(case, tmp_path, queries, findings_calls):
+    from src.mod_agent.evidence.reassessment import RequirementCoverageReassessmentFactory
+
+    def select(feature, projection, old, feedback):
+        assert feature == case.feature and projection == case.materialized
+        assert old.items == case.pack.items
+        assert "observed_failure" not in feedback and "recommendation" not in feedback
+        assert feedback["initial_findings_reassessment"]["findings"] == case.pack.requirement_coverage["findings"]
+        queries.append(deepcopy(feedback))
+        return [{"query": "ResolveCoverageGap", "requirement_id": projection["requirements"][0]["requirement_id"]}]
+
+    def complete(role, payload, _schema):
+        assert role == "requirement_findings"
+        findings_calls.append(deepcopy(payload))
+        fresh = next(item["evidence_id"] for item in payload["source_observations"]
+            if "ResolveCoverageGap" in item["excerpt"])
+        return {"findings": [{"relation_index": relation["relation_index"], "relationship": "support",
+            "evidence_ids": [fresh], "edit_target_evidence_ids": [], "unresolved_gaps": []}
+            for relation in payload["relations"]]}
+
+    return RequirementCoverageReassessmentFactory(artifact_store=case.store, workspace_root=tmp_path,
+        search_root="generated_mods/SyntheticMod", source_provider=case.source_provider,
+        semantic_provider=StructuredModelRequirementCoverageProvider(complete), query_selector=select)
+
+
+@pytest.mark.parametrize("empty_initial", [False, True])
+def test_initial_findings_factory_retrieves_and_recomputes_without_plan_or_repair(tmp_path, empty_initial):
+    from src.mod_agent.evidence.reassessment import initial_findings_reassessment_allowed
+
+    case = _initial_findings_reassessment_case(tmp_path, empty_initial=empty_initial)
+    assert bool(case.pack.items) is not empty_initial
+    assert initial_findings_reassessment_allowed(case.pack.to_artifact_payload(), case.feature)
+    original = Path(case.evidence_ref.path).read_bytes()
+    queries, findings_calls = [], []
+    factory = _initial_findings_factory(case, tmp_path, queries, findings_calls)
+    result = factory.reassess_initial(case.state, case.feature)
+    assert result.can_generate_patch and len(queries) == len(findings_calls) == 1
+    assert set(case.state["artifacts"]) == {"feature_spec", "evidence_pack"}
+    assert Path(case.evidence_ref.path).read_bytes() == original
+    assert {item.evidence_id for item in case.pack.items} < {item.evidence_id for item in result.items}
+    assert result.requirement_coverage["projection_identity"] == case.materialized["projection_identity"]
+    for key in ("requirements", "relations", "queries", "input_obligations", "input_dispositions"):
+        assert result.requirement_coverage[key] == case.materialized[key]
+    assert len(result.requirement_coverage["findings"]) == len(case.materialized["relations"])
+    lineage = result.budget_summary["initial_findings_reassessment"]
+    assert lineage["prior_evidence_ref"] == {
+        "feature_id": case.feature["feature_id"], "artifact_type": "evidence_pack",
+        "path": case.evidence_ref.path, "artifact_hash": case.evidence_ref.artifact_hash}
+    assert lineage["max_cycles"] == lineage["cycle"] == 1
+    assert result.budget_summary["reassessment"]["per_query_execution"][0]["retrieval_status"] == "source_observations_returned"
+    assert "repair_plan_hash" not in result.budget_summary["reassessment"]
+    with pytest.raises(ValueError, match="INITIAL_FINDINGS_REASSESSMENT_NOT_ADMITTED"):
+        factory.reassess_initial(case.state, case.feature)
+    assert len(queries) == len(findings_calls) == 1
+
+
+def test_initial_findings_factory_rejects_provider_failure_or_unaccepted_findings(tmp_path):
+    from src.mod_agent.evidence.reassessment import initial_findings_reassessment_allowed
+
+    case = _initial_findings_reassessment_case(tmp_path)
+    payload = case.pack.to_artifact_payload()
+    assert initial_findings_reassessment_allowed(payload, case.feature)
+    unaccepted = deepcopy(payload)
+    unaccepted["budget_summary"]["requirement_findings_attempt_audit"] = []
+    assert not initial_findings_reassessment_allowed(unaccepted, case.feature)
+    failed = deepcopy(payload)
+    failed["budget_summary"]["semantic_provider_failed_closed"] = True
+    assert not initial_findings_reassessment_allowed(failed, case.feature)
+    failed_ref = case.store.write(feature_id=case.feature["feature_id"], artifact_type="evidence_pack",
+        payload=failed, status="blocked", upstream_refs=[ArtifactRef(feature_id=case.feature["feature_id"],
+            artifact_type="feature_spec", path=case.state["artifacts"]["feature_spec"],
+            artifact_hash=case.state["artifact_hashes"]["feature_spec"])])
+    case.state["artifacts"]["evidence_pack"] = failed_ref.path
+    case.state["artifact_hashes"]["evidence_pack"] = failed_ref.artifact_hash
+    queries, findings_calls = [], []
+    with pytest.raises(ValueError, match="INITIAL_FINDINGS_REASSESSMENT_NOT_ADMITTED"):
+        _initial_findings_factory(case, tmp_path, queries, findings_calls).reassess_initial(case.state, case.feature)
+    assert queries == findings_calls == []
+
+
+def test_initial_findings_factory_rejects_source_drift_before_query(tmp_path):
+    case = _initial_findings_reassessment_case(tmp_path)
+    source = tmp_path / case.pack.items[0].source_path
+    source.write_bytes(source.read_bytes() + b"// drift\n")
+    queries, findings_calls = [], []
+    with pytest.raises(ValueError, match="PLANNING_CONTINUATION_SOURCE_HASH_MISMATCH"):
+        _initial_findings_factory(case, tmp_path, queries, findings_calls).reassess_initial(case.state, case.feature)
+    assert queries == findings_calls == []
+
+
+@pytest.mark.parametrize("mode", ["empty_query", "tool_failed"])
+def test_initial_findings_factory_stops_after_retrieval_failure_before_findings(tmp_path, monkeypatch, mode):
+    from src.mod_agent.evidence import rg_live
+
+    case = _initial_findings_reassessment_case(tmp_path)
+    queries, findings_calls, tool_calls = [], [], []
+
+    def failed_rg(*_args, **_kwargs):
+        from types import SimpleNamespace
+
+        tool_calls.append(True)
+        return SimpleNamespace(returncode=2, stdout="", stderr="Deterministic permission failure.")
+
+    monkeypatch.setattr(rg_live.subprocess, "run", failed_rg)
+    factory = _initial_findings_factory(case, tmp_path, queries, findings_calls)
+    if mode == "empty_query":
+        select = factory.query_selector
+
+        def empty_queries(*args):
+            select(*args)
+            return []
+
+        factory.query_selector = empty_queries
+    code = "INITIAL_FINDINGS_QUERY_REQUIRED" if mode == "empty_query" else "INITIAL_FINDINGS_RETRIEVAL_FAILED"
+    with pytest.raises(ValueError, match=code):
+        factory.reassess_initial(case.state, case.feature)
+    assert len(queries) == 1 and findings_calls == []
+    assert tool_calls == ([] if mode == "empty_query" else [True])
