@@ -584,6 +584,7 @@ class KnowledgeDatabase:
         index_version: str,
         source_count: int,
         chunk_count: int,
+        source_files: dict[str, dict[str, str]] | None = None,
     ) -> IndexVersion:
         """Create or reset an index version in building state."""
 
@@ -594,6 +595,7 @@ class KnowledgeDatabase:
             source_count=source_count,
             chunk_count=chunk_count,
             created_at=self._now(),
+            source_files=source_files,
         )
 
     def set_index_version_status(
@@ -643,20 +645,43 @@ class KnowledgeDatabase:
         return self._index_version_from_row(row) if row else None
 
     def stable_index_version(self, collection_id: str) -> IndexVersion | None:
-        """Return the newest stable index version for a collection."""
+        """Select a published stable snapshot that still matches its indexed sources.
+
+        A source scan prepares current rows; it does not publish retrieval data.
+        Exact-version history remains readable when a newer scan makes a prior
+        snapshot ineligible for current retrieval.
+        """
 
         with self._connect() as conn:
-            row = conn.execute(
+            rows = conn.execute(
                 """
-                SELECT collection_id, index_version, status, source_count, chunk_count, created_at
+                SELECT collection_id, index_version, status, source_count, chunk_count, created_at, source_files_json
                 FROM index_versions
                 WHERE collection_id = ? AND status = 'stable'
                 ORDER BY created_at DESC, index_version DESC
-                LIMIT 1
                 """,
                 (collection_id,),
-            ).fetchone()
-        return self._index_version_from_row(row) if row else None
+            ).fetchall()
+            for row in rows:
+                if row["source_files_json"] is not None:
+                    manifest = json.loads(row["source_files_json"])
+                    if not all({item["source_path"]: item["content_hash"] for item in conn.execute(
+                        "SELECT source_path, content_hash FROM indexed_files WHERE source_id = ?", (source_id,)
+                    ).fetchall()} == expected for source_id, expected in manifest.items()):
+                        continue
+                else:
+                    # This owner's V1 could contain new text with an old file
+                    # hash. Never promote it by reconstructing trusted scope
+                    # from that metadata. Other snapshot strategies are unchanged.
+                    legacy_chunks = conn.execute(
+                        "SELECT metadata_json FROM knowledge_chunks WHERE collection_id = ? AND index_version = ?",
+                        (collection_id, row["index_version"]),
+                    ).fetchall()
+                    if any(json.loads(item["metadata_json"]).get("chunk_strategy") == "bounded_source_chunks_v1"
+                           for item in legacy_chunks):
+                        continue
+                return self._index_version_from_row(row)
+        return None
 
     def file_for_path(self, *, source_id: str, source_path: str) -> IndexedFile | None:
         """Return indexed file state for a source path, if present."""
@@ -758,10 +783,34 @@ class KnowledgeDatabase:
         source_id: str,
         files: list[IndexedFile],
         symbols_by_path: dict[str, list[SymbolRecord]],
-    ) -> None:
-        """Persist changed file identities and their symbols in one transaction."""
+        observed_source_paths: tuple[str, ...] | None = None,
+    ) -> int:
+        """Commit changed rows and, after a complete scan, remove absent current rows.
+
+        Historical documents/chunks and stable BM25/symbol snapshots are not
+        current-source membership and are never pruned here.
+        """
+        if any(item.source_id != source_id for item in files) or any(
+            symbol.source_id != source_id or symbol.source_path != path
+            for path, symbols in symbols_by_path.items() for symbol in symbols
+        ):
+            raise KnowledgeDatabaseError("Indexed source update crosses its selected source identity.")
+        observed = set(observed_source_paths) if observed_source_paths is not None else None
+        if observed is not None and (any(item.source_path not in observed for item in files)
+                                     or not set(symbols_by_path).issubset(observed)):
+            raise KnowledgeDatabaseError("Changed source rows are outside the completed scan.")
 
         with self._connect() as conn:
+            removed = []
+            if observed is not None:
+                removed = [(source_id, row[0]) for row in conn.execute(
+                    "SELECT source_path FROM indexed_files WHERE source_id = ?", (source_id,)
+                ).fetchall() if row[0] not in observed]
+                obsolete_symbols = [(source_id, row[0]) for row in conn.execute(
+                    "SELECT DISTINCT source_path FROM symbols WHERE source_id = ?", (source_id,)
+                ).fetchall() if row[0] not in observed]
+                conn.executemany("DELETE FROM symbols WHERE source_id = ? AND source_path = ?", obsolete_symbols)
+                conn.executemany("DELETE FROM indexed_files WHERE source_id = ? AND source_path = ?", removed)
             conn.executemany(
                 """
                 INSERT OR REPLACE INTO indexed_files (
@@ -811,6 +860,7 @@ class KnowledgeDatabase:
                     for symbol in symbols
                 ],
             )
+        return len(removed)
 
     def replace_symbols_for_file(
         self,
@@ -977,10 +1027,13 @@ class KnowledgeDatabase:
                     source_count INTEGER NOT NULL,
                     chunk_count INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
+                    source_files_json TEXT,
                     PRIMARY KEY (collection_id, index_version)
                 )
                 """
             )
+            if "source_files_json" not in {row[1] for row in conn.execute("PRAGMA table_info(index_versions)")}:
+                conn.execute("ALTER TABLE index_versions ADD COLUMN source_files_json TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS bm25_terms (
@@ -1062,15 +1115,22 @@ class KnowledgeDatabase:
         source_count: int,
         chunk_count: int,
         created_at: str,
+        source_files: dict[str, dict[str, str]] | None = None,
     ) -> IndexVersion:
         self._validate_status(status, {"building", "stable", "failed"})
         with self._connect() as conn:
+            previous = conn.execute(
+                "SELECT source_files_json FROM index_versions WHERE collection_id = ? AND index_version = ?",
+                (collection_id, index_version),
+            ).fetchone()
+            source_files_json = (json.dumps(source_files, sort_keys=True) if source_files is not None
+                                 else previous[0] if previous is not None else None)
             conn.execute(
                 """
                 INSERT OR REPLACE INTO index_versions (
-                    collection_id, index_version, status, source_count, chunk_count, created_at
+                    collection_id, index_version, status, source_count, chunk_count, created_at, source_files_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     collection_id,
@@ -1079,6 +1139,7 @@ class KnowledgeDatabase:
                     source_count,
                     chunk_count,
                     created_at,
+                    source_files_json,
                 ),
             )
         return IndexVersion(

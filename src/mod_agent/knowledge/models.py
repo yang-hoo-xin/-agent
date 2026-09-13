@@ -240,14 +240,19 @@ class IndexedFile:
     content_hash: str
     indexed_at: str
 
-    def to_document(self, *, source: SourceRecord, raw_text: str) -> Document:
+    def to_document(self, *, source: SourceRecord, raw_text: str,
+                    identity_namespace: str | None = None) -> Document:
         """Build the V1 document contract for this indexed file."""
 
         canonical_text = canonicalize_text(raw_text)
         metadata = source_metadata_for_file(source=source, indexed_file=self)
         raw_text_hash = stable_hash(raw_text)
         canonical_text_hash = stable_hash(canonical_text)
-        document_id = stable_id("doc", source.source_id, self.relative_path, self.content_hash)
+        parts = (source.source_id, self.relative_path, self.content_hash)
+        if identity_namespace is not None:
+            parts = (identity_namespace, *parts)
+            metadata["document_identity_namespace"] = identity_namespace
+        document_id = stable_id("doc", *parts)
         return Document(
             document_id=document_id,
             source_type=source.source_type,

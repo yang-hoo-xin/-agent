@@ -13,7 +13,9 @@ from .models import IndexVersion, IndexedFile, SourceSpan, chunk_from_document
 from .source_registry import SourceRegistry
 from .symbol_indexer import SymbolIndexer
 
-RETRIEVAL_SNAPSHOT_VERSION = "bounded_source_chunks_v1"
+# V1 could associate newly read text with an older indexed hash. Keep those
+# historical versions untouched and build verified physical-byte snapshots in V2.
+RETRIEVAL_SNAPSHOT_VERSION = "bounded_source_chunks_v2"
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,8 @@ class IndexingReport:
     failed_files: int
     symbols_indexed: int
     failures: tuple[str, ...] = ()
+    removed_files: int = 0
+    scan_completed: bool = True
 
     def to_artifact_payload(self) -> dict[str, object]:
         """Return payload compatible with knowledge_index_report."""
@@ -46,6 +50,9 @@ class IndexingReport:
             "failed_files": self.failed_files,
             "symbols_indexed": self.symbols_indexed,
             "failures": list(self.failures),
+            "removed_files": self.removed_files,
+            "scan_completed": self.scan_completed,
+            "retrieval_snapshot_published": False,
         }
 
 
@@ -83,21 +90,22 @@ class IncrementalIndexer:
         for path in files:
             try:
                 relative_path = path.relative_to(root).as_posix()
-                content = path.read_text(encoding="utf-8")
-                content_hash = self._sha256(content)
+                raw = path.read_bytes()
+                content = raw.decode("utf-8")
+                content_hash = hashlib.sha256(raw).hexdigest()
                 existing = existing_by_path.get(str(path))
                 if existing and existing.content_hash == content_hash:
                     skipped_files += 1
                     continue
                 file_id = self._file_id(source_id, relative_path)
-                changed_files.append(IndexedFile(
+                indexed_file = IndexedFile(
                     file_id=file_id,
                     source_id=source_id,
                     source_path=str(path),
                     relative_path=relative_path,
                     content_hash=content_hash,
                     indexed_at=indexed_at,
-                ))
+                )
                 symbols = self.symbol_indexer.extract(
                     source_id=source_id,
                     source_path=path,
@@ -105,6 +113,7 @@ class IncrementalIndexer:
                     content=content,
                     content_hash=content_hash,
                 )
+                changed_files.append(indexed_file)
                 symbols_by_path[str(path)] = symbols
                 indexed_files += 1
                 symbols_indexed += len(symbols)
@@ -112,11 +121,16 @@ class IncrementalIndexer:
                 failed_files += 1
                 failures.append(f"{path}: {exc}")
 
-        self.database.replace_indexed_source_files(
-            source_id=source_id,
-            files=changed_files,
-            symbols_by_path=symbols_by_path,
-        )
+        removed_files = 0
+        if not failed_files:
+            removed_files = self.database.replace_indexed_source_files(
+                source_id=source_id, files=changed_files, symbols_by_path=symbols_by_path,
+                observed_source_paths=tuple(str(path) for path in files),
+            )
+        else:
+            # Do not publish a mixture of successful new files and old failed
+            # files, or treat an unobserved file as deleted.
+            indexed_files = symbols_indexed = 0
 
         return IndexingReport(
             source_id=source_id,
@@ -126,6 +140,8 @@ class IncrementalIndexer:
             failed_files=failed_files,
             symbols_indexed=symbols_indexed,
             failures=tuple(failures),
+            removed_files=removed_files,
+            scan_completed=not failed_files,
         )
 
     def build_retrieval_snapshot(
@@ -151,11 +167,11 @@ class IncrementalIndexer:
             source_id: self.database.list_indexed_files(source_id)
             for source_id in requested_source_ids
         }
-        missing = [
-            source_id for source_id, files in files_by_source.items() if not files
-        ]
-        if missing:
-            raise ValueError(f"Sources have no indexed files: {', '.join(missing)}")
+        for source_id in requested_source_ids:
+            observed_paths = {str(path) for path in self.source_registry.iter_files(source_id)}
+            indexed_paths = {item.source_path for item in files_by_source[source_id]}
+            if observed_paths != indexed_paths:
+                raise ValueError(f"Source membership changed; reindex source {source_id!r} before building its snapshot.")
         version_seed = "\n".join(
             [
                 RETRIEVAL_SNAPSHOT_VERSION,
@@ -176,8 +192,18 @@ class IncrementalIndexer:
             source = sources[source_id]
             for indexed_file in files_by_source[source_id]:
                 path = Path(indexed_file.source_path)
-                raw_text = path.read_text(encoding="utf-8")
-                document = indexed_file.to_document(source=source, raw_text=raw_text)
+                try:
+                    raw = path.read_bytes()
+                    raw_text = raw.decode("utf-8")
+                except (OSError, UnicodeError) as error:
+                    raise ValueError(f"Source is unavailable; reindex source {source_id!r} before building its snapshot.") from error
+                if hashlib.sha256(raw).hexdigest() != indexed_file.content_hash:
+                    raise ValueError(f"Source bytes changed; reindex source {source_id!r} before building its snapshot.")
+                symbols = self.database.symbols_for_file(source_id=source_id, source_path=indexed_file.source_path)
+                if any(symbol.content_hash != indexed_file.content_hash for symbol in symbols):
+                    raise ValueError(f"Symbol revision changed; reindex source {source_id!r} before building its snapshot.")
+                document = indexed_file.to_document(source=source, raw_text=raw_text,
+                                                    identity_namespace=RETRIEVAL_SNAPSHOT_VERSION)
                 documents.append(document)
                 for chunk_index, (text, span) in enumerate(
                     self._bounded_chunks(path=path, text=document.canonical_text)
@@ -193,19 +219,28 @@ class IncrementalIndexer:
                             chunk_strategy=RETRIEVAL_SNAPSHOT_VERSION,
                             symbols=tuple(
                                 symbol.name
-                                for symbol in self.database.symbols_for_file(
-                                    source_id=source_id,
-                                    source_path=indexed_file.source_path,
-                                )
+                                for symbol in symbols
                                 if span.start_line <= symbol.start_line <= span.end_line
                             ),
                         )
                     )
+        existing = self.database.get_index_version(collection_id=collection_id, index_version=index_version)
+        if existing is not None and existing.status == "stable":
+            stored = self.database.list_chunks(collection_id=collection_id, index_version=index_version)
+            expected = {chunk.chunk_id: (chunk.document_id, chunk.text, chunk.text_for_retrieval, chunk.metadata)
+                        for chunk in chunks}
+            actual = {chunk.chunk_id: (chunk.document_id, chunk.chunk_text, chunk.text_for_retrieval, chunk.metadata)
+                      for chunk in stored}
+            if actual != expected or existing.chunk_count != len(chunks):
+                raise ValueError("Stable snapshot content differs from its physical identity; preserve it and rebuild under a new collection.")
+            return existing
         self.database.start_index_version(
             collection_id=collection_id,
             index_version=index_version,
             source_count=len(requested_source_ids),
             chunk_count=len(chunks),
+            source_files={source_id: {item.source_path: item.content_hash for item in files_by_source[source_id]}
+                          for source_id in requested_source_ids},
         )
         self.database.upsert_documents(documents)
         records = self.database.upsert_chunks(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import os
+import stat
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -144,8 +145,12 @@ def iter_indexable_paths(
     """Walk a root deterministically while pruning ignored directories."""
 
     root = root.resolve()
+    if not root.is_dir():
+        raise SourceDiscoveryError(f"Source discovery root is unavailable or not a directory: {root}")
     files: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root):
+    def fail_scan(error: OSError) -> None:
+        raise error
+    for dirpath, dirnames, filenames in os.walk(root, onerror=fail_scan):
         current = Path(dirpath).resolve()
         if current != root and current.name == "generated_mods" and not include_generated_mods:
             dirnames[:] = []
@@ -163,7 +168,9 @@ def iter_indexable_paths(
                 path.relative_to(root)
             except ValueError as exc:
                 raise SourceDiscoveryError("Discovered path escaped source root") from exc
-            if path.suffix.lower() in allowed_extensions and path.is_file():
+            # A vanished or unreadable listed file makes the scan incomplete;
+            # it must not silently become evidence for deleting indexed rows.
+            if path.suffix.lower() in allowed_extensions and stat.S_ISREG(path.stat().st_mode):
                 files.append(path)
     return files
 
