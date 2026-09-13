@@ -6,9 +6,13 @@ import hashlib
 import json
 import re
 import subprocess
+from collections import Counter
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
+
+from src.core.trace.execution_trace import trace_operation
+from src.mod_agent.upstream_trace import material_identities, payload_sha256, update_observation
 
 from .models import EvidenceItem, EvidencePack
 
@@ -117,15 +121,45 @@ def enrich_source_evidence_with_member_accesses(
 ) -> EvidencePack:
     """Join source declarations with compiled and dependency metadata facts."""
 
-    enriched_items = tuple(
-        _enrich_item(
-            item,
-            consumer_assembly=consumer_assembly,
-            resolver=resolver,
+    with trace_operation("evidence.member_access_enrich") as span:
+        before = _member_access_trace_values(evidence_pack)
+        update_observation(span, input_payload_sha256=before.get("payload_sha256"),
+            input_member_access_count=before.get("fact_count"),
+            input_member_access_facts_sha256=before.get("facts_sha256"))
+        enriched_items = tuple(
+            _enrich_item(
+                item,
+                consumer_assembly=consumer_assembly,
+                resolver=resolver,
+            )
+            for item in evidence_pack.items
         )
-        for item in evidence_pack.items
-    )
-    return replace(evidence_pack, items=enriched_items)
+        result = replace(evidence_pack, items=enriched_items)
+        after = _member_access_trace_values(result)
+        update_observation(span, output_payload_sha256=after.get("payload_sha256"),
+            output_member_access_count=after.get("fact_count"),
+            output_member_access_facts_sha256=after.get("facts_sha256"),
+            produced_materials=material_identities(result.items),
+            fact_delivery_status="evidence_pack_enriched_model_delivery_unproven")
+        if "fact_identities" in before and "fact_identities" in after:
+            update_observation(span,
+                added_member_access_count=sum((after["fact_identities"] - before["fact_identities"]).values()),
+                removed_member_access_count=sum((before["fact_identities"] - after["fact_identities"]).values()))
+        return result
+
+
+def _member_access_trace_values(pack: EvidencePack) -> dict[str, Any]:
+    """Full fact identities are local; counts/hashes never assert model delivery."""
+    try:
+        facts = [(item.evidence_id, payload_sha256(fact))
+                 for item in pack.items for fact in item.verified_member_accesses]
+        if any(digest is None for _, digest in facts):
+            return {}
+        return {"payload_sha256": payload_sha256(pack.to_artifact_payload()),
+                "fact_count": len(facts), "facts_sha256": payload_sha256(facts),
+                "fact_identities": Counter(facts)}
+    except Exception:
+        return {}
 
 
 def _enrich_item(

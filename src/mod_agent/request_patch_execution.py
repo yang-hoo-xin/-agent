@@ -9,11 +9,13 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
+from src.core.trace.execution_trace import current_trace
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.patch_execution_trace import PatchExecutionTraceConfiguration
 from src.mod_agent.proposal.patch_agent_loop import (
@@ -326,10 +328,23 @@ class RequestPatchExecution:
         worker._shared_model_call_reserver = lambda _worker_role: self.reserve_model_call(role)
         worker_state = deepcopy(state)
         worker_state["run_id"] = invocation
-        trace = self.trace_configuration.make_trace(run_id=invocation, feature_id=state["feature_id"],
-            artifact_store_root=self.store.root, recorder=journal.record_observation)
+        enclosing_trace = current_trace()
+        expected_trace_identity = {
+            "artifact_store_root": str(Path(self.store.root).resolve()),
+            "run_id": state["run_id"], "request_id": state["request_id"],
+        }
+        reuse_trace = (enclosing_trace is not None and enclosing_trace.root_name == "product.execution"
+                       and enclosing_trace.context.metadata.get("execution_identity") == expected_trace_identity)
+        trace = enclosing_trace if reuse_trace else None
+        owns_trace = not reuse_trace
+        if owns_trace:
+            trace = self.trace_configuration.make_trace(run_id=invocation, feature_id=state["feature_id"],
+                artifact_store_root=self.store.root, recorder=journal.record_observation,
+                **({"request_id": state["request_id"]} if enclosing_trace is not None else {}))
         try:
-            with trace.activate():
+            # The product owner retains the root and export lifetime. A worker
+            # journal receives only this invocation, never earlier upstream calls.
+            with (nullcontext() if owns_trace else trace.record_scope(journal.record_observation)), trace.activate():
                 changes = worker(worker_state, implementation, evidence_pack)
                 journal.record({"phase": "product_patch_generated", "model_role": role,
                     "selected_artifacts": {key: asdict(ref) for key, ref in refs.items()},
@@ -343,10 +358,26 @@ class RequestPatchExecution:
             self._consumed_reads += sum(int(phase.get("tool_rounds_used") or 0) for phase in phases)
             self._consumed_bytes += (sum(int(phase.get("total_observation_bytes") or 0) for phase in phases)
                                      + worker._recovery_observation_bytes)
-            summary = self.trace_configuration.finish(trace)
+            # A mismatched enclosing task never supplies correlation identity.
+            # If both invocations use one sink, its enclosing owner still owns
+            # shutdown; otherwise the unrelated worker would close that sink.
+            owns_export = (owns_trace and (enclosing_trace is None or trace.sink is None
+                                           or trace.sink is not enclosing_trace.sink))
+            summary = (self.trace_configuration.finish(trace) if owns_export else {
+                "mode": "shared_product_trace" if reuse_trace else "independent_trace_shared_sink",
+                "export_lifecycle_owner": "enclosing_execution",
+                "failures": trace.failure_statistics(), "cloud_readback": "not_performed",
+            })
             summary.update(trace_id=trace.context.trace_id, session_id=trace.session_id,
                            environment=trace.environment)
-            journal.record_trace_summary(summary)
+            if "logical_request_id" in trace.context.metadata:
+                summary.update(logical_request_id=trace.context.metadata["logical_request_id"],
+                               session_identity_scope="artifact_store_and_logical_request")
+            try:
+                journal.record_trace_summary(summary)
+            except Exception:
+                # Telemetry persistence cannot replace the worker result.
+                pass
 
     def complete_product(self, result) -> None:
         """Project owner results into each worker's original queryable receipt."""

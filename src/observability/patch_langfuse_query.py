@@ -6,6 +6,7 @@ before querying. This is a disposable projection, not another execution index.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import re
@@ -23,7 +24,9 @@ _FIELDS = (
     "startTime", "endTime", "level", "statusMessage", "providedModelName", "usageDetails",
     "totalCost", "completionStartTime", "promptName", "metadata", "sessionId",
 )
-_EXPAND = ("artifact_refs", "consumed_tool_results", "tool_call_id_sha256s")
+_EXPAND = ("artifact_refs", "consumed_tool_results", "tool_call_id_sha256s", "consumed_materials",
+           "produced_materials", "selected_evidence_id_sha256s", "relationship_counts", "decision_summary", "local_detail_refs",
+           "terminal_record_ref")
 _FACTS = (
     "turn_index", "evaluation_index", "workflow_status", "terminal_stage", "failure_code",
     "verification_status", "failure_owner", "execution_origin", "callback_invoked",
@@ -32,13 +35,124 @@ _FACTS = (
     "request_bytes", "encoded_payload_bytes", "encoded_payload_sha256", "byte_count",
     "failure_boundary", "failure_classification", "context_admission_mode", "provider_body_utf8_bytes",
     "configured_num_ctx", "num_predict", "conservative_required_context",
-    "call_id_sha256", "transport_started", "response_received", "response_complete",
+    "call_id_sha256", "transport_started", "response_received", "response_complete", "response_origin", "http_status",
     "usage_available", "usage_mapping_status", "upstream_execution_performed",
     "request_registered", "result_code", "admission_result", "tool_dispatch_performed",
     "observation_queued", "model_consumption_proven", "historical_import", "metadata_only",
     "observation_status", "source_prompt_output_included", "score_eligible", "score_basis",
     "verification_executions", "verification_matrix_sha256", *_EXPAND,
+    "model_role", "reason_status", "route_decision", "trace_scope", "model_input_assembled",
+    "input_payload_sha256", "feature_payload_sha256", "evidence_payload_sha256", "structured_output_sha256",
+    "unresolved_gap_count", "decision_summary_origin", "decision_claim_origin", "consumed_materials_truncated",
+    "produced_materials_truncated", "selected_evidence_ids_truncated",
+    "retrieval_status", "decision", "decision_status", "readiness", "input_role", "material_delivery_status", "selection_mode",
+    "tool_exit_code", "evidence_item_count", "query_count", "requirement_count", "relation_count",
+    "projection_fallback_used", "findings_invocation_performed", "can_generate_patch", "provider_failure_count",
+    "materialized_projection_sha256", "output_payload_sha256", "reason_sha256",
+    "local_body_status",
+    "from_node", "selected_route", "selected_next_node", "route_selector", "material_capture_status",
+    "query_sha256", "route_input_sha256",
+    "route_input_summary_scope", "route_input_summary_status", "route_output_summary_status",
+    "failure_stage", "execution_phase", "callback_returned", "source_directory_exists", "project_file_discovered", "local_manifest_created",
+    "fact_delivery_status", "input_member_access_count", "output_member_access_count", "added_member_access_count",
+    "removed_member_access_count", "produced_member_access_fact_count", "input_member_access_facts_sha256",
+    "output_member_access_facts_sha256", "produced_member_access_facts_sha256",
 )
+
+_MATERIAL_KEYS = ("evidence_id_sha256", "excerpt_sha256")
+_DIGEST = re.compile(r"(?:sha256:)?[a-f0-9]{64}\Z")
+
+
+def _material_identity(item):
+    if not isinstance(item, dict) or any(not isinstance(item.get(key), str)
+            or not _DIGEST.fullmatch(item[key]) for key in _MATERIAL_KEYS):
+        return None
+    return tuple(item[key] for key in _MATERIAL_KEYS)
+
+
+def _material_matches(supplied, produced):
+    identity = _material_identity(supplied)
+    return (identity is not None and identity == _material_identity(produced)
+            and ("source_hash" not in supplied or supplied["source_hash"] == produced.get("source_hash")))
+
+
+def _upstream_evidence(rows, generations):
+    """Report observable alternatives, not an inferred semantic root cause."""
+    producers = [row for row in rows if isinstance(row.get("metadata", {}).get("produced_materials"), list)]
+    stages = [row for row in rows if isinstance(row.get("metadata", {}).get("consumed_materials"), list)
+              and row.get("type") != "GENERATION"]
+    material_links, diagnostics = [], []
+    retrieval_meanings = {"source_root_missing": "该次检索观察到材料目录不存在。",
+        "no_matches": "该次检索执行后无匹配，不能推断整个知识库没有相关材料。",
+        "requested_source_no_matches": "指定材料在该次查询中无匹配。",
+        "source_scope_rejected": "当前材料范围被准入检查拒绝。", "query_terms_missing": "本次没有可执行的检索词。",
+        "tool_failed": "本次检索工具执行失败。", "source_decode_failed": "本次材料解码失败。",
+        "source_identity_ambiguous": "本次材料身份不唯一。"}
+    for row in rows:
+        status = row.get("metadata", {}).get("retrieval_status")
+        if isinstance(status, str) and status in retrieval_meanings:
+            diagnostics.append({"observation_id": row["id"], "fact": status, "meaning": retrieval_meanings[status]})
+        meta = row.get("metadata", {})
+        if row.get("name") == "source.admission" and (meta.get("source_directory_exists") is False or meta.get("project_file_discovered") is False):
+            diagnostics.append({"observation_id": row["id"], "fact": "source_project_material_unavailable",
+                "meaning": "前置材料检查明确缺少目录或项目文件，尚不能归为检索或模型修订失败。"})
+    for producer in producers:
+        meta = producer["metadata"]
+        if not meta["produced_materials"] and meta.get("produced_materials_truncated") is False:
+            diagnostics.append({"observation_id": producer["id"], "fact": "recorded_material_result_empty",
+                "meaning": "该次材料结果明确为空；不能单凭此记录区分未准备材料与检索未命中。"})
+    for generation in generations:
+        meta = generation.get("metadata", {})
+        payload = meta.get("input_payload_sha256")
+        matching_stages = [stage for stage in stages if isinstance(payload, str) and _DIGEST.fullmatch(payload)
+                           and stage["metadata"].get("input_payload_sha256") == payload]
+        if isinstance(meta.get("consumed_materials"), list):
+            matching_stages = [generation]
+        if not matching_stages:
+            if meta.get("model_role"):
+                diagnostics.append({"observation_id": generation["id"], "fact": "input_material_binding_unknown",
+                                    "meaning": "没有与本次请求payload哈希匹配的材料记录。"})
+            continue
+        attempted = (meta.get("transport_started") is True and meta.get("historical_import") is False
+                     and isinstance(payload, str) and _DIGEST.fullmatch(payload) is not None)
+        http_status = meta.get("http_status")
+        responded = (attempted and meta.get("response_received") is True
+                     and meta.get("response_origin") == "live_provider_response"
+                     and (http_status is None or type(http_status) is int and 200 <= http_status < 300))
+        delivery = "provider_response_received" if responded else "transport_attempted" if attempted else "assembled_only"
+        for stage in matching_stages:
+            stage_meta = stage.get("metadata", {})
+            consumed = stage_meta["consumed_materials"]
+            for item in consumed:
+                matches = [producer["id"] for producer in producers
+                           if _milliseconds(producer.get("endTime"), generation.get("startTime")) is not None
+                           if any(_material_matches(item, found) for found in producer["metadata"]["produced_materials"])]
+                material_links.append({"generation_id": generation["id"], "input_observation_id": stage["id"],
+                    "input_payload_sha256": payload, "material": item, "source_observation_ids": matches,
+                    "binding": "matched_excerpt_in_responded_request" if responded and matches else
+                               "matched_excerpt_in_transport_attempt" if attempted and matches else
+                               "assembled_material_only" if matches else "material_origin_unresolved",
+                    "delivery_status": delivery,
+                    "input_source_hash": item.get("source_hash"),
+                    "scope": "recorded_identity_not_model_attention_or_semantic_correctness"})
+            if stage_meta.get("consumed_materials_truncated") is False:
+                consumed_ids = {_material_identity(item) for item in consumed}
+                for producer in producers:
+                    # Compare only earlier observed results. This is an input inventory
+                    # difference, not proof that every result should have been selected.
+                    if _milliseconds(producer.get("endTime"), generation.get("startTime")) is None:
+                        continue
+                    for material in producer["metadata"]["produced_materials"]:
+                        identity = _material_identity(material)
+                        if identity is not None and identity not in consumed_ids:
+                            diagnostics.append({"observation_id": generation["id"],
+                                "input_observation_id": stage["id"], "source_observation_id": producer["id"],
+                                "material": material, "fact": "returned_material_not_in_recorded_input",
+                                "meaning": "先前返回的这份材料不在本次完整输入清单；是否应该消费仍需核查任务。"})
+    return {"material_consumption_links": material_links, "evidence_diagnostics": diagnostics,
+            "upstream_decisions": [{"observation_id": row["id"], "operation": row.get("name"),
+                "facts": {key: row.get("metadata", {})[key] for key in _FACTS if key in row.get("metadata", {})}}
+                for row in rows if row.get("metadata", {}).get("decision_summary") or row.get("metadata", {}).get("route_decision")]}
 
 
 def _fail(code):
@@ -136,6 +250,18 @@ def _milliseconds(start, end):
         return None
 
 
+def _same_observed_time(local, cloud):
+    """Cloud observation APIs truncate the retained OTLP times to milliseconds."""
+    if not isinstance(local, str) or not isinstance(cloud, str):
+        return False
+    try:
+        a, b = (datetime.fromisoformat(value.replace("Z", "+00:00")) for value in (local, cloud))
+        return (a.utcoffset() is not None and b.utcoffset() is not None
+                and (a == b or b.microsecond % 1000 == 0 and a.replace(microsecond=a.microsecond // 1000 * 1000) == b))
+    except ValueError:
+        return False
+
+
 def _number(value):
     return type(value) in (int, float) and math.isfinite(value) and value >= 0
 
@@ -219,6 +345,7 @@ def summarize_execution(trace_id, observations, scores=()):
     parent_missing = sorted({r["parentObservationId"] for r in rows
                              if r.get("parentObservationId") and r["parentObservationId"] not in unique})
     return {"trace_id": trace_id, "source": "langfuse_cloud", "read_only": True,
+        "session_ids": sorted({r["sessionId"] for r in rows if isinstance(r.get("sessionId"), str)}),
         "observation_count": len(rows), "levels": dict(Counter(r.get("level") for r in rows)),
         "generation_count": len(generations), "model_request_observations": sum(r.get("name") == "model.request" for r in rows),
         "generation_count_scope": "recorded_generations_not_reserved_worker_calls",
@@ -227,6 +354,7 @@ def summarize_execution(trace_id, observations, scores=()):
         "usage": {"measured_generations": len(known_usage), "missing_generations": len(generations) - len(known_usage),
                   "measured_totals": {k: sum(u[k] for u in known_usage) for k in ("input_tokens", "output_tokens", "total_tokens")} if known_usage else None},
         "verification": verification, "tool_consumption_links": links,
+        **_upstream_evidence(rows, generations),
         "roots": [{"observation_id": r["id"], "facts": {k: r.get("metadata", {})[k] for k in _FACTS if k in r.get("metadata", {})}} for r in roots],
         "upstream_requests": [{"observation_id": r["id"], "facts": {k: r.get("metadata", {})[k] for k in _FACTS if k in r.get("metadata", {})}}
                               for r in rows if r.get("name") == "patch.upstream_request"],
@@ -243,12 +371,107 @@ def summarize_execution(trace_id, observations, scores=()):
                    "No raw prompt, response or source was requested; full Mod delivery is not inferred."]}
 
 
+def join_local_journal(result, journal_path, journal_sha256, *, artifact_roots=()):
+    """Bind explicitly selected local evidence; do not follow Cloud-supplied paths.
+
+    The journal hash and observation mapping must match before returning local
+    references. Reading a body file additionally requires an explicit local root.
+    Body content is never inserted in the Cloud projection or returned summary.
+    """
+    from src.observability.patch_langfuse import MAX_PAYLOAD_BYTES
+    from src.observability.patch_live_langfuse import _metadata, live_observation_id, live_trace_id
+
+    path = Path(journal_path).resolve(strict=True)
+    if not isinstance(journal_sha256, str) or not re.fullmatch(r"[a-f0-9]{64}", journal_sha256):
+        _fail("LANGFUSE_LOCAL_JOURNAL_HASH_INVALID")
+    if path.stat().st_size > MAX_PAYLOAD_BYTES:
+        _fail("LANGFUSE_LOCAL_JOURNAL_TOO_LARGE")
+    raw = path.read_bytes()
+    if len(raw) > MAX_PAYLOAD_BYTES or hashlib.sha256(raw).hexdigest() != journal_sha256:
+        _fail("LANGFUSE_LOCAL_JOURNAL_HASH_MISMATCH")
+    try:
+        document = json.loads(raw)
+    except (ValueError, UnicodeError):
+        _fail("LANGFUSE_LOCAL_JOURNAL_INVALID")
+    local_rows = document.get("execution_observations") if isinstance(document, dict) else None
+    if not isinstance(local_rows, dict):
+        _fail("LANGFUSE_LOCAL_JOURNAL_OBSERVATIONS_MISSING")
+    roots = [Path(root).resolve(strict=True) for root in artifact_roots]
+    indexed = {}
+    for row in local_rows.values():
+        if not isinstance(row, dict):
+            _fail("LANGFUSE_LOCAL_JOURNAL_OBSERVATION_INVALID")
+        if live_trace_id(row.get("trace_id")) == result["trace_id"]:
+            identity = live_observation_id(row.get("id"))
+            if identity in indexed and indexed[identity] != row:
+                _fail("LANGFUSE_LOCAL_JOURNAL_CONFLICTING_OBSERVATION")
+            indexed[identity] = row
+    if not indexed:
+        _fail("LANGFUSE_LOCAL_JOURNAL_TRACE_MISMATCH")
+    joins = []
+    for cloud in result["execution_tree"]:
+        entry = {"observation_id": cloud["observation_id"], "binding": "local_observation_not_found", "details": []}
+        local = indexed.get(cloud["observation_id"])
+        if local is None:
+            joins.append(entry)
+            continue
+        attrs = local.get("attributes", {})
+        mapped = _metadata(attrs)
+        expected_facts = {key: mapped[key] for key in _FACTS if key in mapped}
+        cloud_facts = cloud.get("facts", {})
+        parent = live_observation_id(local["parent_id"]) if local.get("parent_id") is not None else None
+        same = (local.get("name") == cloud.get("name") and str(local.get("kind")).upper() == cloud.get("type")
+                and parent == cloud.get("parent_id")
+                and _same_observed_time(local.get("started_at"), cloud.get("start_time"))
+                and _same_observed_time(local.get("finished_at"), cloud.get("end_time"))
+                and all(cloud_facts.get(key) == value for key, value in expected_facts.items()))
+        if not same:
+            entry["binding"] = "local_cloud_observation_mismatch"
+            joins.append(entry)
+            continue
+        entry["binding"] = "verified_journal_and_observation_mapping"
+        details = attrs.get("local_detail_refs", {})
+        for role in ("request", "response", "planning_receipt", "response_tools", "failure", "terminal_record"):
+            reference = attrs.get("terminal_record_ref") if role == "terminal_record" else details.get(role) if isinstance(details, dict) else None
+            exported = mapped.get("terminal_record_ref") if role == "terminal_record" else mapped.get("local_detail_refs", {}).get(role)
+            if not isinstance(reference, dict) or exported != {"sha256": reference.get("sha256")}:
+                continue
+            item = {"role": role, "sha256": reference["sha256"], "file_binding": "not_checked_no_allowed_root"}
+            try:
+                detail_path = Path(reference["path"]).resolve(strict=True)
+                item["path"] = str(detail_path)
+                if roots:
+                    if not any(detail_path.is_relative_to(root) for root in roots):
+                        item["file_binding"] = "outside_explicit_artifact_roots"
+                    elif detail_path.stat().st_size > MAX_PAYLOAD_BYTES:
+                        item["file_binding"] = "file_too_large"
+                    else:
+                        body = detail_path.read_bytes()
+                        item["file_binding"] = "verified_bytes" if len(body) <= MAX_PAYLOAD_BYTES and hashlib.sha256(body).hexdigest() == reference["sha256"] else "file_hash_mismatch"
+            except (OSError, KeyError, TypeError, ValueError):
+                item["file_binding"] = "file_unavailable"
+            entry["details"].append(item)
+        joins.append(entry)
+    return {**result, "local_evidence": {"journal_path": str(path), "journal_sha256": journal_sha256,
+        "journal_binding": "verified_bytes", "observations": joins,
+        "local_only_observation_ids": sorted(set(indexed) - {row["observation_id"] for row in result["execution_tree"]}),
+        "scope": "explicit_local_join_no_body_upload_no_semantic_correctness_claim"}}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Read one Langfuse execution and its recorded diagnostic bindings.")
     parser.add_argument("--trace-id", required=True)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--local-journal", type=Path)
+    parser.add_argument("--local-journal-sha256")
+    parser.add_argument("--local-artifact-root", action="append", type=Path, default=[])
     args = parser.parse_args(argv)
+    if bool(args.local_journal) != bool(args.local_journal_sha256) or args.local_artifact_root and not args.local_journal:
+        parser.error("--local-journal and --local-journal-sha256 are required together; local roots require a journal.")
     result = CloudExecutionReader(LangfuseHttpTransport.from_environment()).read(args.trace_id)
+    if args.local_journal:
+        result = join_local_journal(result, args.local_journal, args.local_journal_sha256,
+                                    artifact_roots=args.local_artifact_root)
     text = json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
     if args.output:
         args.output.write_text(text, encoding="utf-8")

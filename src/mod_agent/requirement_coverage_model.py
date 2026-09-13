@@ -60,6 +60,8 @@ def request_requirement_coverage_model(
     capture_provider_request: bool,
     stream_response: bool = False,
     stream_activity_recorder: Callable[[dict[str, Any]], None] | None = None,
+    trace_role: str | None = None,
+    trace_body_root: Any = None,
 ) -> tuple[ChatResponse, dict[str, Any]]:
     """Execute one strict admitted coverage turn without interpreting semantics."""
 
@@ -82,8 +84,7 @@ def request_requirement_coverage_model(
         chat_options["stream_response"] = True
         if stream_activity_recorder is not None:
             chat_options["stream_activity_recorder"] = stream_activity_recorder
-    response = llm.chat(
-        [
+    messages = [
             Message(
                 role="system",
                 content=(
@@ -100,9 +101,18 @@ def request_requirement_coverage_model(
                     sort_keys=True,
                 ),
             ),
-        ],
-        **chat_options,
-    )
+        ]
+    if trace_role is None:
+        response = llm.chat(messages, **chat_options)
+    else:
+        from src.mod_agent.upstream_model_trace import trace_upstream_model_call
+        response = trace_upstream_model_call(
+            role=trace_role, provider=type(llm).__name__, model=getattr(llm, "model", None),
+            input_payload=payload,
+            request_document={"messages": [{"role": m.role, "content": m.content} for m in messages],
+                              "response_format": dict(schema), "temperature": 0.0,
+                              "max_tokens": max_output_tokens, "stream_response": stream_response},
+            body_root=trace_body_root, invoke=lambda: llm.chat(messages, **chat_options))
     if not isinstance(response, ChatResponse):
         raise ValueError("REQUIREMENT_COVERAGE_MODEL_RESPONSE_INVALID")
     return response, provider_request

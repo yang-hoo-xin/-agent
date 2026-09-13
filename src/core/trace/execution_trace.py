@@ -21,6 +21,7 @@ from src.core.trace.trace_context import TraceContext
 
 _ACTIVE_TRACE: ContextVar[ExecutionTrace | None] = ContextVar("execution_trace", default=None)
 _ACTIVE_PARENT: ContextVar[tuple[ExecutionTrace, str] | None] = ContextVar("execution_trace_parent", default=None)
+_SCOPED_RECORDERS: ContextVar[tuple] = ContextVar("execution_trace_recorders", default=())
 
 
 class _NoopSpan:
@@ -82,9 +83,10 @@ class ExecutionSpan:
 
 
 class _ModelCall:
-    def __init__(self, trace, parent):
+    def __init__(self, trace, parent, generation_name):
         self._trace = trace
         self._parent = parent
+        self._generation_name = generation_name
         self._generation: ExecutionSpan | None = None
 
     @property
@@ -101,7 +103,7 @@ class _ModelCall:
         """Called at the real transport boundary, never during request preview."""
         if self._generation is None:
             self._parent.update(transport_started=True)
-            self._generation = ExecutionSpan(self._trace, "patch.generate", "generation",
+            self._generation = ExecutionSpan(self._trace, self._generation_name, "generation",
                 self._parent._data["attributes"], self._parent.observation_id)
         return self._generation
 
@@ -146,8 +148,13 @@ class ExecutionTrace:
     def _publish(self, observation):
         with self._lock:
             snapshot = deepcopy(observation)
+            if self.root_name == "product.execution":
+                snapshot["attributes"]["trace_scope"] = "product_execution"
             self.context.record_stage(snapshot["name"], snapshot, snapshot["elapsed_ms"])
-            for name, consumer in (("recorder", self.recorder), ("sink", self.sink)):
+            consumers = [("recorder", self.recorder), ("sink", self.sink)]
+            consumers.extend(("recorder", recorder) for trace, recorder in _SCOPED_RECORDERS.get()
+                             if trace is self)
+            for name, consumer in consumers:
                 if consumer is None:
                     continue
                 try:
@@ -155,6 +162,15 @@ class ExecutionTrace:
                     callback(deepcopy(snapshot))
                 except BaseException as error:
                     self._failures[name][type(error).__name__] += 1
+
+    @contextmanager
+    def record_scope(self, recorder):
+        """Subscribe only while this execution segment is active, including its children."""
+        token = _SCOPED_RECORDERS.set((*_SCOPED_RECORDERS.get(), (self, recorder)))
+        try:
+            yield self
+        finally:
+            _SCOPED_RECORDERS.reset(token)
 
     @contextmanager
     def activate(self):
@@ -203,14 +219,14 @@ class ExecutionTrace:
                 _ACTIVE_PARENT.reset(token)
 
     @contextmanager
-    def model_call(self, attributes: Mapping[str, Any] | None = None):
+    def model_call(self, attributes: Mapping[str, Any] | None = None, *, generation_name="patch.generate"):
         if current_trace() is not self:
             with self.activate():
-                with self.model_call(attributes) as call:
+                with self.model_call(attributes, generation_name=generation_name) as call:
                     yield call
             return
         with self._operation("model.request", attributes=attributes) as parent:
-            call = _ModelCall(self, parent)
+            call = _ModelCall(self, parent, generation_name)
             error = None
             try:
                 yield call

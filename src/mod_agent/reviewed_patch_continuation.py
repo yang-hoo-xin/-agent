@@ -293,9 +293,12 @@ def apply_reviewed_patch(*, artifact_store_root, workspace_root, feature_id, run
         raise ValueError("APPLY_DISPLAY_BINDING_REQUIRED")
     observations = {}
     configuration = execution_trace_configuration or PatchExecutionTraceConfiguration()
+    logical_request_id = _retained_trace_request_id(
+        artifact_store_root, feature_id, run_id, displayed_binding.get("journal_sha256"))
     trace = configuration.make_trace(run_id=_apply_run_id(displayed_binding["operation_id"]),
         feature_id=feature_id, artifact_store_root=artifact_store_root,
-        recorder=lambda row: observations.update({row["id"]: row}))
+        recorder=lambda row: observations.update({row["id"]: row}),
+        **({"request_id": logical_request_id} if logical_request_id is not None else {}))
     failure = None
     try:
         with trace.activate():
@@ -325,6 +328,24 @@ def apply_reviewed_patch(*, artifact_store_root, workspace_root, feature_id, run
         with path.open("x", encoding="utf-8") as stream:
             json.dump(result, stream, ensure_ascii=False, sort_keys=True)
     return result
+
+
+def _retained_trace_request_id(store_root, feature_id, run_id, journal_sha256):
+    """Read correlation only from the already displayed exact original journal.
+
+    Old feature-based traces retain that identity; this does not infer a logical
+    task from a newly generated continuation request identifier.
+    """
+    try:
+        document, ref = _read_retained_journal(store_root, feature_id, run_id)
+        _verified_terminal(document, feature_id, run_id)
+        logical = (document.get("execution_trace") or {}).get("logical_request_id")
+        if (isinstance(logical, str) and logical and ref["sha256"] == journal_sha256
+                and logical == document["request_id"]):
+            return logical
+    except Exception:
+        pass
+    return None
 
 
 def _apply_run_id(operation_id):
@@ -430,6 +451,7 @@ def _artifact_reference(reference):
 
 
 def _persist_applied_checkpoint(store, state, binding, source_snapshot, applied_source_root):
+    from src.core.trace.execution_trace import current_trace
     from src.mod_agent.workflow.checkpointing import WorkflowCheckpointStore
 
     state["runtime_summary"]["reviewed_apply"] = {
@@ -437,6 +459,11 @@ def _persist_applied_checkpoint(store, state, binding, source_snapshot, applied_
         "applied_source_root": str(applied_source_root),
         "applied_source_snapshot": _copy_source_snapshot(applied_source_root),
     }
+    trace = current_trace()
+    if trace is not None and "logical_request_id" in trace.context.metadata:
+        state["runtime_summary"]["reviewed_apply"]["trace_correlation"] = {
+            "logical_request_id": trace.context.metadata["logical_request_id"],
+        }
     return WorkflowCheckpointStore(store).create_checkpoint(state,
         interrupt_reason="Approved isolated Apply awaits separate Build authorization.", resume_allowed_fields=())
 
@@ -575,8 +602,11 @@ def continue_reviewed_patch(*, artifact_store_root, checkpoint_ref, resume_paylo
                 "blockers": list(decision.blockers)}
     observations = {}
     configuration = execution_trace_configuration or PatchExecutionTraceConfiguration()
-    trace = configuration.make_trace(run_id=checkpoint["run_id"], feature_id=checkpoint["feature_id"],
-        artifact_store_root=artifact_store_root, recorder=lambda row: observations.update({row["id"]: row}))
+    logical_request_id = (source_binding.get("trace_correlation") or {}).get("logical_request_id")
+    trace = configuration.make_trace(run_id=checkpoint["run_id"] + ":build:" + resume_payload.resume_id,
+        feature_id=checkpoint["feature_id"], artifact_store_root=artifact_store_root,
+        recorder=lambda row: observations.update({row["id"]: row}),
+        **({"request_id": logical_request_id} if logical_request_id is not None else {}))
     build_calls = 0
 
     def bound_build(feature_id, mode):
@@ -714,7 +744,8 @@ def resume_deferred_approval(*, artifact_store_root, checkpoint_ref, resume_payl
 
     observations = {}
     configuration = execution_trace_configuration or PatchExecutionTraceConfiguration()
-    trace = configuration.make_trace(run_id=request.run_id, feature_id=checkpoint_ref.feature_id,
+    trace = configuration.make_trace(run_id=request.run_id + ":approval:" + resume_payload.resume_id,
+        feature_id=checkpoint_ref.feature_id, request_id=request.request_id,
         artifact_store_root=artifact_store_root, recorder=lambda row: observations.update({row["id"]: row}))
     try:
         with trace.activate():

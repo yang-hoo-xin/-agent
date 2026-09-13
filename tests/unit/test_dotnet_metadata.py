@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from src.core.trace.execution_trace import ExecutionTrace
+from src.mod_agent.upstream_trace import payload_sha256
+
 from src.mod_agent.evidence.dotnet_metadata import (
     DotNetMetadataEnrichmentError,
     RunLocalMemberAccessResolver,
@@ -267,11 +270,28 @@ def test_enrichment_binds_source_receiver_and_compiled_member_identity() -> None
         items=(item,),
     )
 
-    enriched = enrich_source_evidence_with_member_accesses(
-        pack,
-        consumer_assembly=Path("Example.dll"),
-        resolver=Resolver(),
-    )
+    trace = ExecutionTrace("member-enrichment-test", "task", "test")
+    with trace.activate():
+        enriched = enrich_source_evidence_with_member_accesses(
+            pack,
+            consumer_assembly=Path("Example.dll"),
+            resolver=Resolver(),
+        )
+        same = enrich_source_evidence_with_member_accesses(
+            enriched, consumer_assembly=Path("Example.dll"), resolver=Resolver())
+    rows = list({stage["data"]["id"]: stage["data"] for stage in trace.context.stages}.values())
+    observations = [row for row in rows if row["name"] == "evidence.member_access_enrich"]
+    first, second = [row["attributes"] for row in observations]
+    assert first["input_payload_sha256"] == payload_sha256(pack.to_artifact_payload())
+    assert first["output_payload_sha256"] == payload_sha256(enriched.to_artifact_payload())
+    assert first["input_member_access_count"] == 0
+    assert first["output_member_access_count"] == first["added_member_access_count"] == 1
+    assert first["removed_member_access_count"] == 0
+    assert second["input_payload_sha256"] == first["output_payload_sha256"]
+    assert second["added_member_access_count"] == second["removed_member_access_count"] == 0
+    assert second["output_payload_sha256"] == payload_sha256(same.to_artifact_payload())
+    assert first["fact_delivery_status"] == "evidence_pack_enriched_model_delivery_unproven"
+    assert not any(row["kind"] == "generation" for row in rows)
 
     fact = enriched.items[0].verified_member_accesses[0]
     assert fact["source_receiver"] == {

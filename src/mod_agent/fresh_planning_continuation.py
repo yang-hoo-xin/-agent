@@ -3275,7 +3275,8 @@ def _run_fresh_patch_continuation_once(
 
     configuration = execution_trace_configuration or PatchExecutionTraceConfiguration()
     trace = configuration.make_trace(run_id=run_id, feature_id=feature_id,
-        artifact_store_root=request.artifact_store_root, recorder=journal.record_observation)
+        artifact_store_root=request.artifact_store_root, recorder=journal.record_observation,
+        **({"request_id": admitted.saved_patch["request_id"]} if admitted.saved_patch is not None else {}))
     try:
         with trace.activate():
             trace.update(artifact_refs=[{"artifact_type": kind, "artifact_hash": ref.artifact_hash}

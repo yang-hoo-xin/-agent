@@ -9,6 +9,11 @@ from copy import deepcopy
 from dataclasses import replace
 from typing import Any, Protocol
 
+from src.core.trace.execution_trace import trace_operation
+from src.mod_agent.upstream_trace import (
+    findings_attributes, material_identities, payload_sha256, update_observation,
+)
+
 from .model_view import API_EVIDENCE_GUIDANCE, api_evidence_model_fields
 from .models import (
     DETERMINISTIC_EVIDENCE_AUTHORITY,
@@ -1188,120 +1193,176 @@ class RequirementCoverageEvidenceProvider:
         provider_failure_diagnostics: list[dict[str, object]] = []
         projection_attempt_audit: list[dict[str, object]] = []
         findings_attempt_audit: list[dict[str, object]] = []
-        if self.semantic_provider is not None:
-            try:
-                projection = self.semantic_provider.project(
-                    feature_data=feature_data,
-                    request=query,
-                )
-            except ValueError as exc:
-                provider_failure_codes.append(str(exc))
-                provider_failure_diagnostics.append(
-                    _projection_rejection_diagnostic(
-                        exc,
-                        bounded_correction_attempts_remaining=0,
-                    )
-                )
-                projection = default_feature_requirement_projection(feature_data)
-            if isinstance(
-                self.semantic_provider,
-                StructuredModelRequirementCoverageProvider,
-            ):
-                projection_attempt_audit = [
-                    dict(item)
-                    for item in self.semantic_provider.projection_attempt_audit
-                ]
-        elif self.projection_factory is not None:
-            projection = self.projection_factory(feature_data)
-        else:
-            projection = default_feature_requirement_projection(feature_data)
-        materialized = materialize_requirement_coverage_projection(
-            feature_data=feature_data,
-            request=query,
-            projection=projection,
-        )
-        retrieved = self.source_provider.collect_query_set(
-            queries=tuple(dict(item) for item in materialized["queries"]),
-            search_root=search_root,
-            max_items=max(1, len(materialized["queries"])),
-        )
-        if self.source_augmentation_factory is not None:
-            augmentation = self.source_augmentation_factory(
-                deepcopy(materialized),
-                deepcopy(retrieved),
-            )
-            retrieved = _merge_source_augmentation(
-                retrieved_pack=retrieved,
-                augmentation_pack=_strict_source_augmentation(
-                    augmentation,
-                    expected_query=query,
-                ),
-            )
-        if self.semantic_provider is not None:
-            if provider_failure_codes:
-                findings = {"findings": []}
-            else:
+        with trace_operation("requirements.projection", attributes={
+            "feature_payload_sha256": payload_sha256(feature_data),
+            "input_payload_sha256": payload_sha256({"feature": feature_data, "request": query}),
+            "input_role": "projection_owner_input",
+            "selection_mode": ("model" if self.semantic_provider is not None else
+                               "injected" if self.projection_factory is not None else "deterministic"),
+        }) as projection_span:
+            if self.semantic_provider is not None:
                 try:
-                    findings = self.semantic_provider.findings(
-                        materialized_projection=materialized,
-                        retrieved_pack=retrieved,
+                    projection = self.semantic_provider.project(
+                        feature_data=feature_data,
                         request=query,
                     )
                 except ValueError as exc:
                     provider_failure_codes.append(str(exc))
-                    findings = {"findings": []}
-            if isinstance(
-                self.semantic_provider,
-                StructuredModelRequirementCoverageProvider,
-            ):
-                findings_attempt_audit = [
-                    dict(item)
-                    for item in self.semantic_provider.findings_attempt_audit
-                ]
-        elif self.findings_factory is not None:
-            findings = self.findings_factory(materialized, retrieved)
-        else:
-            findings = {"findings": []}
-        pack = build_requirement_coverage_pack(
-            query=query,
-            materialized_projection=materialized,
-            retrieved_pack=retrieved,
-            findings=findings,
-        )
-        if (
-            projection_attempt_audit
-            or findings_attempt_audit
-            or provider_failure_diagnostics
-        ):
-            pack = replace(
-                pack,
-                budget_summary={
-                    **pack.budget_summary,
-                    "requirement_projection_attempt_audit": (
-                        projection_attempt_audit
-                    ),
-                    "semantic_provider_failure_diagnostics": (
-                        provider_failure_diagnostics
-                    ),
-                    "requirement_findings_attempt_audit": (
-                        findings_attempt_audit
-                    ),
-                },
+                    provider_failure_diagnostics.append(
+                        _projection_rejection_diagnostic(
+                            exc,
+                            bounded_correction_attempts_remaining=0,
+                        )
+                    )
+                    projection = default_feature_requirement_projection(feature_data)
+                if isinstance(
+                    self.semantic_provider,
+                    StructuredModelRequirementCoverageProvider,
+                ):
+                    projection_attempt_audit = [
+                        dict(item)
+                        for item in self.semantic_provider.projection_attempt_audit
+                    ]
+            elif self.projection_factory is not None:
+                projection = self.projection_factory(feature_data)
+            else:
+                projection = default_feature_requirement_projection(feature_data)
+            materialized = materialize_requirement_coverage_projection(
+                feature_data=feature_data,
+                request=query,
+                projection=projection,
             )
-        if not provider_failure_codes:
-            return pack
-        return replace(
-            pack,
-            budget_summary={
-                **pack.budget_summary,
-                "semantic_provider_failure_codes": provider_failure_codes,
-                "semantic_provider_failed_closed": True,
-            },
-            message=(
-                "The bounded semantic provider failed validation; deterministic "
-                "fallback retained observations without Patch authority."
-            ),
-        )
+            update_observation(projection_span,
+                structured_output_sha256=payload_sha256(projection),
+                materialized_projection_sha256=payload_sha256(materialized),
+                requirement_count=len(materialized["requirements"]),
+                relation_count=len(materialized["relations"]),
+                query_count=len(materialized["queries"]),
+                projection_fallback_used=bool(provider_failure_codes),
+                decision_summary_origin="deterministic_structured_result",
+                decision_summary=f"需求物化：{len(materialized['requirements'])} 项需求、{len(materialized['relations'])} 项关系、{len(materialized['queries'])} 条检索查询。",
+                reason_status="reason_unavailable",
+            )
+        with trace_operation("evidence.retrieve", attributes={
+            "input_payload_sha256": payload_sha256(materialized["queries"]),
+            "materialized_projection_sha256": payload_sha256(materialized),
+            "query_count": len(materialized["queries"]),
+            "input_role": "retrieval_query_set",
+        }) as retrieval_span:
+            retrieved = self.source_provider.collect_query_set(
+                queries=tuple(dict(item) for item in materialized["queries"]),
+                search_root=search_root,
+                max_items=max(1, len(materialized["queries"])),
+            )
+            update_observation(retrieval_span,
+                evidence_payload_sha256=payload_sha256(retrieved.to_artifact_payload()),
+                produced_materials=material_identities(retrieved.items),
+                evidence_item_count=len(retrieved.items),
+                query_execution=deepcopy(retrieved.budget_summary.get("per_query_execution", [])),
+                decision_summary_origin="deterministic_structured_result",
+                decision_summary=f"检索返回 {len(retrieved.items)} 份材料；是否足够由后续证据判断决定。",
+            )
+        if self.source_augmentation_factory is not None:
+            with trace_operation("evidence.augment", attributes={
+                "input_payload_sha256": payload_sha256(materialized),
+                "evidence_payload_sha256": payload_sha256(retrieved.to_artifact_payload()),
+                "consumed_materials": material_identities(retrieved.items),
+                "input_role": "augmentation_owner_input",
+            }) as augmentation_span:
+                augmentation = self.source_augmentation_factory(
+                    deepcopy(materialized),
+                    deepcopy(retrieved),
+                )
+                retrieved = _merge_source_augmentation(
+                    retrieved_pack=retrieved,
+                    augmentation_pack=_strict_source_augmentation(
+                        augmentation,
+                        expected_query=query,
+                    ),
+                )
+                update_observation(augmentation_span,
+                    produced_materials=material_identities(retrieved.items),
+                    evidence_item_count=len(retrieved.items),
+                    output_payload_sha256=payload_sha256(retrieved.to_artifact_payload()),
+                )
+        with trace_operation("requirements.coverage", attributes={
+            "input_payload_sha256": payload_sha256(materialized),
+            "materialized_projection_sha256": payload_sha256(materialized),
+            "evidence_payload_sha256": payload_sha256(retrieved.to_artifact_payload()),
+            "consumed_materials": material_identities(retrieved.items),
+            "input_role": "findings_owner_input",
+            "findings_invocation_performed": False,
+            "selection_mode": ("model" if self.semantic_provider is not None else
+                               "injected" if self.findings_factory is not None else "unavailable"),
+        }) as findings_span:
+            if self.semantic_provider is not None:
+                if provider_failure_codes:
+                    findings = {"findings": []}
+                else:
+                    try:
+                        update_observation(findings_span, findings_invocation_performed=True)
+                        findings = self.semantic_provider.findings(
+                            materialized_projection=materialized,
+                            retrieved_pack=retrieved,
+                            request=query,
+                        )
+                    except ValueError as exc:
+                        provider_failure_codes.append(str(exc))
+                        findings = {"findings": []}
+                if isinstance(
+                    self.semantic_provider,
+                    StructuredModelRequirementCoverageProvider,
+                ):
+                    findings_attempt_audit = [
+                        dict(item)
+                        for item in self.semantic_provider.findings_attempt_audit
+                    ]
+            elif self.findings_factory is not None:
+                update_observation(findings_span, findings_invocation_performed=True)
+                findings = self.findings_factory(materialized, retrieved)
+            else:
+                findings = {"findings": []}
+            pack = build_requirement_coverage_pack(
+                query=query,
+                materialized_projection=materialized,
+                retrieved_pack=retrieved,
+                findings=findings,
+            )
+            if (
+                projection_attempt_audit
+                or findings_attempt_audit
+                or provider_failure_diagnostics
+            ):
+                pack = replace(
+                    pack,
+                    budget_summary={
+                        **pack.budget_summary,
+                        "requirement_projection_attempt_audit": projection_attempt_audit,
+                        "semantic_provider_failure_diagnostics": provider_failure_diagnostics,
+                        "requirement_findings_attempt_audit": findings_attempt_audit,
+                    },
+                )
+            if provider_failure_codes:
+                pack = replace(
+                    pack,
+                    budget_summary={
+                        **pack.budget_summary,
+                        "semantic_provider_failure_codes": provider_failure_codes,
+                        "semantic_provider_failed_closed": True,
+                    },
+                    message=(
+                        "The bounded semantic provider failed validation; deterministic "
+                        "fallback retained observations without Patch authority."
+                    ),
+                )
+            update_observation(findings_span, **findings_attributes(findings),
+                readiness=pack.readiness,
+                can_generate_patch=pack.can_generate_patch,
+                decision="patch_allowed" if pack.can_generate_patch else "patch_blocked",
+                output_payload_sha256=payload_sha256(pack.to_artifact_payload()),
+                provider_failure_count=len(provider_failure_codes),
+            )
+        return pack
 
 
 def make_requirement_coverage_evidence_provider(

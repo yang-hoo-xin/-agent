@@ -16,6 +16,7 @@ from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
 from src.libs.llm.base_llm import BaseLLM, ChatResponse, Message
+from src.libs.llm.transport_observation import transport_started, transport_response_received
 
 
 def ollama_provider_body_utf8_policy_projection(
@@ -854,7 +855,9 @@ class OllamaLLM(BaseLLM):
                             content=frozen_request_bytes,
                             headers=dict(headers),
                         )
+                    transport_started()
                     with stream_context as response:
+                        transport_response_received(http_status=response.status_code, response_complete=False)
                         if response.status_code != 200:
                             try:
                                 response.read()
@@ -870,10 +873,13 @@ class OllamaLLM(BaseLLM):
                                     "http_status": response.status_code,
                                 },
                             )
-                        return self._collect_streaming_response(
+                        result = self._collect_streaming_response(
                             response,
                             activity_recorder=stream_activity_recorder,
                         )
+                        transport_response_received(http_status=response.status_code, response_complete=True)
+                        return result
+                transport_started()
                 if frozen_request_bytes is None:
                     response = client.post(url, json=payload, headers=dict(headers))
                 else:
@@ -882,6 +888,7 @@ class OllamaLLM(BaseLLM):
                         content=frozen_request_bytes,
                         headers=dict(headers),
                     )
+                transport_response_received(http_status=response.status_code, response_complete=True)
                 
                 if response.status_code != 200:
                     error_detail = self._parse_error_response(response)

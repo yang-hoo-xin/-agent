@@ -100,7 +100,9 @@ class Transport:
         elif name == "listObservations":
             assert args["traceId"] == TRACE and args["limit"] == 100
             assert not {"input", "output", "*"}.intersection(args["fields"])
-            assert set(args["expandMetadataKeys"]) == {"artifact_refs", "consumed_tool_results", "tool_call_id_sha256s"}
+            assert set(args["expandMetadataKeys"]) == {"artifact_refs", "consumed_tool_results", "tool_call_id_sha256s",
+                "consumed_materials", "produced_materials", "selected_evidence_id_sha256s", "relationship_counts",
+                "decision_summary", "local_detail_refs", "terminal_record_ref"}
             result = {"data": [generation()], "meta": {"cursor": "next"} if not args.get("cursor") or self.repeat_cursor else {}}
         elif name == "listScores":
             assert args["traceId"] == [TRACE]

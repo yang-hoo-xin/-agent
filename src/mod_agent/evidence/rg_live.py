@@ -8,6 +8,9 @@ import subprocess
 import time
 from pathlib import Path
 
+from src.core.trace.execution_trace import trace_operation
+from src.mod_agent.upstream_trace import material_identities, payload_sha256, update_observation
+
 from .models import (
     DETERMINISTIC_EVIDENCE_AUTHORITY,
     EvidenceItem,
@@ -71,6 +74,29 @@ class RgLiveEvidenceProvider:
         source_identity_query: str | None = None,
         max_items: int = 1,
     ) -> EvidencePack:
+        with trace_operation("evidence.source_query", kind="tool", attributes={
+            "input_payload_sha256": payload_sha256({
+                "query": query, "search_root": str(search_root),
+                "source_identity_query": source_identity_query, "max_items": max_items,
+            }),
+            "query_sha256": hashlib.sha256(query.encode("utf-8")).hexdigest(),
+            "tool_dispatch_performed": False,
+        }) as span:
+            result = self._collect(query=query, search_root=search_root,
+                source_identity_query=source_identity_query, max_items=max_items, span=span)
+            update_observation(span,
+                produced_materials=material_identities(result.items),
+                evidence_item_count=len(result.items),
+                output_payload_sha256=payload_sha256(result.to_artifact_payload()),
+                decision_summary_origin="deterministic_structured_result",
+                decision_summary=f"当前源码查询返回 {len(result.items)} 份材料。",
+            )
+            return result
+
+    def _collect(
+        self, *, query: str, search_root: str | Path,
+        source_identity_query: str | None, max_items: int, span,
+    ) -> EvidencePack:
         started = time.perf_counter()
         if (
             isinstance(max_items, bool)
@@ -82,12 +108,15 @@ class RgLiveEvidenceProvider:
         try:
             root.relative_to(self.workspace_root)
         except ValueError as exc:
+            update_observation(span, retrieval_status="source_scope_rejected")
             return EvidencePack.empty(query=query, reason=f"Search root escapes workspace: {exc}")
         if not root.is_dir():
+            update_observation(span, retrieval_status="source_root_missing")
             return EvidencePack.empty(query=query, reason="Configured target source root is missing.")
 
         tokens = _query_tokens(query)
         if not tokens:
+            update_observation(span, retrieval_status="query_terms_missing")
             return EvidencePack.empty(query=query, reason="Request has no usable rg search terms.")
         pattern = "|".join(re.escape(token) for token in tokens)
         command = (
@@ -101,6 +130,7 @@ class RgLiveEvidenceProvider:
             pattern,
             str(root),
         )
+        update_observation(span, tool_dispatch_attempted=True)
         completed = subprocess.run(
             command,
             cwd=self.workspace_root,
@@ -110,13 +140,16 @@ class RgLiveEvidenceProvider:
             errors="replace",
             check=False,
         )
+        update_observation(span, tool_dispatch_performed=True)
         if completed.returncode not in {0, 1}:
+            update_observation(span, retrieval_status="tool_failed", tool_exit_code=completed.returncode)
             return EvidencePack.empty(
                 query=query,
                 reason=f"rg failed with exit code {completed.returncode}: {completed.stderr.strip()}",
             )
         matches = _parse_matches(completed.stdout)
         if not matches:
+            update_observation(span, retrieval_status="no_matches", tool_exit_code=completed.returncode)
             return EvidencePack.empty(query=query, reason="rg found no live C# source matches.")
 
         requested_filename = _requested_csharp_filename(
@@ -135,6 +168,7 @@ class RgLiveEvidenceProvider:
                 )
             )
             if len(requested_paths) != 1:
+                update_observation(span, retrieval_status="source_identity_ambiguous")
                 return EvidencePack.empty(
                     query=query,
                     reason=(
@@ -148,6 +182,7 @@ class RgLiveEvidenceProvider:
                 )
             requested_path = requested_paths[0]
             if not any(path == requested_path for path, _, _ in matches):
+                update_observation(span, retrieval_status="requested_source_no_matches")
                 return EvidencePack.empty(
                     query=query,
                     reason=(
@@ -163,6 +198,7 @@ class RgLiveEvidenceProvider:
                 max_items=max_items,
             )
         except UnicodeDecodeError as exc:
+            update_observation(span, retrieval_status="source_decode_failed")
             return EvidencePack.empty(
                 query=query,
                 reason=f"Selected live C# source is not valid UTF-8: {exc}",
@@ -277,6 +313,7 @@ class RgLiveEvidenceProvider:
                 )
             )
         elapsed_ms = (time.perf_counter() - started) * 1000.0
+        update_observation(span, retrieval_status="source_observations_returned", tool_exit_code=completed.returncode)
         coverage_blocker = {
             "code": "RG_LIVE_REQUIREMENT_COVERAGE_UNPROVEN",
             "message": (

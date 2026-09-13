@@ -208,7 +208,10 @@ class OpenAILLM(BaseLLM):
         
         try:
             with httpx.Client(timeout=60.0) as client:
+                from src.libs.llm.transport_observation import transport_started, transport_response_received
+                transport_started()
                 response = client.post(url, json=payload, headers=headers)
+                transport_response_received(http_status=response.status_code, response_complete=True)
                 
                 if response.status_code != 200:
                     error_detail = self._parse_error_response(response)

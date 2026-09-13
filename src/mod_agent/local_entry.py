@@ -6180,6 +6180,13 @@ def _persist_pre_graph_failure(
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        with trace_operation("preflight.failure", kind="event", attributes={
+            "failure_stage": failure_stage, "exception_type": type(error).__name__,
+            "local_detail_refs": {"failure": {"path": str(failure_path),
+                "sha256": hashlib.sha256(failure_bytes).hexdigest()}},
+            "timing_scope": "failure_decision_record_only",
+        }):
+            pass
     except OSError:
         return
 
@@ -6195,20 +6202,24 @@ def _run_pre_graph_step(
     model_admission: Mapping[str, Any],
     extra: Mapping[str, Any] | None = None,
 ) -> Any:
-    try:
-        return action()
-    except Exception as exc:
-        _persist_pre_graph_failure(
-            run_root=run_root,
-            run_id=run_id,
-            request_id=request_id,
-            failure_stage=failure_stage,
-            error=exc,
-            source_revision_binding=source_revision_binding,
-            model_admission=model_admission,
-            extra=extra,
-        )
-        raise
+    with trace_operation(failure_stage, attributes={"execution_phase": "pre_graph"}) as observation:
+        try:
+            observation.update(callback_invoked=True)
+            result = action()
+            observation.update(callback_returned=True)
+            return result
+        except Exception as exc:
+            _persist_pre_graph_failure(
+                run_root=run_root,
+                run_id=run_id,
+                request_id=request_id,
+                failure_stage=failure_stage,
+                error=exc,
+                source_revision_binding=source_revision_binding,
+                model_admission=model_admission,
+                extra=extra,
+            )
+            raise
 
 
 def _persist_graph_terminal_result(
@@ -6756,477 +6767,359 @@ def run_local_request(
             "Choose either an injected compiled artifact verifier or a run-local "
             "inspection profile."
         )
-    settings = load_settings(settings_path)
-    external_assembly = None
-    if not local_ollama:
-        from src.mod_agent.external_patch import validate_run_request_external_profile
-        validate_run_request_external_profile(external_patch_profile, model=settings.llm.model,
-            base_url=os.environ.get(base_url_env) or settings.llm.base_url, credential_env=api_key_env)
-    runtime_admission = _runtime_admission_record(
-        settings,
-        run_gtfo_runtime=run_gtfo_runtime,
-        allow_game_launch=allow_game_launch,
-        runtime_plugin_destination=runtime_plugin_destination,
-        allow_game_directory_write=allow_game_directory_write,
-    )
-    local_model_identity: dict[str, Any] | None = None
-    repair_local_model_identity: dict[str, Any] | None = None
-    local_ollama_server_version: str | None = None
-    repair_llm: Any | None = None
-    identity_reader = ollama_model_identity_reader or _read_ollama_model_identity
-    server_version_reader = (
-        ollama_server_version_reader or _read_ollama_server_version
-    )
-    api_key: str | None = None
-    if local_ollama:
-        if not isinstance(ollama_model, str) or not ollama_model.strip():
-            raise LocalEntryError(
-                "run-request --local-ollama requires an exact --ollama-model "
-                "read from /api/tags."
-            )
-        if ollama_max_output_tokens <= 0:
-            raise LocalEntryError("--ollama-max-output-tokens must be positive.")
-        if ollama_context_window is None:
-            raise LocalEntryError(
-                "run-request --local-ollama requires an explicit "
-                "--ollama-context-window."
-            )
-        if (
-            isinstance(ollama_context_window, bool)
-            or not isinstance(ollama_context_window, int)
-            or ollama_context_window <= 0
-        ):
-            raise LocalEntryError("--ollama-context-window must be a positive integer.")
-        if ollama_context_window <= ollama_max_output_tokens:
-            raise LocalEntryError(
-                "--ollama-context-window must exceed "
-                "--ollama-max-output-tokens."
-            )
-        try:
-            llm_base_url = validate_loopback_http_base_url(ollama_base_url)
-        except ValueError as exc:
-            raise LocalEntryError(str(exc)) from exc
-        local_model_identity = identity_reader(llm_base_url, ollama_model)
-        _validate_ollama_model_identity(
-            local_model_identity,
-            expected_base_url=llm_base_url,
-            expected_model=ollama_model,
-        )
-        local_model_context_limit = _validate_ollama_context_window(
-            local_model_identity,
-            requested_context_window=ollama_context_window,
-        )
-        local_ollama_server_version = server_version_reader(llm_base_url)
-        settings = replace(
-            settings,
-            llm=replace(
-                settings.llm,
-                provider="ollama",
-                model=ollama_model,
-                max_tokens=ollama_max_output_tokens,
-                api_key=None,
-                base_url=llm_base_url,
-            ),
-        )
-        try:
-            llm_options: dict[str, Any] = {
-                "base_url": llm_base_url,
-                "context_window": ollama_context_window,
-            }
-            if ollama_timeout_seconds is not None:
-                llm_options["timeout"] = float(ollama_timeout_seconds)
-            llm = LLMFactory.create(
-                settings,
-                **llm_options,
-            )
-        except Exception as exc:
-            raise LocalEntryError(
-                f"Local Ollama initialization failed: {type(exc).__name__}."
-            ) from exc
-        if not isinstance(llm, OllamaLLM):
-            raise LocalEntryError("Local model selection did not create OllamaLLM.")
-        if repair_ollama_model is not None:
-            repair_local_model_identity = identity_reader(
-                llm_base_url,
-                repair_ollama_model,
-            )
-            _validate_ollama_model_identity(
-                repair_local_model_identity,
-                expected_base_url=llm_base_url,
-                expected_model=repair_ollama_model,
-            )
-            _validate_ollama_context_window(
-                repair_local_model_identity,
-                requested_context_window=ollama_context_window,
-            )
-            repair_settings = replace(
-                settings,
-                llm=replace(
-                    settings.llm,
-                    provider="ollama",
-                    model=repair_ollama_model,
-                    max_tokens=ollama_max_output_tokens,
-                    api_key=None,
-                    base_url=llm_base_url,
-                ),
-            )
-            try:
-                repair_llm_options: dict[str, Any] = {
-                    "base_url": llm_base_url,
-                    "context_window": ollama_context_window,
-                }
-                if repair_ollama_timeout_seconds is not None:
-                    repair_llm_options["timeout"] = float(
-                        repair_ollama_timeout_seconds
-                    )
-                repair_llm = LLMFactory.create(
-                    repair_settings,
-                    **repair_llm_options,
-                )
-            except Exception as exc:
-                raise LocalEntryError(
-                    "Local Repair Ollama initialization failed: "
-                    f"{type(exc).__name__}."
-                ) from exc
-            if not isinstance(repair_llm, OllamaLLM):
-                raise LocalEntryError(
-                    "Local Repair model selection did not create OllamaLLM."
-                )
-        source_disclosure = local_no_external_disclosure_record()
-        model_admission = local_model_admission_record(
-            model_identity=local_model_identity,
-            provider_adapter=f"{type(llm).__module__}.{type(llm).__qualname__}",
-        )
-    else:
-        local_model_context_limit = None
-        api_key = os.environ.get(api_key_env)
-        if not api_key:
-            raise LocalEntryError(
-                f"Required API key environment variable is missing: {api_key_env}"
-            )
-        llm_base_url = os.environ.get(base_url_env) or settings.llm.base_url
-        if not llm_base_url:
-            raise LocalEntryError(
-                "Required LLM base URL is missing from settings and environment: "
-                f"{base_url_env}"
-            )
-        _sanitized_endpoint_url(llm_base_url)
-        llm = LLMFactory.create(
-            settings,
-            api_key=api_key,
-            base_url=llm_base_url,
-        )
-    started_at = datetime.now(timezone.utc).isoformat()
-    if not local_ollama:
-        from src.mod_agent.external_patch import ExternalPatchError, RunRequestExternalAssembly
-        if llm.model != external_patch_profile.model or getattr(llm, "base_url", None) != external_patch_profile.base_url:
-            raise ExternalPatchError("EXTERNAL_PATCH_UPSTREAM_LLM_DESTINATION_MISMATCH")
-        source_disclosure = _source_disclosure_record(
-            provider=external_patch_profile.to_dict()["provider"],
-            model=settings.llm.model,
-            base_url=llm_base_url,
-            approved_at=started_at,
-            approval_id=source_disclosure_approval_id or "source_disclosure_" + uuid4().hex,
-            provider_adapter=f"{type(llm).__module__}.{type(llm).__qualname__}",
-            destination_url=(
-                f"{str(getattr(llm, 'base_url')).rstrip('/')}/chat/completions"
-                if getattr(llm, "base_url", None)
-                else None
-            ),
-        )
-        model_admission = _external_model_admission_record(source_disclosure)
-        external_assembly = RunRequestExternalAssembly(profile=external_patch_profile,
-            source_disclosure=source_disclosure)
-
-    ollama_patch_generation_profile = (
-        {
-            "stream": False,
-            "think": False,
-            "execution_core": "shared_patch_worker",
-            "tools_sent": None,
-            "native_json_schema_required": None,
-            "request_mode_scope": "per_turn_worker_receipt",
-            "output_budget": ollama_max_output_tokens,
-            "context_window": ollama_context_window,
-            "model_context_limit": local_model_context_limit,
-            "pre_call_context_admission": (
-                "provider_body_utf8_proxy_plus_output_budget_v1"
-            ),
-            "exact_prompt_tokens_available_pre_call": False,
-            "timeout_seconds": getattr(llm, "timeout", None),
-            "trust_environment": False,
-            "follow_redirects": False,
-            "automatic_provider_fallback": False,
-            "automatic_retry": False,
-            "model_switching": False,
-            "diagnostic_content_max_utf8_bytes": (
-                LOCAL_DIAGNOSTIC_CONTENT_MAX_BYTES
-            ),
-        }
-        if local_ollama
-        else None
-    )
-
-    source = Path(target_project).resolve()
-    if not source.is_dir() or not any(source.glob("*.csproj")):
-        raise LocalEntryError("Target project must be an existing directory with a .csproj file.")
-    initial_source_snapshot = _source_snapshot(source)
-    initial_source_snapshot_sha256 = _source_snapshot_sha256(initial_source_snapshot)
-    _verify_source_revision_binding(
-        source=source,
-        snapshot=initial_source_snapshot,
-        snapshot_sha256=initial_source_snapshot_sha256,
-        binding=source_revision_binding,
-        strict_git_admission=source_git_admission,
-    )
     base = Path(workspace_base).resolve()
-    base.mkdir(parents=True, exist_ok=True)
     if run_id is None:
         run_id = uuid4().hex[:8]
         request_id = f"request_{run_id}"
     assert request_id is not None
     run_root = (base / run_id).resolve()
-    run_root.mkdir(parents=True)
-    initial_manifest = {
-        "run_id": run_id,
-        "request_id": request_id,
-        "status": "admitted",
-        "started_at": started_at,
-        "request": description,
-        "target_source": str(source),
-        "target_source_provenance": "externally_produced_read_only_input",
-        "isolated_workspace": str(run_root),
-        "source_snapshot": initial_source_snapshot,
-        "source_snapshot_sha256": initial_source_snapshot_sha256,
-        "source_revision_binding": dict(source_revision_binding or {}),
-        "model": settings.llm.model,
-        "model_admission": model_admission,
-        "local_model_identity": local_model_identity,
-        "repair_local_model_identity": repair_local_model_identity,
-        "ollama_server_version": local_ollama_server_version,
-        "ollama_patch_generation_profile": ollama_patch_generation_profile,
-        "source_disclosure": source_disclosure,
-        "runtime_admission": runtime_admission,
-        "compiled_artifact_inspection_profile": (
-            compiled_artifact_inspection_profile.to_dict()
-            if compiled_artifact_inspection_profile is not None
-            else None
-        ),
-        "model_call_count": 0,
-        "graph_invoked": False,
-        "patch_payload_parser_entered": False,
-        "actual_write_performed": False,
-        "game_folder_build_binding": (
-            game_folder_build_binding.to_dict()
-            if game_folder_build_binding is not None
-            else None
-        ),
-        "game_folder_build_dependency": None,
-    }
-    (run_root / "run_manifest.json").write_text(
-        json.dumps(initial_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    from src.mod_agent.patch_execution_trace import (
+        attach_product_trace_manifest, preserve_product_trace_projection,
+        product_execution_trace, product_trace_identity,
     )
-    game_folder_dependency: dict[str, object] | None = None
-    isolated_game_folder_dir: Path | None = None
-    if game_folder_build_binding is not None:
-        game_folder_source_identity = _run_pre_graph_step(
-            failure_stage="build_dependency_snapshot",
-            action=lambda: _validate_game_folder_build_binding(
-                game_folder_build_binding,
-                canonical_source_root=source,
+
+    with product_execution_trace(
+        run_root=run_root, run_id=run_id, request_id=request_id,
+        artifact_store_root=run_root / "a", configuration=execution_trace_configuration,
+        buffer_until_manifest=True,
+    ) as product_trace:
+        with trace_operation("environment.settings", attributes={"execution_phase": "pre_graph"}):
+            settings = load_settings(settings_path)
+        with trace_operation("environment.prepare", attributes={"execution_phase": "pre_graph"}):
+            external_assembly = None
+            if not local_ollama:
+                from src.mod_agent.external_patch import validate_run_request_external_profile
+                validate_run_request_external_profile(external_patch_profile, model=settings.llm.model,
+                    base_url=os.environ.get(base_url_env) or settings.llm.base_url, credential_env=api_key_env)
+            runtime_admission = _runtime_admission_record(
+                settings,
+                run_gtfo_runtime=run_gtfo_runtime,
+                allow_game_launch=allow_game_launch,
+                runtime_plugin_destination=runtime_plugin_destination,
+                allow_game_directory_write=allow_game_directory_write,
+            )
+            local_model_identity: dict[str, Any] | None = None
+            repair_local_model_identity: dict[str, Any] | None = None
+            local_ollama_server_version: str | None = None
+            repair_llm: Any | None = None
+            identity_reader = ollama_model_identity_reader or _read_ollama_model_identity
+            server_version_reader = (
+                ollama_server_version_reader or _read_ollama_server_version
+            )
+            api_key: str | None = None
+            if local_ollama:
+                if not isinstance(ollama_model, str) or not ollama_model.strip():
+                    raise LocalEntryError(
+                        "run-request --local-ollama requires an exact --ollama-model "
+                        "read from /api/tags."
+                    )
+                if ollama_max_output_tokens <= 0:
+                    raise LocalEntryError("--ollama-max-output-tokens must be positive.")
+                if ollama_context_window is None:
+                    raise LocalEntryError(
+                        "run-request --local-ollama requires an explicit "
+                        "--ollama-context-window."
+                    )
+                if (
+                    isinstance(ollama_context_window, bool)
+                    or not isinstance(ollama_context_window, int)
+                    or ollama_context_window <= 0
+                ):
+                    raise LocalEntryError("--ollama-context-window must be a positive integer.")
+                if ollama_context_window <= ollama_max_output_tokens:
+                    raise LocalEntryError(
+                        "--ollama-context-window must exceed "
+                        "--ollama-max-output-tokens."
+                    )
+                try:
+                    llm_base_url = validate_loopback_http_base_url(ollama_base_url)
+                except ValueError as exc:
+                    raise LocalEntryError(str(exc)) from exc
+                local_model_identity = identity_reader(llm_base_url, ollama_model)
+                _validate_ollama_model_identity(
+                    local_model_identity,
+                    expected_base_url=llm_base_url,
+                    expected_model=ollama_model,
+                )
+                local_model_context_limit = _validate_ollama_context_window(
+                    local_model_identity,
+                    requested_context_window=ollama_context_window,
+                )
+                local_ollama_server_version = server_version_reader(llm_base_url)
+                settings = replace(
+                    settings,
+                    llm=replace(
+                        settings.llm,
+                        provider="ollama",
+                        model=ollama_model,
+                        max_tokens=ollama_max_output_tokens,
+                        api_key=None,
+                        base_url=llm_base_url,
+                    ),
+                )
+                try:
+                    llm_options: dict[str, Any] = {
+                        "base_url": llm_base_url,
+                        "context_window": ollama_context_window,
+                    }
+                    if ollama_timeout_seconds is not None:
+                        llm_options["timeout"] = float(ollama_timeout_seconds)
+                    llm = LLMFactory.create(
+                        settings,
+                        **llm_options,
+                    )
+                except Exception as exc:
+                    raise LocalEntryError(
+                        f"Local Ollama initialization failed: {type(exc).__name__}."
+                    ) from exc
+                if not isinstance(llm, OllamaLLM):
+                    raise LocalEntryError("Local model selection did not create OllamaLLM.")
+                if repair_ollama_model is not None:
+                    repair_local_model_identity = identity_reader(
+                        llm_base_url,
+                        repair_ollama_model,
+                    )
+                    _validate_ollama_model_identity(
+                        repair_local_model_identity,
+                        expected_base_url=llm_base_url,
+                        expected_model=repair_ollama_model,
+                    )
+                    _validate_ollama_context_window(
+                        repair_local_model_identity,
+                        requested_context_window=ollama_context_window,
+                    )
+                    repair_settings = replace(
+                        settings,
+                        llm=replace(
+                            settings.llm,
+                            provider="ollama",
+                            model=repair_ollama_model,
+                            max_tokens=ollama_max_output_tokens,
+                            api_key=None,
+                            base_url=llm_base_url,
+                        ),
+                    )
+                    try:
+                        repair_llm_options: dict[str, Any] = {
+                            "base_url": llm_base_url,
+                            "context_window": ollama_context_window,
+                        }
+                        if repair_ollama_timeout_seconds is not None:
+                            repair_llm_options["timeout"] = float(
+                                repair_ollama_timeout_seconds
+                            )
+                        repair_llm = LLMFactory.create(
+                            repair_settings,
+                            **repair_llm_options,
+                        )
+                    except Exception as exc:
+                        raise LocalEntryError(
+                            "Local Repair Ollama initialization failed: "
+                            f"{type(exc).__name__}."
+                        ) from exc
+                    if not isinstance(repair_llm, OllamaLLM):
+                        raise LocalEntryError(
+                            "Local Repair model selection did not create OllamaLLM."
+                        )
+                source_disclosure = local_no_external_disclosure_record()
+                model_admission = local_model_admission_record(
+                    model_identity=local_model_identity,
+                    provider_adapter=f"{type(llm).__module__}.{type(llm).__qualname__}",
+                )
+            else:
+                local_model_context_limit = None
+                api_key = os.environ.get(api_key_env)
+                if not api_key:
+                    raise LocalEntryError(
+                        f"Required API key environment variable is missing: {api_key_env}"
+                    )
+                llm_base_url = os.environ.get(base_url_env) or settings.llm.base_url
+                if not llm_base_url:
+                    raise LocalEntryError(
+                        "Required LLM base URL is missing from settings and environment: "
+                        f"{base_url_env}"
+                    )
+                _sanitized_endpoint_url(llm_base_url)
+                llm = LLMFactory.create(
+                    settings,
+                    api_key=api_key,
+                    base_url=llm_base_url,
+                )
+            started_at = datetime.now(timezone.utc).isoformat()
+            if not local_ollama:
+                from src.mod_agent.external_patch import ExternalPatchError, RunRequestExternalAssembly
+                if llm.model != external_patch_profile.model or getattr(llm, "base_url", None) != external_patch_profile.base_url:
+                    raise ExternalPatchError("EXTERNAL_PATCH_UPSTREAM_LLM_DESTINATION_MISMATCH")
+                source_disclosure = _source_disclosure_record(
+                    provider=external_patch_profile.to_dict()["provider"],
+                    model=settings.llm.model,
+                    base_url=llm_base_url,
+                    approved_at=started_at,
+                    approval_id=source_disclosure_approval_id or "source_disclosure_" + uuid4().hex,
+                    provider_adapter=f"{type(llm).__module__}.{type(llm).__qualname__}",
+                    destination_url=(
+                        f"{str(getattr(llm, 'base_url')).rstrip('/')}/chat/completions"
+                        if getattr(llm, "base_url", None)
+                        else None
+                    ),
+                )
+                model_admission = _external_model_admission_record(source_disclosure)
+                external_assembly = RunRequestExternalAssembly(profile=external_patch_profile,
+                    source_disclosure=source_disclosure)
+
+            ollama_patch_generation_profile = (
+                {
+                    "stream": False,
+                    "think": False,
+                    "execution_core": "shared_patch_worker",
+                    "tools_sent": None,
+                    "native_json_schema_required": None,
+                    "request_mode_scope": "per_turn_worker_receipt",
+                    "output_budget": ollama_max_output_tokens,
+                    "context_window": ollama_context_window,
+                    "model_context_limit": local_model_context_limit,
+                    "pre_call_context_admission": (
+                        "provider_body_utf8_proxy_plus_output_budget_v1"
+                    ),
+                    "exact_prompt_tokens_available_pre_call": False,
+                    "timeout_seconds": getattr(llm, "timeout", None),
+                    "trust_environment": False,
+                    "follow_redirects": False,
+                    "automatic_provider_fallback": False,
+                    "automatic_retry": False,
+                    "model_switching": False,
+                    "diagnostic_content_max_utf8_bytes": (
+                        LOCAL_DIAGNOSTIC_CONTENT_MAX_BYTES
+                    ),
+                }
+                if local_ollama
+                else None
+            )
+
+        with trace_operation("source.admission", attributes={"execution_phase": "pre_graph"}) as source_observation:
+            source = Path(target_project).resolve()
+            source_directory_exists = source.is_dir()
+            project_file_discovered = any(source.glob("*.csproj")) if source_directory_exists else False
+            source_observation.update(source_directory_exists=source_directory_exists,
+                                      project_file_discovered=project_file_discovered)
+            if not source_directory_exists or not project_file_discovered:
+                source_observation.update(failure_code="SOURCE_PROJECT_MATERIAL_UNAVAILABLE")
+                raise LocalEntryError("Target project must be an existing directory with a .csproj file.")
+            initial_source_snapshot = _source_snapshot(source)
+            initial_source_snapshot_sha256 = _source_snapshot_sha256(initial_source_snapshot)
+            _verify_source_revision_binding(
+                source=source,
+                snapshot=initial_source_snapshot,
+                snapshot_sha256=initial_source_snapshot_sha256,
+                binding=source_revision_binding,
+                strict_git_admission=source_git_admission,
+            )
+        base.mkdir(parents=True, exist_ok=True)
+        run_root.mkdir(parents=True)
+        initial_manifest = {
+            "run_id": run_id,
+            "request_id": request_id,
+            "status": "admitted",
+            "started_at": started_at,
+            "request": description,
+            "target_source": str(source),
+            "target_source_provenance": "externally_produced_read_only_input",
+            "isolated_workspace": str(run_root),
+            "source_snapshot": initial_source_snapshot,
+            "source_snapshot_sha256": initial_source_snapshot_sha256,
+            "source_revision_binding": dict(source_revision_binding or {}),
+            "model": settings.llm.model,
+            "model_admission": model_admission,
+            "local_model_identity": local_model_identity,
+            "repair_local_model_identity": repair_local_model_identity,
+            "ollama_server_version": local_ollama_server_version,
+            "ollama_patch_generation_profile": ollama_patch_generation_profile,
+            "source_disclosure": source_disclosure,
+            "runtime_admission": runtime_admission,
+            "compiled_artifact_inspection_profile": (
+                compiled_artifact_inspection_profile.to_dict()
+                if compiled_artifact_inspection_profile is not None
+                else None
             ),
-            run_root=run_root,
-            run_id=run_id,
-            request_id=request_id,
-            source_revision_binding=source_revision_binding,
-            model_admission=model_admission,
-            extra={
-                "game_folder_build_binding": game_folder_build_binding.to_dict()
-            },
-        )
-        game_folder_dependency = _run_pre_graph_step(
-            failure_stage="build_dependency_copy",
-            action=lambda: _materialize_game_folder_build_dependency(
-                game_folder_source_identity,
-                run_root=run_root,
+            "model_call_count": 0,
+            "graph_invoked": False,
+            "patch_payload_parser_entered": False,
+            "actual_write_performed": False,
+            "game_folder_build_binding": (
+                game_folder_build_binding.to_dict()
+                if game_folder_build_binding is not None
+                else None
             ),
-            run_root=run_root,
-            run_id=run_id,
-            request_id=request_id,
-            source_revision_binding=source_revision_binding,
-            model_admission=model_admission,
-            extra={
-                "game_folder_build_binding": game_folder_build_binding.to_dict(),
-                "game_folder_source_identity": {
-                    "source_root": str(game_folder_source_identity.source_root),
-                    "snapshot_sha256": game_folder_source_identity.snapshot_sha256,
-                    "file_count": game_folder_source_identity.file_count,
-                },
-            },
-        )
-        isolated_game_folder_dir = Path(
-            str(game_folder_dependency["isolated_copy"])
-        )
-        initial_manifest["game_folder_build_dependency"] = dict(
-            game_folder_dependency
-        )
+            "game_folder_build_dependency": None,
+        }
         (run_root / "run_manifest.json").write_text(
-            json.dumps(initial_manifest, ensure_ascii=False, indent=2, sort_keys=True)
-            + "\n",
+            json.dumps(initial_manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-    target_copy = run_root / "generated_mods" / source.name
-    baseline_copy = run_root / "baseline_source" / source.name
-    target_copy.parent.mkdir(parents=True)
-    baseline_copy.parent.mkdir(parents=True)
-    _run_pre_graph_step(
-        failure_stage="workspace_preparation",
-        action=lambda: tuple(
-            shutil.copytree(
-                source,
-                destination,
-                ignore=shutil.ignore_patterns("bin", "obj", ".git", ".idea"),
-            )
-            for destination in (target_copy, baseline_copy)
-        ),
-        run_root=run_root,
-        run_id=run_id,
-        request_id=request_id,
-        source_revision_binding=source_revision_binding,
-        model_admission=model_admission,
-    )
-    source_projects = tuple(source.glob("*.csproj"))
-    if len(source_projects) != 1:
-        error = LocalEntryError(
-            "Target project must contain exactly one top-level .csproj file."
-        )
-        _persist_pre_graph_failure(
-            run_root=run_root,
-            run_id=run_id,
-            request_id=request_id,
-            failure_stage="workspace_preparation",
-            error=error,
-            source_revision_binding=source_revision_binding,
-            model_admission=model_admission,
-        )
-        raise error
-    source_project = source_projects[0]
-    assembly_name = _run_pre_graph_step(
-        failure_stage="baseline_profile",
-        action=lambda: (
-            _optional_project_text_property(
-                source_project,
-                property_name="AssemblyName",
-            )
-            or source_project.stem
-        ),
-        run_root=run_root,
-        run_id=run_id,
-        request_id=request_id,
-        source_revision_binding=source_revision_binding,
-        model_admission=model_admission,
-    )
-    source_bepinex_value = _run_pre_graph_step(
-        failure_stage="baseline_profile",
-        action=lambda: _optional_project_text_property(
-            source_project,
-            property_name="BepInExDir",
-        ),
-        run_root=run_root,
-        run_id=run_id,
-        request_id=request_id,
-        source_revision_binding=source_revision_binding,
-        model_admission=model_admission,
-    )
-    source_bepinex_dir = (
-        Path(source_bepinex_value.replace("\\", os.sep))
-        if source_bepinex_value is not None
-        else None
-    )
-    if source_bepinex_dir is not None and not source_bepinex_dir.is_absolute():
-        source_bepinex_dir = (source_project.parent / source_bepinex_dir).resolve()
-    elif source_bepinex_dir is not None:
-        source_bepinex_dir = source_bepinex_dir.resolve()
-    if source_bepinex_dir is not None and not source_bepinex_dir.is_dir():
-        error = LocalEntryError(f"Resolved BepInExDir is missing: {source_bepinex_dir}")
-        _persist_pre_graph_failure(
-            run_root=run_root,
-            run_id=run_id,
-            request_id=request_id,
-            failure_stage="baseline_profile",
-            error=error,
-            source_revision_binding=source_revision_binding,
-            model_admission=model_admission,
-        )
-        raise error
-    isolated_bepinex_dir: Path | None = None
-    if source_bepinex_dir is not None:
-        isolated_bepinex_dir = run_root / "build_dependencies" / "BepInEx"
-        isolated_bepinex_dir.parent.mkdir(parents=True, exist_ok=True)
-        _run_pre_graph_step(
-            failure_stage="build_dependency_preparation",
-            action=lambda: shutil.copytree(source_bepinex_dir, isolated_bepinex_dir),
-            run_root=run_root,
-            run_id=run_id,
-            request_id=request_id,
-            source_revision_binding=source_revision_binding,
-            model_admission=model_admission,
-        )
-    isolated_nuget_config = (
-        b'<?xml version="1.0" encoding="utf-8"?>\n'
-        b"<configuration><packageSources><clear /></packageSources></configuration>\n"
-    )
-    for copied_project_root in (target_copy, baseline_copy):
-        copied_config = copied_project_root / "nuget.config"
-        if not copied_config.exists():
-            copied_config.write_bytes(isolated_nuget_config)
-    build_profile_stage = (
-        "build_dependency_profile"
-        if game_folder_build_binding is not None
-        else "baseline_profile"
-    )
-    nuget_build_profile = _run_pre_graph_step(
-        failure_stage=build_profile_stage,
-        action=lambda: _create_nuget_isolated_build_profile(
-            run_root=run_root,
-            working_directory=target_copy,
-            config_file=target_copy / "nuget.config",
-            bepinex_dir=isolated_bepinex_dir,
-            timeout_seconds=120,
-            game_folder_dir=isolated_game_folder_dir,
-        ),
-        run_root=run_root,
-        run_id=run_id,
-        request_id=request_id,
-        source_revision_binding=source_revision_binding,
-        model_admission=model_admission,
-    )
-    baseline_build_profile = _run_pre_graph_step(
-        failure_stage=build_profile_stage,
-        action=lambda: _create_nuget_isolated_build_profile(
-            run_root=run_root,
-            working_directory=baseline_copy,
-            config_file=baseline_copy / "nuget.config",
-            bepinex_dir=isolated_bepinex_dir,
-            timeout_seconds=120,
-            game_folder_dir=isolated_game_folder_dir,
-        ),
-        run_root=run_root,
-        run_id=run_id,
-        request_id=request_id,
-        source_revision_binding=source_revision_binding,
-        model_admission=model_admission,
-    )
-    verification_tool_build = None
-    inspector_path: Path | None = None
-    active_compiled_artifact_verifier = compiled_artifact_verifier
-    if compiled_artifact_inspection_profile is not None:
-        verification_tool_build = _run_pre_graph_step(
-            failure_stage="verification_tool_build",
-            action=lambda: _build_run_local_il_inspector(
-                compiled_artifact_inspection_profile,
+        attach_product_trace_manifest(product_trace)
+        game_folder_dependency: dict[str, object] | None = None
+        isolated_game_folder_dir: Path | None = None
+        if game_folder_build_binding is not None:
+            game_folder_source_identity = _run_pre_graph_step(
+                failure_stage="build_dependency_snapshot",
+                action=lambda: _validate_game_folder_build_binding(
+                    game_folder_build_binding,
+                    canonical_source_root=source,
+                ),
                 run_root=run_root,
+                run_id=run_id,
+                request_id=request_id,
+                source_revision_binding=source_revision_binding,
+                model_admission=model_admission,
+                extra={
+                    "game_folder_build_binding": game_folder_build_binding.to_dict()
+                },
+            )
+            game_folder_dependency = _run_pre_graph_step(
+                failure_stage="build_dependency_copy",
+                action=lambda: _materialize_game_folder_build_dependency(
+                    game_folder_source_identity,
+                    run_root=run_root,
+                ),
+                run_root=run_root,
+                run_id=run_id,
+                request_id=request_id,
+                source_revision_binding=source_revision_binding,
+                model_admission=model_admission,
+                extra={
+                    "game_folder_build_binding": game_folder_build_binding.to_dict(),
+                    "game_folder_source_identity": {
+                        "source_root": str(game_folder_source_identity.source_root),
+                        "snapshot_sha256": game_folder_source_identity.snapshot_sha256,
+                        "file_count": game_folder_source_identity.file_count,
+                    },
+                },
+            )
+            isolated_game_folder_dir = Path(
+                str(game_folder_dependency["isolated_copy"])
+            )
+            initial_manifest["game_folder_build_dependency"] = dict(
+                game_folder_dependency
+            )
+            initial_manifest = preserve_product_trace_projection(initial_manifest, run_root)
+            (run_root / "run_manifest.json").write_text(
+                json.dumps(initial_manifest, ensure_ascii=False, indent=2, sort_keys=True)
+                + "\n",
+                encoding="utf-8",
+            )
+        target_copy = run_root / "generated_mods" / source.name
+        baseline_copy = run_root / "baseline_source" / source.name
+        target_copy.parent.mkdir(parents=True)
+        baseline_copy.parent.mkdir(parents=True)
+        _run_pre_graph_step(
+            failure_stage="workspace_preparation",
+            action=lambda: tuple(
+                shutil.copytree(
+                    source,
+                    destination,
+                    ignore=shutil.ignore_patterns("bin", "obj", ".git", ".idea"),
+                )
+                for destination in (target_copy, baseline_copy)
             ),
             run_root=run_root,
             run_id=run_id,
@@ -7234,973 +7127,1124 @@ def run_local_request(
             source_revision_binding=source_revision_binding,
             model_admission=model_admission,
         )
-        inspector_path = Path(str(verification_tool_build["inspector_path"]))
-
-        def verify_compiled_artifact(artifact: Path, stage: str) -> dict[str, Any]:
-            return {
-                **_verify_bepin_plugin_identity(
-                    artifact,
-                    inspector_path=inspector_path,
-                    method_symbol=compiled_artifact_inspection_profile.method_symbol,
-                    expected_guid=compiled_artifact_inspection_profile.expected_guid,
-                    expected_name=compiled_artifact_inspection_profile.expected_name,
-                    expected_version=compiled_artifact_inspection_profile.expected_version,
-                ),
-                "verification_stage": stage,
-                "verification_tool_sha256": verification_tool_build[
-                    "inspector_sha256"
-                ],
-            }
-
-        active_compiled_artifact_verifier = verify_compiled_artifact
-    baseline_stdout = run_root / "baseline_build.stdout.log"
-    baseline_stderr = run_root / "baseline_build.stderr.log"
-    baseline = _run_pre_graph_step(
-        failure_stage="baseline_build",
-        action=lambda: _run_nuget_isolated_build(baseline_build_profile),
-        run_root=run_root,
-        run_id=run_id,
-        request_id=request_id,
-        source_revision_binding=source_revision_binding,
-        model_admission=model_admission,
-        extra={
-            "verification_tool_build": verification_tool_build,
-            "game_folder_build_dependency": game_folder_dependency,
-        },
-    )
-    baseline_stdout.write_text(baseline.stdout, encoding="utf-8")
-    baseline_stderr.write_text(baseline.stderr, encoding="utf-8")
-    target_framework = _optional_project_text_property(
-        source_project,
-        property_name="TargetFramework",
-    )
-    append_target_framework = _optional_project_text_property(
-        source_project,
-        property_name="AppendTargetFrameworkToOutputPath",
-    )
-    append_target_framework_directory = (
-        target_framework is not None
-        and append_target_framework != "false"
-    )
-    expected_artifact = (
-        f"bin/Debug/{target_framework}/{assembly_name}.dll"
-        if append_target_framework_directory
-        else f"bin/Debug/{assembly_name}.dll"
-    )
-    if run_gtfo_runtime:
-        admitted_destination = Path(
-            str(runtime_admission["plugin_deployment"]["destination_path"])
-        )
-        if admitted_destination.name != f"{assembly_name}.dll":
+        source_projects = tuple(source.glob("*.csproj"))
+        if len(source_projects) != 1:
             error = LocalEntryError(
-                "Runtime plugin destination filename must exactly match the "
-                f"built assembly name: {assembly_name}.dll"
+                "Target project must contain exactly one top-level .csproj file."
             )
             _persist_pre_graph_failure(
                 run_root=run_root,
                 run_id=run_id,
                 request_id=request_id,
-                failure_stage="runtime_admission",
+                failure_stage="workspace_preparation",
                 error=error,
                 source_revision_binding=source_revision_binding,
                 model_admission=model_admission,
             )
             raise error
-    baseline_artifact = baseline_copy / expected_artifact
-    baseline_stat = baseline_artifact.stat() if baseline_artifact.is_file() else None
-    baseline_result = {
-        **baseline.to_dict(),
-        "artifact_exists": baseline_artifact.is_file(),
-        "artifact_sha256": (
-            hashlib.sha256(baseline_artifact.read_bytes()).hexdigest()
-            if baseline_artifact.is_file()
-            else None
-        ),
-        "artifact_path": str(baseline_artifact),
-        "artifact_size_bytes": baseline_stat.st_size if baseline_stat is not None else None,
-        "artifact_mtime_utc": (
-            datetime.fromtimestamp(baseline_stat.st_mtime, tz=timezone.utc).isoformat()
-            if baseline_stat is not None
-            else None
-        ),
-        "stdout_path": str(baseline_stdout),
-        "stderr_path": str(baseline_stderr),
-        "build_profile": baseline_build_profile.to_dict(),
-    }
-    if baseline.exit_code != 0 or not baseline_result["artifact_exists"]:
-        failure_stage = (
-            "baseline_restore"
-            if baseline.restore_exit_code != 0
-            else "baseline_build"
-            if baseline.build_exit_code not in (None, 0)
-            else "baseline_artifact_missing"
-        )
-        error = LocalEntryError(
-            "Unmodified isolated baseline build failed; code generation was not started."
-        )
-        _persist_pre_graph_failure(
-            run_root=run_root,
-            run_id=run_id,
-            request_id=request_id,
-            failure_stage=failure_stage,
-            error=error,
-            source_revision_binding=source_revision_binding,
-            model_admission=model_admission,
-            extra={
-                "baseline_build": baseline_result,
-                "verification_tool_build": verification_tool_build,
-                "game_folder_build_dependency": game_folder_dependency,
-            },
-        )
-        raise error
-    if baseline_artifact.is_file() and active_compiled_artifact_verifier is not None:
-        baseline_result["compiled_artifact_verification"] = _run_pre_graph_step(
-            failure_stage="baseline_artifact_verification",
-            action=lambda: active_compiled_artifact_verifier(
-                baseline_artifact,
-                "baseline",
+        source_project = source_projects[0]
+        assembly_name = _run_pre_graph_step(
+            failure_stage="baseline_profile",
+            action=lambda: (
+                _optional_project_text_property(
+                    source_project,
+                    property_name="AssemblyName",
+                )
+                or source_project.stem
             ),
             run_root=run_root,
             run_id=run_id,
             request_id=request_id,
             source_revision_binding=source_revision_binding,
             model_admission=model_admission,
-            extra={
-                "baseline_build": baseline_result,
-                "verification_tool_build": verification_tool_build,
-            },
         )
-    applier = ExactTextPatchApplier()
-    evidence_provider = RgLiveEvidenceProvider(run_root)
-    member_access_resolver = None
-    if inspector_path is not None:
-        member_access_resolver = _run_pre_graph_step(
-            failure_stage="compiled_artifact_member_access_dependency",
-            action=lambda: _create_run_local_member_access_resolver(
-                inspector_path=inspector_path,
-                run_root=run_root,
+        source_bepinex_value = _run_pre_graph_step(
+            failure_stage="baseline_profile",
+            action=lambda: _optional_project_text_property(
+                source_project,
+                property_name="BepInExDir",
             ),
             run_root=run_root,
             run_id=run_id,
             request_id=request_id,
             source_revision_binding=source_revision_binding,
             model_admission=model_admission,
-            extra={
-                "baseline_build": baseline_result,
-                "verification_tool_build": verification_tool_build,
-                "game_folder_build_dependency": game_folder_dependency,
-            },
         )
-    artifact_store = ArtifactStore(run_root / "a")
-    build_stdout = run_root / "build.stdout.log"
-    build_stderr = run_root / "build.stderr.log"
-    pending_dry_run: dict[str, Any] | None = None
-    external_model_input_audit: dict[str, Any] | None = None
-    local_model_input_audit: dict[str, Any] | None = None
-    model_call_count = 0
-    requirement_coverage_model_audits: list[dict[str, Any]] = []
-    from src.mod_agent.patch_worker_configuration import PatchWorkerConfiguration
-    from src.mod_agent.planning.model_selection import ModelPlanningTargetSelector
-    from src.mod_agent.request_patch_execution import RequestPatchExecution
-
-    if patch_worker_configuration is not None and not isinstance(
-        patch_worker_configuration, PatchWorkerConfiguration
-    ):
-        raise LocalEntryError("RUN_REQUEST_WORKER_CONFIGURATION_INVALID")
-    worker_policy = (
-        patch_worker_configuration.policy if patch_worker_configuration is not None
-        else PatchAgentLoopPolicy(
-            max_total_model_turns=_INITIAL_PATCH_GENERATION_CALL_BUDGET,
-            require_source_inspection=False, finalize_after_first_observation=False,
-            enable_supporting_reads=True, allow_upstream_request=True,
-            allow_batched_reads=True, deduplicate_source_excerpts=True,
-            reuse_covered_source_observations=True,
-        )
-    )
-    limits = dict(stage_model_call_limits or {
-        "requirement_projection": 2, "requirement_findings": 2, "planning": 1,
-        "initial_patch": worker_policy.max_total_model_turns,
-        "repair": (_REPAIR_PATCH_GENERATION_CALL_BUDGET
-                   if patch_worker_configuration is None else worker_policy.max_total_model_turns),
-    })
-    expected_roles = {"requirement_projection", "requirement_findings", "planning", "initial_patch", "repair"}
-    if set(limits) != expected_roles or any(type(value) is not int or value < 1 for value in limits.values()):
-        raise LocalEntryError("RUN_REQUEST_STAGE_MODEL_LIMITS_INVALID")
-    task_limit = sum(limits.values()) if task_model_call_limit is None else task_model_call_limit
-    if type(task_limit) is not int or task_limit < 1:
-        raise LocalEntryError("RUN_REQUEST_TASK_MODEL_LIMIT_INVALID")
-    stage_consumed = {role: 0 for role in limits}
-
-    def model_budget_snapshot():
-        return {"maximum": task_limit, "consumed": model_call_count,
-                "remaining": task_limit - model_call_count,
-                "count_basis": "reserved_provider_invocations_not_transport_proof",
-                "by_stage": {role: {"maximum": maximum, "consumed": stage_consumed[role],
-                                   "remaining": maximum - stage_consumed[role]}
-                             for role, maximum in limits.items()}}
-
-    def reserve_model_call(role):
-        nonlocal model_call_count
-        if role not in limits or model_call_count >= task_limit or stage_consumed[role] >= limits[role]:
-            raise LocalEntryError("PRODUCT_MODEL_CALL_BUDGET_EXHAUSTED")
-        stage_consumed[role] += 1
-        model_call_count += 1
-
-    def complete_requirement_coverage_json(
-        role: str,
-        payload: Mapping[str, Any],
-        schema: Mapping[str, Any],
-    ) -> Mapping[str, Any]:
-        nonlocal external_model_input_audit, local_model_input_audit
-        nonlocal model_call_count
-        data_classes = (
-            ("natural_language_request",)
-            if role.startswith("requirement_projection")
-            else (
-                "natural_language_request",
-                "retrieved_local_source_excerpts",
-                "run_local_api_member_metadata_facts",
-            )
-        )
-        if local_ollama:
-            if local_model_identity is None or ollama_model is None:
-                raise LocalEntryError("Local Ollama model identity is missing.")
-            current_identity = identity_reader(llm_base_url, ollama_model)
-            _validate_ollama_model_identity(
-                current_identity,
-                expected_base_url=llm_base_url,
-                expected_model=ollama_model,
-            )
-            _assert_ollama_model_identity_stable(
-                expected=local_model_identity,
-                observed=current_identity,
-            )
-            _validate_ollama_context_window(
-                current_identity,
-                requested_context_window=ollama_context_window,
-            )
-        else:
-            _verify_source_disclosure(
-                source_disclosure,
-                requested_data_classes=data_classes,
-            )
-        exact_payload = dict(payload)
-        _assert_no_absolute_local_paths(exact_payload)
-        stage_role = {
-            "requirement_projection": "requirement_projection",
-            "requirement_projection_correction": "requirement_projection",
-            "requirement_findings": "requirement_findings",
-            "requirement_findings_correction": "requirement_findings",
-        }[role]
-        reserve_model_call(stage_role)
-        response, provider_request = request_requirement_coverage_model(
-            llm=llm,
-            payload=exact_payload,
-            schema=schema,
-            max_output_tokens=(ollama_max_output_tokens if local_ollama else external_patch_profile.output_budget),
-            capture_provider_request=local_ollama,
-        )
-        if local_ollama:
-            observed_identity = identity_reader(llm_base_url, str(ollama_model))
-            _validate_ollama_model_identity(
-                observed_identity,
-                expected_base_url=llm_base_url,
-                expected_model=str(ollama_model),
-            )
-            _assert_ollama_model_identity_stable(
-                expected=local_model_identity,
-                observed=observed_identity,
-            )
-        audit = {
-            "model_role": role,
-            "payload_sha256": _sha256_json(exact_payload),
-            "structured_output_sha256": hashlib.sha256(
-                response.content.encode("utf-8")
-            ).hexdigest(),
-            "data_classes": list(data_classes),
-            "model_identity": (
-                dict(local_model_identity)
-                if local_model_identity is not None
-                else dict(model_admission.get("destination") or {})
-            ),
-            "provider_adapter": model_admission.get("provider_adapter"),
-            "execution_locality": model_admission.get("execution_locality"),
-            "provider_request": provider_request,
-            "automatic_provider_fallback": False,
-            "automatic_retry": False,
-            "absolute_local_paths_present": False,
-            "api_key_in_payload": False,
-        }
-        requirement_coverage_model_audits.append(audit)
-        audit_path = run_root / (
-            f"requirement_coverage_model_input_audit_{model_call_count}.json"
-        )
-        audit_path.write_text(
-            json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        if local_ollama:
-            local_model_input_audit = audit
-        else:
-            external_model_input_audit = audit
-        return parse_requirement_coverage_json_object(response.content)
-
-    requirement_coverage_provider = make_requirement_coverage_evidence_provider(
-        evidence_provider,
-        complete_json=complete_requirement_coverage_json,
-        projection_factory=requirement_coverage_projection_factory,
-        findings_factory=requirement_coverage_findings_factory,
-    )
-
-    def evidence_factory(state: dict[str, Any], feature_data: dict[str, Any]):
-        evidence_pack = requirement_coverage_provider.collect(
-            query=str(state["user_request"]),
-            search_root=f"generated_mods/{source.name}",
-            feature_data=feature_data,
-        )
-        evidence_pack = replace(
-            evidence_pack,
-            budget_summary={
-                **evidence_pack.budget_summary,
-                "requirement_coverage_model_audits": [
-                    dict(item) for item in requirement_coverage_model_audits
-                ],
-            },
-        )
-        if member_access_resolver is None or not evidence_pack.can_generate_patch:
-            return evidence_pack
-        try:
-            return enrich_source_evidence_with_member_accesses(
-                evidence_pack,
-                consumer_assembly=baseline_artifact,
-                resolver=member_access_resolver,
-            )
-        except DotNetMetadataEnrichmentError as exc:
-            blocker = {
-                "code": "DOTNET_MEMBER_ACCESS_UNRESOLVED",
-                "message": str(exc),
-                "needed_evidence": [
-                    "source-bound compiled receiver identity",
-                    "AssemblyRef-bound run-local dependency",
-                    "public readable direct Boolean property",
-                ],
-            }
-            return replace(
-                evidence_pack,
-                readiness="insufficient",
-                can_generate_patch=False,
-                requirement_coverage=None,
-                gaps=(
-                    *evidence_pack.gaps,
-                    "Run-local .NET member semantics remain unresolved.",
-                ),
-                blockers=(*evidence_pack.blockers, blocker),
-                missing_evidence=(
-                    *evidence_pack.missing_evidence,
-                    {
-                        "needed_evidence": "verified .NET member access",
-                        "blocker_code": blocker["code"],
-                        "reason": blocker["message"],
-                    },
-                ),
-                message=(
-                    "Source evidence was found, but run-local .NET member "
-                    f"semantics could not be bound: {exc}"
-                ),
-            )
-
-    worker_profile = LocalOllamaInitialPatchProfileV1(
-        profile_version=LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
-        base_url=llm_base_url, model=ollama_model, context_window=ollama_context_window,
-        output_budget=ollama_max_output_tokens, timeout_seconds=float(llm.timeout),
-    ) if local_ollama else external_patch_profile
-    repair_worker_profile = (
-        replace(worker_profile, model=repair_ollama_model,
-                timeout_seconds=float(repair_llm.timeout))
-        if repair_ollama_model is not None and repair_llm is not None else None
-    )
-    def admitted_worker_identity(base_url, model):
-        if external_assembly is not None:
-            return external_assembly.read_identity(base_url, model)
-        identities = {ollama_model: local_model_identity}
-        if repair_ollama_model is not None:
-            identities[repair_ollama_model] = repair_local_model_identity
-        expected = identities.get(model)
-        if expected is None:
-            raise LocalEntryError("PRODUCT_WORKER_MODEL_NOT_ADMITTED")
-        observed = identity_reader(base_url, model)
-        _validate_ollama_model_identity(observed, expected_base_url=base_url, expected_model=model)
-        _assert_ollama_model_identity_stable(expected=expected, observed=observed)
-        return observed
-
-    patch_change_factory = RequestPatchExecution(
-        artifact_store=artifact_store, workspace_root=run_root, profile=worker_profile,
-        repair_profile=repair_worker_profile, identity_reader=admitted_worker_identity,
-        policy=worker_policy, reserve_model_call=reserve_model_call,
-        budget_snapshot=model_budget_snapshot,
-        behavior_evaluator=(patch_worker_configuration.behavior_evaluator()
-                            if patch_worker_configuration is not None else None),
-        worker_configuration_ref=(patch_worker_configuration.reference
-                                  if patch_worker_configuration is not None else None),
-        trace_configuration=execution_trace_configuration,
-        adapter_factory=(external_assembly.make_worker if external_assembly is not None else None),
-    )
-    class PlanningClient:
-        def __init__(self):
-            self.client = (external_assembly.planning_client() if external_assembly is not None
-                           else LocalOllamaInitialPatchAdapter._default_agent_turn_client(worker_profile))
-            self.provider = self.client.provider
-            self.model = self.client.model
-
-        def complete_turn(self, request):
-            admitted_worker_identity(worker_profile.base_url, worker_profile.model)
-            reserve_model_call("planning")
-            response = self.client.complete_turn(request)
-            admitted_worker_identity(worker_profile.base_url, worker_profile.model)
-            return response
-
-    planning_selector = (
-        (lambda _feature, _evidence: planning_target_evidence_ids)
-        if planning_target_evidence_ids else ModelPlanningTargetSelector(
-            client=PlanningClient(), workspace_root=run_root,
-            receipt_path=run_root / "planning_model_selection.json",
-            model_identity=(external_assembly.identity if external_assembly is not None else local_model_identity),
-        )
-    )
-
-    def dry_run_factory(
-        proposal: dict[str, Any],
-        implementation: dict[str, Any],
-        review: dict[str, Any],
-    ) -> dict[str, Any]:
-        nonlocal pending_dry_run
-        pending_dry_run = applier.run(
-            workspace_root=run_root,
-            proposal=proposal,
-            implementation_plan=implementation,
-            review=review,
-            allow_write=False,
-        )
-        return pending_dry_run
-
-    def isolated_apply_factory(
-        proposal: dict[str, Any],
-        implementation: dict[str, Any],
-        review: dict[str, Any],
-    ) -> dict[str, Any]:
-        if pending_dry_run is None:
-            raise LocalEntryError("Exact diff approval requested before dry-run completed.")
-        approved_diff_hash, human_semantic_decision = _read_exact_diff_approval(
-            diff_approval_reader,
-            pending_dry_run,
-        )
-        return applier.run(
-            workspace_root=run_root,
-            proposal=proposal,
-            implementation_plan=implementation,
-            review=review,
-            allow_write=True,
-            approved_diff_hash=approved_diff_hash,
-            human_semantic_decision=human_semantic_decision,
-        )
-
-    def build_result_factory(feature_id: str, input_execution_mode: str | None):
-        final_command = (
-            objective_verification_command
-            if objective_verification_command is not None
-            else nuget_build_profile.build_command
-        )
-        profile = BuildProfile(
-            profile_id=nuget_build_profile.profile_id,
-            build_system="dotnet",
-            working_directory=str(target_copy),
-            command=final_command,
-            timeout_seconds=nuget_build_profile.timeout_seconds,
-            expected_artifacts=(expected_artifact,),
-        )
-
-        def command_runner(selected: BuildProfile) -> BuildCommandResult:
-            if selected.command != final_command:
-                raise LocalEntryError("Final build command does not match the bound profile.")
-            completed = _run_nuget_isolated_build(nuget_build_profile)
-            stdout = completed.stdout
-            stderr = completed.stderr
-            exit_code = completed.exit_code
-            duration_ms = completed.duration_ms
-            if exit_code == 0 and objective_verification_command is not None:
-                objective = _run_nuget_isolated_verification_command(
-                    nuget_build_profile,
-                    objective_verification_command,
-                )
-                changed_files = tuple(
-                    str(path)
-                    for path in (
-                        pending_dry_run.get("changed_files")
-                        if isinstance(pending_dry_run, Mapping)
-                        else ()
-                    )
-                    or ()
-                )
-                objective = _bind_objective_failure_to_single_changed_file(
-                    objective,
-                    changed_files,
-                )
-                stdout = _join_build_phase_output(
-                    ("nuget-isolated build", stdout),
-                    ("objective verification", objective.stdout),
-                )
-                stderr = _join_build_phase_output(
-                    ("nuget-isolated build", stderr),
-                    ("objective verification", objective.stderr),
-                )
-                exit_code = objective.exit_code
-                duration_ms += objective.duration_ms
-            build_stdout.write_text(stdout, encoding="utf-8")
-            build_stderr.write_text(stderr, encoding="utf-8")
-            return BuildCommandResult(
-                exit_code=exit_code,
-                stdout=stdout,
-                stderr=stderr,
-                duration_ms=duration_ms,
-            )
-
-        build_result = BuildAdapter().run_local(
-            feature_id=feature_id,
-            profile=profile,
-            command_runner=command_runner,
-            allow_execution=True,
-            input_execution_mode=input_execution_mode,
-        )
-        return _canonicalize_run_local_build_diagnostic_paths(
-            build_result,
-            run_root=run_root,
-            isolated_target_root=target_copy,
-        )
-
-    direct_stagger_admission = runtime_admission.get("stagger_acceptance")
-    direct_stagger_config = (
-        direct_stagger_admission.get("config")
-        if isinstance(direct_stagger_admission, Mapping)
-        else None
-    )
-    raw_runtime_evidence_factory = (
-        _make_deploying_runtime_evidence_factory(
-            settings=settings,
-            allow_game_launch=allow_game_launch,
-            allow_game_directory_write=allow_game_directory_write,
-            build_artifact_path=target_copy / expected_artifact,
-            expected_artifact=expected_artifact,
-            destination_path=Path(
-                str(runtime_admission["plugin_deployment"]["destination_path"])
-            ),
-            backup_directory=run_root / "runtime_deployment_backup",
-            expected_destination_existed=bool(
-                runtime_admission["plugin_deployment"][
-                    "destination_existed_at_admission"
-                ]
-            ),
-            expected_destination_sha256=runtime_admission["plugin_deployment"][
-                "destination_sha256_at_admission"
-            ],
-            expected_config_destination_existed=(
-                bool(direct_stagger_config["destination_existed"])
-                if isinstance(direct_stagger_config, Mapping)
-                else None
-            ),
-            expected_config_destination_sha256=(
-                direct_stagger_config.get("destination_sha256")
-                if isinstance(direct_stagger_config, Mapping)
-                else None
-            ),
-        )
-        if run_gtfo_runtime
-        else None
-    )
-    runtime_evidence_factory = (
-        _bind_owner_validated_runtime_evidence_factory(
-            raw_runtime_evidence_factory,
-            settings=settings,
-            allow_game_launch=allow_game_launch,
-            runtime_plugin_destination=runtime_plugin_destination,
-            allow_game_directory_write=allow_game_directory_write,
-            expected_runtime_admission=runtime_admission,
-        )
-        if raw_runtime_evidence_factory is not None
-        and runtime_plugin_destination is not None
-        else None
-    )
-
-    manifest = {
-        "run_id": run_id,
-        "request_id": request_id,
-        "status": "baseline_verified",
-        "started_at": started_at,
-        "request": description,
-        "target_source": str(source),
-        "target_source_provenance": "externally_produced_read_only_input",
-        "isolated_workspace": str(run_root),
-        "source_snapshot": initial_source_snapshot,
-        "source_snapshot_sha256": initial_source_snapshot_sha256,
-        "source_revision_binding": dict(source_revision_binding or {}),
-        "objective_verification_command": (
-            list(objective_verification_command)
-            if objective_verification_command is not None
+        source_bepinex_dir = (
+            Path(source_bepinex_value.replace("\\", os.sep))
+            if source_bepinex_value is not None
             else None
-        ),
-        "model": settings.llm.model,
-        "model_admission": model_admission,
-        "local_model_identity": local_model_identity,
-        "repair_local_model_identity": repair_local_model_identity,
-        "ollama_server_version": local_ollama_server_version,
-        "ollama_patch_generation_profile": ollama_patch_generation_profile,
-        "base_url": _sanitized_endpoint_url(llm_base_url),
-        "base_url_env": None if local_ollama else base_url_env,
-        "base_url_env_present": (
-            False if local_ollama else bool(os.environ.get(base_url_env))
-        ),
-        "api_key_env": None if local_ollama else api_key_env,
-        "api_key_required": not local_ollama,
-        "api_key_read": not local_ollama,
-        "api_key_present": False if local_ollama else True,
-        "api_key_value_persisted": False,
-        "source_disclosure": source_disclosure,
-        "runtime_admission": runtime_admission,
-        "assembly_name": assembly_name,
-        "build_dependency": {
-            "source": (
-                str(source_bepinex_dir)
-                if source_bepinex_dir is not None
-                else None
-            ),
-            "isolated_copy": (
-                str(isolated_bepinex_dir)
-                if isolated_bepinex_dir is not None
-                else None
-            ),
-            "build_uses_isolated_copy": isolated_bepinex_dir is not None,
-            "game_folder": (
-                dict(game_folder_dependency)
-                if game_folder_dependency is not None
-                else None
-            ),
-        },
-        "nuget_isolated_build_profile": nuget_build_profile.to_dict(),
-        "compiled_artifact_inspection_profile": (
-            compiled_artifact_inspection_profile.to_dict()
-            if compiled_artifact_inspection_profile is not None
-            else None
-        ),
-        "verification_tool_build": verification_tool_build,
-        "baseline_build": baseline_result,
-        "model_call_count": 0,
-        "graph_invoked": False,
-        "patch_payload_parser_entered": False,
-        "actual_write_performed": False,
-        "limits": [
-            "No claim that the external BetterHitFeedback project was generated by this platform.",
-            (
-                "No real GTFO launch or gameplay validation is performed."
-                if not run_gtfo_runtime
-                else (
-                    "Runtime evidence proves only the process, logs, markers, and "
-                    "screenshot facts bound by this run."
-                )
-            ),
-            (
-                (
-                    "run-request does not deploy the built plugin into the GTFO "
-                    "game directory or verify a deployed DLL hash."
-                )
-                if not run_gtfo_runtime
-                else (
-                    "The verified built plugin is deployed only for this Runtime "
-                    "capture and the destination is restored afterward."
-                )
-            ),
-            (
-                "The dotnet process executes user-authorized project build logic "
-                "and is not an OS sandbox."
-            ),
-        ],
-    }
-    (run_root / "run_manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    _run_pre_graph_step(
-        failure_stage="pre_graph_generated_directory_cleanup",
-        action=lambda: tuple(
-            _remove_generated_build_directory(generated_directory)
-            for generated_directory in (target_copy / "bin", target_copy / "obj")
-        ),
-        run_root=run_root,
-        run_id=run_id,
-        request_id=request_id,
-        source_revision_binding=source_revision_binding,
-        model_admission=model_admission,
-        extra={
-            "baseline_build": baseline_result,
-            "verification_tool_build": verification_tool_build,
-        },
-    )
-
-    product_request = ProductExecutionRequestV1(
-        contract_version="1",
-        run_id=run_id,
-        request_id=request_id,
-        user_request=description,
-        target_domain="gtfo",
-        target_mod=source.name,
-        requested_completion_scope=(
-            "runtime_workflow" if run_gtfo_runtime else "compile_only"
-        ),
-        repair_budget=2,
-        isolated_workspace_root=str(run_root),
-        isolated_target_root=str(target_copy.resolve()),
-        source_root=str(source),
-        artifact_store_root=str(artifact_store.root),
-        source_snapshot_sha256=initial_source_snapshot_sha256,
-        isolated_source_snapshot_sha256=_source_snapshot_sha256(
-            _source_snapshot(target_copy)
-        ),
-        input_bindings=(
-            ProductExecutionInputBindingV1.create(
-                "source_revision_binding",
-                dict(source_revision_binding) if source_revision_binding else None,
-            ),
-            ProductExecutionInputBindingV1.create(
-                "source_disclosure", source_disclosure
-            ),
-            ProductExecutionInputBindingV1.create(
-                "model_admission", model_admission
-            ),
-            ProductExecutionInputBindingV1.create(
-                "runtime_admission", runtime_admission
-            ),
-        ),
-        completion_classification=tuple(
-            sorted(
-                (
-                    (str(key), value)
-                    for key, value in dict(completion_classification or {}).items()
-                ),
-                key=lambda item: item[0].encode("utf-8"),
-            )
-        ),
-        confirmed_isolated_write=True,
-        allow_build=True,
-    )
-    product_adapters = ProductExecutionAdaptersV1(
-        evidence_pack_factory=evidence_factory,
-        planning_target_selection_factory=planning_selector,
-        patch_change_factory=patch_change_factory,
-        dry_run_factory=dry_run_factory,
-        isolated_apply_factory=isolated_apply_factory,
-        build_result_factory=build_result_factory,
-        runtime_evidence_factory=runtime_evidence_factory,
-        compiled_artifact_verifier=active_compiled_artifact_verifier,
-        source_change_verifier=source_change_verifier,
-    )
-    product_preflight = preflight_product_execution(
-        product_request,
-        product_adapters,
-        artifact_store,
-        strict_git_admission=source_git_admission,
-    )
-    if product_preflight.preflight_status != "ready":
-        raise LocalEntryError(
-            "Product execution preflight was blocked: "
-            + "; ".join(item.message for item in product_preflight.blockers)
         )
-    with _working_directory(run_root):
-        try:
-            product_result = execute_product_execution(
-                product_preflight,
-                product_adapters,
-                artifact_store,
-                strict_git_admission=source_git_admission,
-                defer_approval=defer_approval,
-            )
-        except ProductApprovalDeferred as pending:
-            waiting = pending.to_dict()
-            waiting.update(
-                current_stage="awaiting_approval", run_root=str(run_root),
-                model_call_count=model_call_count, model_call_budget=model_budget_snapshot(),
-                graph_invoked=True, patch_payload_parser_entered=True,
-                actual_write_performed=False,
-                artifacts={item.artifact_role: item.artifact_ref.path for item in pending.outputs},
-                source_revision_binding=dict(source_revision_binding or {}),
-                model_admission=model_admission,
-                canonical_source_unchanged=_source_snapshot(source) == initial_source_snapshot,
-            )
-            patch_change_factory.complete_deferred(pending)
-            waiting["patch_execution_receipts"] = [journal.projection() for journal in patch_change_factory.journals]
-            _persist_graph_terminal_result(
-                run_root=run_root, run_id=run_id, request_id=request_id, summary=waiting,
-                model_call_count=model_call_count, patch_payload_parser_entered=True,
-                actual_write_performed=False,
-            )
-            return waiting
-        except ProductExecutionContractError:
-            raise
-        except Exception as exc:
-            provider_failure = _persist_local_failure_diagnostics(
-                run_root=run_root,
-                error=exc,
-                enabled=local_ollama,
-            )
-            _persist_graph_terminal_failure(
+        if source_bepinex_dir is not None and not source_bepinex_dir.is_absolute():
+            source_bepinex_dir = (source_project.parent / source_bepinex_dir).resolve()
+        elif source_bepinex_dir is not None:
+            source_bepinex_dir = source_bepinex_dir.resolve()
+        if source_bepinex_dir is not None and not source_bepinex_dir.is_dir():
+            error = LocalEntryError(f"Resolved BepInExDir is missing: {source_bepinex_dir}")
+            _persist_pre_graph_failure(
                 run_root=run_root,
                 run_id=run_id,
                 request_id=request_id,
-                error=exc,
-                model_call_count=model_call_count,
-                extra=(
-                    {"provider_failure": provider_failure}
-                    if provider_failure is not None
-                    else None
-                ),
+                failure_stage="baseline_profile",
+                error=error,
+                source_revision_binding=source_revision_binding,
+                model_admission=model_admission,
             )
-            raise LocalEntryError(
-                f"Controlled product executor failed: {type(exc).__name__}: {exc}"
-            ) from exc
-
-    patch_change_factory.complete_product(product_result)
-    if patch_change_factory.receipts:
-        current_patch_receipt = patch_change_factory.patch_attempt_receipt()
-        local_model_input_audit = {
-            **current_patch_receipt,
-            "model_role": "repair" if "repair_context" in current_patch_receipt else "initial_patch",
-            "provider_request": {
-                "timeout_seconds": current_patch_receipt["profile"]["timeout_seconds"],
-                "scope": "configured_agent_client_not_transport_send_proof",
-            },
-            "provider_request_profile": {
-                "timeout_seconds": current_patch_receipt["profile"]["timeout_seconds"],
-                "scope": "configured_agent_client",
-            },
-        }
-    product_result_projection = product_result.to_dict()
-    output_paths = {
-        item.artifact_role: item.artifact_ref.path for item in product_result.outputs
-    }
-    validation_details = {
-        item.detail_kind: item.payload
-        for item in product_result.validation_facts.details
-    }
-    variant_projection = product_result.variant_result.to_dict()
-    build_summary = {
-        "status": variant_projection.get("build_status", "not_reached"),
-        "claims_real_build_success": variant_projection.get(
-            "claims_real_build_success"
-        ),
-    }
-    runtime_summary = {
-        key: variant_projection.get(key)
-        for key in ("runtime_status", "eval_verdict", "final_status")
-        if key in variant_projection
-    }
-    runtime_chain_roles = (
-        "build_result",
-        "runtime_evidence",
-        "eval_report",
-        "workflow_summary",
-    )
-    runtime_verification_chain = {
-        "requested": run_gtfo_runtime,
-        "artifact_refs": {
-            role: output_paths.get(role) for role in runtime_chain_roles
-        },
-        "workflow_chain_completed": bool(
-            run_gtfo_runtime
-            and product_result.execution_disposition == "succeeded"
-            and all(output_paths.get(role) for role in runtime_chain_roles)
-        ),
-    }
-    output_readback = validation_details.get("output_readback") or []
-    isolated_apply_payload = next(
-        (
-            item.get("data")
-            for item in output_readback
-            if isinstance(item, Mapping)
-            and item.get("artifact_type") == "isolated_apply_result"
-        ),
-        {},
-    )
-    actual_write_performed = bool(
-        isinstance(isolated_apply_payload, Mapping)
-        and isolated_apply_payload.get("actual_write_performed") is True
-    )
-    patch_payload_parser_entered = "patch_proposal" in output_paths
-    selected_classification = dict(product_request.completion_classification)
-    final_artifact_verification = validation_details.get("compiled_artifact")
-    source_change_verification = validation_details.get("source_change")
-    source_validation_status = product_result.validation_facts.canonical_source_status
-    canonical_source_unchanged = (
-        True if source_validation_status == "passed"
-        else False if source_validation_status == "failed" else None
-    )
-
-    summary = {
-        "run_id": run_id,
-        "current_stage": product_result.terminal_node,
-        "feature_id": product_result.feature_id,
-        "blockers": [item.to_dict() for item in product_result.blockers],
-        "artifacts": output_paths,
-        "build_summary": build_summary,
-        "runtime_summary": runtime_summary,
-        "runtime_admission": runtime_admission,
-        "runtime_verification_chain": runtime_verification_chain,
-        "run_root": str(run_root),
-        "build_stdout": str(build_stdout) if build_stdout.exists() else None,
-        "build_stderr": str(build_stderr) if build_stderr.exists() else None,
-        "source_revision_binding": dict(source_revision_binding or {}),
-        "external_model_input_audit": external_model_input_audit,
-        "local_model_input_audit": local_model_input_audit,
-        "model_call_count": model_call_count,
-        "model_call_budget": model_budget_snapshot(),
-        "patch_execution_receipts": [journal.projection() for journal in patch_change_factory.journals],
-        "graph_invoked": True,
-        "patch_payload_parser_entered": patch_payload_parser_entered,
-        "actual_write_performed": actual_write_performed,
-        "model_admission": model_admission,
-        "local_model_identity": local_model_identity,
-        "repair_local_model_identity": repair_local_model_identity,
-        "verification_tool_build": verification_tool_build,
-        "baseline_artifact_verification": baseline_result.get(
-            "compiled_artifact_verification"
-        ),
-        "final_artifact_verification": final_artifact_verification,
-        "canonical_source_unchanged": canonical_source_unchanged,
-        "canonical_source_validation_status": source_validation_status,
-        "initial_isolated_source_snapshot": initial_source_snapshot,
-        "final_isolated_source_snapshot": (
-            source_change_verification.get("final_snapshot")
-            if isinstance(source_change_verification, Mapping)
-            else None
-        ),
-        "source_change_verification": source_change_verification,
-        "completion_classification": selected_classification,
-        "product_execution_result": product_result_projection,
-    }
-    try:
-        _persist_graph_terminal_result(
+            raise error
+        isolated_bepinex_dir: Path | None = None
+        if source_bepinex_dir is not None:
+            isolated_bepinex_dir = run_root / "build_dependencies" / "BepInEx"
+            isolated_bepinex_dir.parent.mkdir(parents=True, exist_ok=True)
+            _run_pre_graph_step(
+                failure_stage="build_dependency_preparation",
+                action=lambda: shutil.copytree(source_bepinex_dir, isolated_bepinex_dir),
+                run_root=run_root,
+                run_id=run_id,
+                request_id=request_id,
+                source_revision_binding=source_revision_binding,
+                model_admission=model_admission,
+            )
+        isolated_nuget_config = (
+            b'<?xml version="1.0" encoding="utf-8"?>\n'
+            b"<configuration><packageSources><clear /></packageSources></configuration>\n"
+        )
+        for copied_project_root in (target_copy, baseline_copy):
+            copied_config = copied_project_root / "nuget.config"
+            if not copied_config.exists():
+                copied_config.write_bytes(isolated_nuget_config)
+        build_profile_stage = (
+            "build_dependency_profile"
+            if game_folder_build_binding is not None
+            else "baseline_profile"
+        )
+        nuget_build_profile = _run_pre_graph_step(
+            failure_stage=build_profile_stage,
+            action=lambda: _create_nuget_isolated_build_profile(
+                run_root=run_root,
+                working_directory=target_copy,
+                config_file=target_copy / "nuget.config",
+                bepinex_dir=isolated_bepinex_dir,
+                timeout_seconds=120,
+                game_folder_dir=isolated_game_folder_dir,
+            ),
             run_root=run_root,
             run_id=run_id,
             request_id=request_id,
-            summary=summary,
-            model_call_count=model_call_count,
-            patch_payload_parser_entered=patch_payload_parser_entered,
-            actual_write_performed=actual_write_performed,
+            source_revision_binding=source_revision_binding,
+            model_admission=model_admission,
         )
-    except Exception as exc:
-        raise ProductExecutionPresentationError(
-            product_execution_result=product_result,
-            failure_class=type(exc).__name__,
-            failure_message=str(exc) or type(exc).__name__,
-            sink="run_manifest_and_result_json",
-        ) from exc
-    return summary
+        baseline_build_profile = _run_pre_graph_step(
+            failure_stage=build_profile_stage,
+            action=lambda: _create_nuget_isolated_build_profile(
+                run_root=run_root,
+                working_directory=baseline_copy,
+                config_file=baseline_copy / "nuget.config",
+                bepinex_dir=isolated_bepinex_dir,
+                timeout_seconds=120,
+                game_folder_dir=isolated_game_folder_dir,
+            ),
+            run_root=run_root,
+            run_id=run_id,
+            request_id=request_id,
+            source_revision_binding=source_revision_binding,
+            model_admission=model_admission,
+        )
+        verification_tool_build = None
+        inspector_path: Path | None = None
+        active_compiled_artifact_verifier = compiled_artifact_verifier
+        if compiled_artifact_inspection_profile is not None:
+            verification_tool_build = _run_pre_graph_step(
+                failure_stage="verification_tool_build",
+                action=lambda: _build_run_local_il_inspector(
+                    compiled_artifact_inspection_profile,
+                    run_root=run_root,
+                ),
+                run_root=run_root,
+                run_id=run_id,
+                request_id=request_id,
+                source_revision_binding=source_revision_binding,
+                model_admission=model_admission,
+            )
+            inspector_path = Path(str(verification_tool_build["inspector_path"]))
+
+            def verify_compiled_artifact(artifact: Path, stage: str) -> dict[str, Any]:
+                return {
+                    **_verify_bepin_plugin_identity(
+                        artifact,
+                        inspector_path=inspector_path,
+                        method_symbol=compiled_artifact_inspection_profile.method_symbol,
+                        expected_guid=compiled_artifact_inspection_profile.expected_guid,
+                        expected_name=compiled_artifact_inspection_profile.expected_name,
+                        expected_version=compiled_artifact_inspection_profile.expected_version,
+                    ),
+                    "verification_stage": stage,
+                    "verification_tool_sha256": verification_tool_build[
+                        "inspector_sha256"
+                    ],
+                }
+
+            active_compiled_artifact_verifier = verify_compiled_artifact
+        baseline_stdout = run_root / "baseline_build.stdout.log"
+        baseline_stderr = run_root / "baseline_build.stderr.log"
+        baseline = _run_pre_graph_step(
+            failure_stage="baseline_build",
+            action=lambda: _run_nuget_isolated_build(baseline_build_profile),
+            run_root=run_root,
+            run_id=run_id,
+            request_id=request_id,
+            source_revision_binding=source_revision_binding,
+            model_admission=model_admission,
+            extra={
+                "verification_tool_build": verification_tool_build,
+                "game_folder_build_dependency": game_folder_dependency,
+            },
+        )
+        baseline_stdout.write_text(baseline.stdout, encoding="utf-8")
+        baseline_stderr.write_text(baseline.stderr, encoding="utf-8")
+        target_framework = _optional_project_text_property(
+            source_project,
+            property_name="TargetFramework",
+        )
+        append_target_framework = _optional_project_text_property(
+            source_project,
+            property_name="AppendTargetFrameworkToOutputPath",
+        )
+        append_target_framework_directory = (
+            target_framework is not None
+            and append_target_framework != "false"
+        )
+        expected_artifact = (
+            f"bin/Debug/{target_framework}/{assembly_name}.dll"
+            if append_target_framework_directory
+            else f"bin/Debug/{assembly_name}.dll"
+        )
+        if run_gtfo_runtime:
+            admitted_destination = Path(
+                str(runtime_admission["plugin_deployment"]["destination_path"])
+            )
+            if admitted_destination.name != f"{assembly_name}.dll":
+                error = LocalEntryError(
+                    "Runtime plugin destination filename must exactly match the "
+                    f"built assembly name: {assembly_name}.dll"
+                )
+                _persist_pre_graph_failure(
+                    run_root=run_root,
+                    run_id=run_id,
+                    request_id=request_id,
+                    failure_stage="runtime_admission",
+                    error=error,
+                    source_revision_binding=source_revision_binding,
+                    model_admission=model_admission,
+                )
+                raise error
+        baseline_artifact = baseline_copy / expected_artifact
+        baseline_stat = baseline_artifact.stat() if baseline_artifact.is_file() else None
+        baseline_result = {
+            **baseline.to_dict(),
+            "artifact_exists": baseline_artifact.is_file(),
+            "artifact_sha256": (
+                hashlib.sha256(baseline_artifact.read_bytes()).hexdigest()
+                if baseline_artifact.is_file()
+                else None
+            ),
+            "artifact_path": str(baseline_artifact),
+            "artifact_size_bytes": baseline_stat.st_size if baseline_stat is not None else None,
+            "artifact_mtime_utc": (
+                datetime.fromtimestamp(baseline_stat.st_mtime, tz=timezone.utc).isoformat()
+                if baseline_stat is not None
+                else None
+            ),
+            "stdout_path": str(baseline_stdout),
+            "stderr_path": str(baseline_stderr),
+            "build_profile": baseline_build_profile.to_dict(),
+        }
+        if baseline.exit_code != 0 or not baseline_result["artifact_exists"]:
+            failure_stage = (
+                "baseline_restore"
+                if baseline.restore_exit_code != 0
+                else "baseline_build"
+                if baseline.build_exit_code not in (None, 0)
+                else "baseline_artifact_missing"
+            )
+            error = LocalEntryError(
+                "Unmodified isolated baseline build failed; code generation was not started."
+            )
+            _persist_pre_graph_failure(
+                run_root=run_root,
+                run_id=run_id,
+                request_id=request_id,
+                failure_stage=failure_stage,
+                error=error,
+                source_revision_binding=source_revision_binding,
+                model_admission=model_admission,
+                extra={
+                    "baseline_build": baseline_result,
+                    "verification_tool_build": verification_tool_build,
+                    "game_folder_build_dependency": game_folder_dependency,
+                },
+            )
+            raise error
+        if baseline_artifact.is_file() and active_compiled_artifact_verifier is not None:
+            baseline_result["compiled_artifact_verification"] = _run_pre_graph_step(
+                failure_stage="baseline_artifact_verification",
+                action=lambda: active_compiled_artifact_verifier(
+                    baseline_artifact,
+                    "baseline",
+                ),
+                run_root=run_root,
+                run_id=run_id,
+                request_id=request_id,
+                source_revision_binding=source_revision_binding,
+                model_admission=model_admission,
+                extra={
+                    "baseline_build": baseline_result,
+                    "verification_tool_build": verification_tool_build,
+                },
+            )
+        applier = ExactTextPatchApplier()
+        evidence_provider = RgLiveEvidenceProvider(run_root)
+        member_access_resolver = None
+        if inspector_path is not None:
+            member_access_resolver = _run_pre_graph_step(
+                failure_stage="compiled_artifact_member_access_dependency",
+                action=lambda: _create_run_local_member_access_resolver(
+                    inspector_path=inspector_path,
+                    run_root=run_root,
+                ),
+                run_root=run_root,
+                run_id=run_id,
+                request_id=request_id,
+                source_revision_binding=source_revision_binding,
+                model_admission=model_admission,
+                extra={
+                    "baseline_build": baseline_result,
+                    "verification_tool_build": verification_tool_build,
+                    "game_folder_build_dependency": game_folder_dependency,
+                },
+            )
+        artifact_store = ArtifactStore(run_root / "a")
+        build_stdout = run_root / "build.stdout.log"
+        build_stderr = run_root / "build.stderr.log"
+        pending_dry_run: dict[str, Any] | None = None
+        external_model_input_audit: dict[str, Any] | None = None
+        local_model_input_audit: dict[str, Any] | None = None
+        model_call_count = 0
+        requirement_coverage_model_audits: list[dict[str, Any]] = []
+        from src.mod_agent.patch_worker_configuration import PatchWorkerConfiguration
+        from src.mod_agent.planning.model_selection import ModelPlanningTargetSelector
+        from src.mod_agent.request_patch_execution import RequestPatchExecution
+
+        if patch_worker_configuration is not None and not isinstance(
+            patch_worker_configuration, PatchWorkerConfiguration
+        ):
+            raise LocalEntryError("RUN_REQUEST_WORKER_CONFIGURATION_INVALID")
+        worker_policy = (
+            patch_worker_configuration.policy if patch_worker_configuration is not None
+            else PatchAgentLoopPolicy(
+                max_total_model_turns=_INITIAL_PATCH_GENERATION_CALL_BUDGET,
+                require_source_inspection=False, finalize_after_first_observation=False,
+                enable_supporting_reads=True, allow_upstream_request=True,
+                allow_batched_reads=True, deduplicate_source_excerpts=True,
+                reuse_covered_source_observations=True,
+            )
+        )
+        limits = dict(stage_model_call_limits or {
+            "requirement_projection": 2, "requirement_findings": 2, "planning": 1,
+            "initial_patch": worker_policy.max_total_model_turns,
+            "repair": (_REPAIR_PATCH_GENERATION_CALL_BUDGET
+                       if patch_worker_configuration is None else worker_policy.max_total_model_turns),
+        })
+        expected_roles = {"requirement_projection", "requirement_findings", "planning", "initial_patch", "repair"}
+        if set(limits) != expected_roles or any(type(value) is not int or value < 1 for value in limits.values()):
+            raise LocalEntryError("RUN_REQUEST_STAGE_MODEL_LIMITS_INVALID")
+        task_limit = sum(limits.values()) if task_model_call_limit is None else task_model_call_limit
+        if type(task_limit) is not int or task_limit < 1:
+            raise LocalEntryError("RUN_REQUEST_TASK_MODEL_LIMIT_INVALID")
+        stage_consumed = {role: 0 for role in limits}
+
+        def model_budget_snapshot():
+            return {"maximum": task_limit, "consumed": model_call_count,
+                    "remaining": task_limit - model_call_count,
+                    "count_basis": "reserved_provider_invocations_not_transport_proof",
+                    "by_stage": {role: {"maximum": maximum, "consumed": stage_consumed[role],
+                                       "remaining": maximum - stage_consumed[role]}
+                                 for role, maximum in limits.items()}}
+
+        def reserve_model_call(role):
+            nonlocal model_call_count
+            if role not in limits or model_call_count >= task_limit or stage_consumed[role] >= limits[role]:
+                raise LocalEntryError("PRODUCT_MODEL_CALL_BUDGET_EXHAUSTED")
+            stage_consumed[role] += 1
+            model_call_count += 1
+
+        def complete_requirement_coverage_json(
+            role: str,
+            payload: Mapping[str, Any],
+            schema: Mapping[str, Any],
+        ) -> Mapping[str, Any]:
+            nonlocal external_model_input_audit, local_model_input_audit
+            nonlocal model_call_count
+            data_classes = (
+                ("natural_language_request",)
+                if role.startswith("requirement_projection")
+                else (
+                    "natural_language_request",
+                    "retrieved_local_source_excerpts",
+                    "run_local_api_member_metadata_facts",
+                )
+            )
+            if local_ollama:
+                if local_model_identity is None or ollama_model is None:
+                    raise LocalEntryError("Local Ollama model identity is missing.")
+                current_identity = identity_reader(llm_base_url, ollama_model)
+                _validate_ollama_model_identity(
+                    current_identity,
+                    expected_base_url=llm_base_url,
+                    expected_model=ollama_model,
+                )
+                _assert_ollama_model_identity_stable(
+                    expected=local_model_identity,
+                    observed=current_identity,
+                )
+                _validate_ollama_context_window(
+                    current_identity,
+                    requested_context_window=ollama_context_window,
+                )
+            else:
+                _verify_source_disclosure(
+                    source_disclosure,
+                    requested_data_classes=data_classes,
+                )
+            exact_payload = dict(payload)
+            _assert_no_absolute_local_paths(exact_payload)
+            stage_role = {
+                "requirement_projection": "requirement_projection",
+                "requirement_projection_correction": "requirement_projection",
+                "requirement_findings": "requirement_findings",
+                "requirement_findings_correction": "requirement_findings",
+            }[role]
+            reserve_model_call(stage_role)
+            response, provider_request = request_requirement_coverage_model(
+                llm=llm,
+                payload=exact_payload,
+                schema=schema,
+                max_output_tokens=(ollama_max_output_tokens if local_ollama else external_patch_profile.output_budget),
+                capture_provider_request=local_ollama,
+                trace_role=role,
+                trace_body_root=run_root,
+            )
+            if local_ollama:
+                observed_identity = identity_reader(llm_base_url, str(ollama_model))
+                _validate_ollama_model_identity(
+                    observed_identity,
+                    expected_base_url=llm_base_url,
+                    expected_model=str(ollama_model),
+                )
+                _assert_ollama_model_identity_stable(
+                    expected=local_model_identity,
+                    observed=observed_identity,
+                )
+            audit = {
+                "model_role": role,
+                "payload_sha256": _sha256_json(exact_payload),
+                "structured_output_sha256": hashlib.sha256(
+                    response.content.encode("utf-8")
+                ).hexdigest(),
+                "data_classes": list(data_classes),
+                "model_identity": (
+                    dict(local_model_identity)
+                    if local_model_identity is not None
+                    else dict(model_admission.get("destination") or {})
+                ),
+                "provider_adapter": model_admission.get("provider_adapter"),
+                "execution_locality": model_admission.get("execution_locality"),
+                "provider_request": provider_request,
+                "automatic_provider_fallback": False,
+                "automatic_retry": False,
+                "absolute_local_paths_present": False,
+                "api_key_in_payload": False,
+            }
+            requirement_coverage_model_audits.append(audit)
+            audit_path = run_root / (
+                f"requirement_coverage_model_input_audit_{model_call_count}.json"
+            )
+            audit_path.write_text(
+                json.dumps(audit, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            if local_ollama:
+                local_model_input_audit = audit
+            else:
+                external_model_input_audit = audit
+            return parse_requirement_coverage_json_object(response.content)
+
+        requirement_coverage_provider = make_requirement_coverage_evidence_provider(
+            evidence_provider,
+            complete_json=complete_requirement_coverage_json,
+            projection_factory=requirement_coverage_projection_factory,
+            findings_factory=requirement_coverage_findings_factory,
+        )
+
+        from src.mod_agent.upstream_trace import observe_evidence_factory
+
+        @observe_evidence_factory
+        def evidence_factory(state: dict[str, Any], feature_data: dict[str, Any]):
+            evidence_pack = requirement_coverage_provider.collect(
+                query=str(state["user_request"]),
+                search_root=f"generated_mods/{source.name}",
+                feature_data=feature_data,
+            )
+            evidence_pack = replace(
+                evidence_pack,
+                budget_summary={
+                    **evidence_pack.budget_summary,
+                    "requirement_coverage_model_audits": [
+                        dict(item) for item in requirement_coverage_model_audits
+                    ],
+                },
+            )
+            if member_access_resolver is None or not evidence_pack.can_generate_patch:
+                return evidence_pack
+            try:
+                return enrich_source_evidence_with_member_accesses(
+                    evidence_pack,
+                    consumer_assembly=baseline_artifact,
+                    resolver=member_access_resolver,
+                )
+            except DotNetMetadataEnrichmentError as exc:
+                blocker = {
+                    "code": "DOTNET_MEMBER_ACCESS_UNRESOLVED",
+                    "message": str(exc),
+                    "needed_evidence": [
+                        "source-bound compiled receiver identity",
+                        "AssemblyRef-bound run-local dependency",
+                        "public readable direct Boolean property",
+                    ],
+                }
+                return replace(
+                    evidence_pack,
+                    readiness="insufficient",
+                    can_generate_patch=False,
+                    requirement_coverage=None,
+                    gaps=(
+                        *evidence_pack.gaps,
+                        "Run-local .NET member semantics remain unresolved.",
+                    ),
+                    blockers=(*evidence_pack.blockers, blocker),
+                    missing_evidence=(
+                        *evidence_pack.missing_evidence,
+                        {
+                            "needed_evidence": "verified .NET member access",
+                            "blocker_code": blocker["code"],
+                            "reason": blocker["message"],
+                        },
+                    ),
+                    message=(
+                        "Source evidence was found, but run-local .NET member "
+                        f"semantics could not be bound: {exc}"
+                    ),
+                )
+
+        worker_profile = LocalOllamaInitialPatchProfileV1(
+            profile_version=LOCAL_OLLAMA_PATCH_PROFILE_VERSION,
+            base_url=llm_base_url, model=ollama_model, context_window=ollama_context_window,
+            output_budget=ollama_max_output_tokens, timeout_seconds=float(llm.timeout),
+        ) if local_ollama else external_patch_profile
+        repair_worker_profile = (
+            replace(worker_profile, model=repair_ollama_model,
+                    timeout_seconds=float(repair_llm.timeout))
+            if repair_ollama_model is not None and repair_llm is not None else None
+        )
+        def admitted_worker_identity(base_url, model):
+            if external_assembly is not None:
+                return external_assembly.read_identity(base_url, model)
+            identities = {ollama_model: local_model_identity}
+            if repair_ollama_model is not None:
+                identities[repair_ollama_model] = repair_local_model_identity
+            expected = identities.get(model)
+            if expected is None:
+                raise LocalEntryError("PRODUCT_WORKER_MODEL_NOT_ADMITTED")
+            observed = identity_reader(base_url, model)
+            _validate_ollama_model_identity(observed, expected_base_url=base_url, expected_model=model)
+            _assert_ollama_model_identity_stable(expected=expected, observed=observed)
+            return observed
+
+        patch_change_factory = RequestPatchExecution(
+            artifact_store=artifact_store, workspace_root=run_root, profile=worker_profile,
+            repair_profile=repair_worker_profile, identity_reader=admitted_worker_identity,
+            policy=worker_policy, reserve_model_call=reserve_model_call,
+            budget_snapshot=model_budget_snapshot,
+            behavior_evaluator=(patch_worker_configuration.behavior_evaluator()
+                                if patch_worker_configuration is not None else None),
+            worker_configuration_ref=(patch_worker_configuration.reference
+                                      if patch_worker_configuration is not None else None),
+            trace_configuration=execution_trace_configuration,
+            adapter_factory=(external_assembly.make_worker if external_assembly is not None else None),
+        )
+        class PlanningClient:
+            def __init__(self):
+                self.client = (external_assembly.planning_client() if external_assembly is not None
+                               else LocalOllamaInitialPatchAdapter._default_agent_turn_client(worker_profile))
+                self.provider = self.client.provider
+                self.model = self.client.model
+
+            def complete_turn(self, request):
+                admitted_worker_identity(worker_profile.base_url, worker_profile.model)
+                reserve_model_call("planning")
+                from src.mod_agent.upstream_model_trace import trace_upstream_model_call
+                response = trace_upstream_model_call(
+                    role="planning", provider=self.provider, model=self.model,
+                    input_payload=request.messages[1].content,
+                    request_document=asdict(request), body_root=run_root,
+                    invoke=lambda: self.client.complete_turn(request))
+                admitted_worker_identity(worker_profile.base_url, worker_profile.model)
+                return response
+
+        planning_selector = (
+            (lambda _feature, _evidence: planning_target_evidence_ids)
+            if planning_target_evidence_ids else ModelPlanningTargetSelector(
+                client=PlanningClient(), workspace_root=run_root,
+                receipt_path=run_root / "planning_model_selection.json",
+                model_identity=(external_assembly.identity if external_assembly is not None else local_model_identity),
+            )
+        )
+
+        def dry_run_factory(
+            proposal: dict[str, Any],
+            implementation: dict[str, Any],
+            review: dict[str, Any],
+        ) -> dict[str, Any]:
+            nonlocal pending_dry_run
+            pending_dry_run = applier.run(
+                workspace_root=run_root,
+                proposal=proposal,
+                implementation_plan=implementation,
+                review=review,
+                allow_write=False,
+            )
+            return pending_dry_run
+
+        def isolated_apply_factory(
+            proposal: dict[str, Any],
+            implementation: dict[str, Any],
+            review: dict[str, Any],
+        ) -> dict[str, Any]:
+            if pending_dry_run is None:
+                raise LocalEntryError("Exact diff approval requested before dry-run completed.")
+            approved_diff_hash, human_semantic_decision = _read_exact_diff_approval(
+                diff_approval_reader,
+                pending_dry_run,
+            )
+            return applier.run(
+                workspace_root=run_root,
+                proposal=proposal,
+                implementation_plan=implementation,
+                review=review,
+                allow_write=True,
+                approved_diff_hash=approved_diff_hash,
+                human_semantic_decision=human_semantic_decision,
+            )
+
+        def build_result_factory(feature_id: str, input_execution_mode: str | None):
+            final_command = (
+                objective_verification_command
+                if objective_verification_command is not None
+                else nuget_build_profile.build_command
+            )
+            profile = BuildProfile(
+                profile_id=nuget_build_profile.profile_id,
+                build_system="dotnet",
+                working_directory=str(target_copy),
+                command=final_command,
+                timeout_seconds=nuget_build_profile.timeout_seconds,
+                expected_artifacts=(expected_artifact,),
+            )
+
+            def command_runner(selected: BuildProfile) -> BuildCommandResult:
+                if selected.command != final_command:
+                    raise LocalEntryError("Final build command does not match the bound profile.")
+                completed = _run_nuget_isolated_build(nuget_build_profile)
+                stdout = completed.stdout
+                stderr = completed.stderr
+                exit_code = completed.exit_code
+                duration_ms = completed.duration_ms
+                if exit_code == 0 and objective_verification_command is not None:
+                    objective = _run_nuget_isolated_verification_command(
+                        nuget_build_profile,
+                        objective_verification_command,
+                    )
+                    changed_files = tuple(
+                        str(path)
+                        for path in (
+                            pending_dry_run.get("changed_files")
+                            if isinstance(pending_dry_run, Mapping)
+                            else ()
+                        )
+                        or ()
+                    )
+                    objective = _bind_objective_failure_to_single_changed_file(
+                        objective,
+                        changed_files,
+                    )
+                    stdout = _join_build_phase_output(
+                        ("nuget-isolated build", stdout),
+                        ("objective verification", objective.stdout),
+                    )
+                    stderr = _join_build_phase_output(
+                        ("nuget-isolated build", stderr),
+                        ("objective verification", objective.stderr),
+                    )
+                    exit_code = objective.exit_code
+                    duration_ms += objective.duration_ms
+                build_stdout.write_text(stdout, encoding="utf-8")
+                build_stderr.write_text(stderr, encoding="utf-8")
+                return BuildCommandResult(
+                    exit_code=exit_code,
+                    stdout=stdout,
+                    stderr=stderr,
+                    duration_ms=duration_ms,
+                )
+
+            build_result = BuildAdapter().run_local(
+                feature_id=feature_id,
+                profile=profile,
+                command_runner=command_runner,
+                allow_execution=True,
+                input_execution_mode=input_execution_mode,
+            )
+            return _canonicalize_run_local_build_diagnostic_paths(
+                build_result,
+                run_root=run_root,
+                isolated_target_root=target_copy,
+            )
+
+        direct_stagger_admission = runtime_admission.get("stagger_acceptance")
+        direct_stagger_config = (
+            direct_stagger_admission.get("config")
+            if isinstance(direct_stagger_admission, Mapping)
+            else None
+        )
+        raw_runtime_evidence_factory = (
+            _make_deploying_runtime_evidence_factory(
+                settings=settings,
+                allow_game_launch=allow_game_launch,
+                allow_game_directory_write=allow_game_directory_write,
+                build_artifact_path=target_copy / expected_artifact,
+                expected_artifact=expected_artifact,
+                destination_path=Path(
+                    str(runtime_admission["plugin_deployment"]["destination_path"])
+                ),
+                backup_directory=run_root / "runtime_deployment_backup",
+                expected_destination_existed=bool(
+                    runtime_admission["plugin_deployment"][
+                        "destination_existed_at_admission"
+                    ]
+                ),
+                expected_destination_sha256=runtime_admission["plugin_deployment"][
+                    "destination_sha256_at_admission"
+                ],
+                expected_config_destination_existed=(
+                    bool(direct_stagger_config["destination_existed"])
+                    if isinstance(direct_stagger_config, Mapping)
+                    else None
+                ),
+                expected_config_destination_sha256=(
+                    direct_stagger_config.get("destination_sha256")
+                    if isinstance(direct_stagger_config, Mapping)
+                    else None
+                ),
+            )
+            if run_gtfo_runtime
+            else None
+        )
+        runtime_evidence_factory = (
+            _bind_owner_validated_runtime_evidence_factory(
+                raw_runtime_evidence_factory,
+                settings=settings,
+                allow_game_launch=allow_game_launch,
+                runtime_plugin_destination=runtime_plugin_destination,
+                allow_game_directory_write=allow_game_directory_write,
+                expected_runtime_admission=runtime_admission,
+            )
+            if raw_runtime_evidence_factory is not None
+            and runtime_plugin_destination is not None
+            else None
+        )
+
+        manifest = {
+            "run_id": run_id,
+            "request_id": request_id,
+            "status": "baseline_verified",
+            "started_at": started_at,
+            "request": description,
+            "target_source": str(source),
+            "target_source_provenance": "externally_produced_read_only_input",
+            "isolated_workspace": str(run_root),
+            "source_snapshot": initial_source_snapshot,
+            "source_snapshot_sha256": initial_source_snapshot_sha256,
+            "source_revision_binding": dict(source_revision_binding or {}),
+            "objective_verification_command": (
+                list(objective_verification_command)
+                if objective_verification_command is not None
+                else None
+            ),
+            "model": settings.llm.model,
+            "model_admission": model_admission,
+            "local_model_identity": local_model_identity,
+            "repair_local_model_identity": repair_local_model_identity,
+            "ollama_server_version": local_ollama_server_version,
+            "ollama_patch_generation_profile": ollama_patch_generation_profile,
+            "base_url": _sanitized_endpoint_url(llm_base_url),
+            "base_url_env": None if local_ollama else base_url_env,
+            "base_url_env_present": (
+                False if local_ollama else bool(os.environ.get(base_url_env))
+            ),
+            "api_key_env": None if local_ollama else api_key_env,
+            "api_key_required": not local_ollama,
+            "api_key_read": not local_ollama,
+            "api_key_present": False if local_ollama else True,
+            "api_key_value_persisted": False,
+            "source_disclosure": source_disclosure,
+            "runtime_admission": runtime_admission,
+            "assembly_name": assembly_name,
+            "build_dependency": {
+                "source": (
+                    str(source_bepinex_dir)
+                    if source_bepinex_dir is not None
+                    else None
+                ),
+                "isolated_copy": (
+                    str(isolated_bepinex_dir)
+                    if isolated_bepinex_dir is not None
+                    else None
+                ),
+                "build_uses_isolated_copy": isolated_bepinex_dir is not None,
+                "game_folder": (
+                    dict(game_folder_dependency)
+                    if game_folder_dependency is not None
+                    else None
+                ),
+            },
+            "nuget_isolated_build_profile": nuget_build_profile.to_dict(),
+            "compiled_artifact_inspection_profile": (
+                compiled_artifact_inspection_profile.to_dict()
+                if compiled_artifact_inspection_profile is not None
+                else None
+            ),
+            "verification_tool_build": verification_tool_build,
+            "baseline_build": baseline_result,
+            "model_call_count": 0,
+            "graph_invoked": False,
+            "patch_payload_parser_entered": False,
+            "actual_write_performed": False,
+            "limits": [
+                "No claim that the external BetterHitFeedback project was generated by this platform.",
+                (
+                    "No real GTFO launch or gameplay validation is performed."
+                    if not run_gtfo_runtime
+                    else (
+                        "Runtime evidence proves only the process, logs, markers, and "
+                        "screenshot facts bound by this run."
+                    )
+                ),
+                (
+                    (
+                        "run-request does not deploy the built plugin into the GTFO "
+                        "game directory or verify a deployed DLL hash."
+                    )
+                    if not run_gtfo_runtime
+                    else (
+                        "The verified built plugin is deployed only for this Runtime "
+                        "capture and the destination is restored afterward."
+                    )
+                ),
+                (
+                    "The dotnet process executes user-authorized project build logic "
+                    "and is not an OS sandbox."
+                ),
+            ],
+        }
+        manifest = preserve_product_trace_projection(manifest, run_root)
+        (run_root / "run_manifest.json").write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        _run_pre_graph_step(
+            failure_stage="pre_graph_generated_directory_cleanup",
+            action=lambda: tuple(
+                _remove_generated_build_directory(generated_directory)
+                for generated_directory in (target_copy / "bin", target_copy / "obj")
+            ),
+            run_root=run_root,
+            run_id=run_id,
+            request_id=request_id,
+            source_revision_binding=source_revision_binding,
+            model_admission=model_admission,
+            extra={
+                "baseline_build": baseline_result,
+                "verification_tool_build": verification_tool_build,
+            },
+        )
+
+        product_request = ProductExecutionRequestV1(
+            contract_version="1",
+            run_id=run_id,
+            request_id=request_id,
+            user_request=description,
+            target_domain="gtfo",
+            target_mod=source.name,
+            requested_completion_scope=(
+                "runtime_workflow" if run_gtfo_runtime else "compile_only"
+            ),
+            repair_budget=2,
+            isolated_workspace_root=str(run_root),
+            isolated_target_root=str(target_copy.resolve()),
+            source_root=str(source),
+            artifact_store_root=str(artifact_store.root),
+            source_snapshot_sha256=initial_source_snapshot_sha256,
+            isolated_source_snapshot_sha256=_source_snapshot_sha256(
+                _source_snapshot(target_copy)
+            ),
+            input_bindings=(
+                ProductExecutionInputBindingV1.create(
+                    "source_revision_binding",
+                    dict(source_revision_binding) if source_revision_binding else None,
+                ),
+                ProductExecutionInputBindingV1.create(
+                    "source_disclosure", source_disclosure
+                ),
+                ProductExecutionInputBindingV1.create(
+                    "model_admission", model_admission
+                ),
+                ProductExecutionInputBindingV1.create(
+                    "runtime_admission", runtime_admission
+                ),
+            ),
+            completion_classification=tuple(
+                sorted(
+                    (
+                        (str(key), value)
+                        for key, value in dict(completion_classification or {}).items()
+                    ),
+                    key=lambda item: item[0].encode("utf-8"),
+                )
+            ),
+            confirmed_isolated_write=True,
+            allow_build=True,
+        )
+        product_adapters = ProductExecutionAdaptersV1(
+            evidence_pack_factory=evidence_factory,
+            planning_target_selection_factory=planning_selector,
+            patch_change_factory=patch_change_factory,
+            dry_run_factory=dry_run_factory,
+            isolated_apply_factory=isolated_apply_factory,
+            build_result_factory=build_result_factory,
+            runtime_evidence_factory=runtime_evidence_factory,
+            compiled_artifact_verifier=active_compiled_artifact_verifier,
+            source_change_verifier=source_change_verifier,
+        )
+        product_preflight = preflight_product_execution(
+            product_request,
+            product_adapters,
+            artifact_store,
+            strict_git_admission=source_git_admission,
+        )
+        if product_preflight.preflight_status != "ready":
+            raise LocalEntryError(
+                "Product execution preflight was blocked: "
+                + "; ".join(item.message for item in product_preflight.blockers)
+            )
+        with _working_directory(run_root):
+            try:
+                product_result = execute_product_execution(
+                    product_preflight,
+                    product_adapters,
+                    artifact_store,
+                    strict_git_admission=source_git_admission,
+                    defer_approval=defer_approval,
+                )
+            except ProductApprovalDeferred as pending:
+                waiting = pending.to_dict()
+                waiting.update(
+                    current_stage="awaiting_approval", run_root=str(run_root),
+                    model_call_count=model_call_count, model_call_budget=model_budget_snapshot(),
+                    graph_invoked=True, patch_payload_parser_entered=True,
+                    actual_write_performed=False,
+                    artifacts={item.artifact_role: item.artifact_ref.path for item in pending.outputs},
+                    source_revision_binding=dict(source_revision_binding or {}),
+                    model_admission=model_admission,
+                    canonical_source_unchanged=_source_snapshot(source) == initial_source_snapshot,
+                )
+                patch_change_factory.complete_deferred(pending)
+                waiting["execution_trace"] = product_trace_identity(product_trace, run_root)
+                waiting["patch_execution_receipts"] = [journal.projection() for journal in patch_change_factory.journals]
+                _persist_graph_terminal_result(
+                    run_root=run_root, run_id=run_id, request_id=request_id, summary=waiting,
+                    model_call_count=model_call_count, patch_payload_parser_entered=True,
+                    actual_write_performed=False,
+                )
+                return waiting
+            except ProductExecutionContractError:
+                raise
+            except Exception as exc:
+                provider_failure = _persist_local_failure_diagnostics(
+                    run_root=run_root,
+                    error=exc,
+                    enabled=local_ollama,
+                )
+                _persist_graph_terminal_failure(
+                    run_root=run_root,
+                    run_id=run_id,
+                    request_id=request_id,
+                    error=exc,
+                    model_call_count=model_call_count,
+                    extra=(
+                        {"provider_failure": provider_failure}
+                        if provider_failure is not None
+                        else None
+                    ),
+                )
+                raise LocalEntryError(
+                    f"Controlled product executor failed: {type(exc).__name__}: {exc}"
+                ) from exc
+
+        patch_change_factory.complete_product(product_result)
+        if patch_change_factory.receipts:
+            current_patch_receipt = patch_change_factory.patch_attempt_receipt()
+            local_model_input_audit = {
+                **current_patch_receipt,
+                "model_role": "repair" if "repair_context" in current_patch_receipt else "initial_patch",
+                "provider_request": {
+                    "timeout_seconds": current_patch_receipt["profile"]["timeout_seconds"],
+                    "scope": "configured_agent_client_not_transport_send_proof",
+                },
+                "provider_request_profile": {
+                    "timeout_seconds": current_patch_receipt["profile"]["timeout_seconds"],
+                    "scope": "configured_agent_client",
+                },
+            }
+        product_result_projection = product_result.to_dict()
+        output_paths = {
+            item.artifact_role: item.artifact_ref.path for item in product_result.outputs
+        }
+        validation_details = {
+            item.detail_kind: item.payload
+            for item in product_result.validation_facts.details
+        }
+        variant_projection = product_result.variant_result.to_dict()
+        build_summary = {
+            "status": variant_projection.get("build_status", "not_reached"),
+            "claims_real_build_success": variant_projection.get(
+                "claims_real_build_success"
+            ),
+        }
+        runtime_summary = {
+            key: variant_projection.get(key)
+            for key in ("runtime_status", "eval_verdict", "final_status")
+            if key in variant_projection
+        }
+        runtime_chain_roles = (
+            "build_result",
+            "runtime_evidence",
+            "eval_report",
+            "workflow_summary",
+        )
+        runtime_verification_chain = {
+            "requested": run_gtfo_runtime,
+            "artifact_refs": {
+                role: output_paths.get(role) for role in runtime_chain_roles
+            },
+            "workflow_chain_completed": bool(
+                run_gtfo_runtime
+                and product_result.execution_disposition == "succeeded"
+                and all(output_paths.get(role) for role in runtime_chain_roles)
+            ),
+        }
+        output_readback = validation_details.get("output_readback") or []
+        isolated_apply_payload = next(
+            (
+                item.get("data")
+                for item in output_readback
+                if isinstance(item, Mapping)
+                and item.get("artifact_type") == "isolated_apply_result"
+            ),
+            {},
+        )
+        actual_write_performed = bool(
+            isinstance(isolated_apply_payload, Mapping)
+            and isolated_apply_payload.get("actual_write_performed") is True
+        )
+        patch_payload_parser_entered = "patch_proposal" in output_paths
+        selected_classification = dict(product_request.completion_classification)
+        final_artifact_verification = validation_details.get("compiled_artifact")
+        source_change_verification = validation_details.get("source_change")
+        source_validation_status = product_result.validation_facts.canonical_source_status
+        canonical_source_unchanged = (
+            True if source_validation_status == "passed"
+            else False if source_validation_status == "failed" else None
+        )
+
+        summary = {
+            "run_id": run_id,
+            "current_stage": product_result.terminal_node,
+            "feature_id": product_result.feature_id,
+            "blockers": [item.to_dict() for item in product_result.blockers],
+            "artifacts": output_paths,
+            "build_summary": build_summary,
+            "runtime_summary": runtime_summary,
+            "runtime_admission": runtime_admission,
+            "runtime_verification_chain": runtime_verification_chain,
+            "run_root": str(run_root),
+            "build_stdout": str(build_stdout) if build_stdout.exists() else None,
+            "build_stderr": str(build_stderr) if build_stderr.exists() else None,
+            "source_revision_binding": dict(source_revision_binding or {}),
+            "external_model_input_audit": external_model_input_audit,
+            "local_model_input_audit": local_model_input_audit,
+            "model_call_count": model_call_count,
+            "model_call_budget": model_budget_snapshot(),
+            "patch_execution_receipts": [journal.projection() for journal in patch_change_factory.journals],
+            "graph_invoked": True,
+            "patch_payload_parser_entered": patch_payload_parser_entered,
+            "actual_write_performed": actual_write_performed,
+            "model_admission": model_admission,
+            "local_model_identity": local_model_identity,
+            "repair_local_model_identity": repair_local_model_identity,
+            "verification_tool_build": verification_tool_build,
+            "baseline_artifact_verification": baseline_result.get(
+                "compiled_artifact_verification"
+            ),
+            "final_artifact_verification": final_artifact_verification,
+            "canonical_source_unchanged": canonical_source_unchanged,
+            "canonical_source_validation_status": source_validation_status,
+            "initial_isolated_source_snapshot": initial_source_snapshot,
+            "final_isolated_source_snapshot": (
+                source_change_verification.get("final_snapshot")
+                if isinstance(source_change_verification, Mapping)
+                else None
+            ),
+            "source_change_verification": source_change_verification,
+            "completion_classification": selected_classification,
+            "product_execution_result": product_result_projection,
+            "execution_trace": product_trace_identity(product_trace, run_root),
+        }
+        try:
+            _persist_graph_terminal_result(
+                run_root=run_root,
+                run_id=run_id,
+                request_id=request_id,
+                summary=summary,
+                model_call_count=model_call_count,
+                patch_payload_parser_entered=patch_payload_parser_entered,
+                actual_write_performed=actual_write_performed,
+            )
+        except Exception as exc:
+            raise ProductExecutionPresentationError(
+                product_execution_result=product_result,
+                failure_class=type(exc).__name__,
+                failure_message=str(exc) or type(exc).__name__,
+                sink="run_manifest_and_result_json",
+            ) from exc
+        return summary
 
 
 def _load_runtime_continuation_handoff(

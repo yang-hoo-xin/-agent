@@ -68,6 +68,7 @@ from .local_entry import (
     run_local_request,
 )
 from .model_qualification import ModelQualificationError, resolve_qualified_patch_profile
+from .patch_execution_trace import exception_execution_trace_projection
 from .patch_upstream_configuration import PatchUpstreamConfiguration
 from .patch_worker_configuration import PatchWorkerConfiguration, read_json_object
 from .planning import ModPlanningBriefBuilder, RequestPlanner
@@ -2541,6 +2542,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 json.dumps(
                     {
                         "status": "PRESENTATION_FAILED",
+                        **exception_execution_trace_projection(exc),
                         "product_execution_result": (
                             exc.product_execution_result.to_dict()
                         ),
@@ -2560,6 +2562,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 json.dumps(
                     {
                         "status": "CONTRACT_ERROR",
+                        **exception_execution_trace_projection(exc),
                         "reason": exc.reason,
                         "side_effects_may_have_started": (
                             exc.side_effects_may_have_started
@@ -2573,7 +2576,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (LocalEntryError, OSError, ValueError) as exc:
             print(
                 json.dumps(
-                    {"status": "BLOCKED", "reason": str(exc)},
+                    {"status": "BLOCKED", "reason": str(exc),
+                     **exception_execution_trace_projection(exc)},
                     ensure_ascii=False,
                     indent=2,
                 )

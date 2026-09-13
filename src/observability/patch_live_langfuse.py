@@ -26,7 +26,7 @@ from src.observability.patch_langfuse import (
     _verified_check_counts,
 )
 
-LIVE_MAPPING_VERSION = "patch_live_langfuse_metadata_v2"
+LIVE_MAPPING_VERSION = "patch_live_langfuse_metadata_v3"
 OTLP_ENDPOINT = "/api/public/otel/v1/traces"
 SCORE_ENDPOINT = "/api/public/scores"
 LIVE_BEHAVIOR_SCORE_NAME = "local_check_pass_fraction"
@@ -37,23 +37,165 @@ _MACHINE_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}\Z")
 _NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.:-]{0,95}\Z")
 _METADATA_LABELS = frozenset({"provider", "response_origin", "tool_name", "source_kind", "status",
     "workflow_node", "workflow_status", "terminal_stage", "failure_code", "verification_status", "failure_owner", "execution_origin",
-    "admission_result", "result_code", "timing_scope", "validator", "exception_type", "score_basis"})
+    "admission_result", "result_code", "timing_scope", "validator", "exception_type", "score_basis",
+    "model_role", "reason_status", "route_decision", "trace_scope", "retrieval_status", "decision",
+    "decision_status", "readiness", "input_role", "material_delivery_status", "selection_mode", "local_body_status",
+    "from_node", "selected_route", "selected_next_node", "route_selector", "material_capture_status",
+    "route_input_summary_scope", "route_input_summary_status", "route_output_summary_status",
+    "failure_stage", "execution_phase", "fact_delivery_status"})
 _METADATA_NUMBERS = frozenset({"turn_index", "response_received", "response_complete", "http_status", "usage_available", "byte_count", "reused",
     "evaluation_index", "checks_run", "checks_failed", "transport_started", "request_bytes", "file_count",
     "proposal_admitted", "callback_invoked", "tool_dispatch_performed", "encoded_payload_bytes", "observation_queued",
     "model_consumption_proven", "read_cost", "prepared_before_dispatch", "dispatch_started", "request_registered",
     "upstream_execution_performed", "exit_code", "timed_out", "process_index", "process_count",
-    "score_eligible", "verification_executions"})
+    "score_eligible", "verification_executions", "model_input_assembled", "unresolved_gap_count",
+    "tool_exit_code", "evidence_item_count", "query_count", "requirement_count", "relation_count",
+    "projection_fallback_used", "findings_invocation_performed", "can_generate_patch", "provider_failure_count",
+    "callback_returned", "source_directory_exists", "project_file_discovered", "local_manifest_created",
+    "input_member_access_count", "output_member_access_count", "added_member_access_count", "removed_member_access_count",
+    "produced_member_access_fact_count"})
 _METADATA_HASHES = frozenset({"request_sha256", "response_sha256", "observation_sha256",
     "behavior_report_sha256", "output_code_sha256", "output_sha256", "generated_changes_sha256", "baseline_sha256",
-    "response_content_sha256", "source_snapshot_sha256", "encoded_payload_sha256", "arguments_sha256", "verification_matrix_sha256"})
+    "response_content_sha256", "source_snapshot_sha256", "encoded_payload_sha256", "arguments_sha256", "verification_matrix_sha256",
+    "input_payload_sha256", "feature_payload_sha256", "evidence_payload_sha256", "structured_output_sha256",
+    "materialized_projection_sha256", "output_payload_sha256", "reason_sha256", "query_sha256", "route_input_sha256",
+    "input_member_access_facts_sha256", "output_member_access_facts_sha256", "produced_member_access_facts_sha256"})
 _IDENTITY_ATTRIBUTES = frozenset({"source_observation_id", "binding_id", "provider_response_id"})
 _GATE_LABELS = {"failure_boundary": "provider_request_gate",
     "failure_classification": "provider_request_context_budget_exceeded",
     "context_admission_mode": "provider_body_utf8_proxy_plus_output_budget_v1"}
 _GATE_NUMBERS = frozenset({"provider_body_utf8_bytes", "configured_num_ctx", "num_predict", "conservative_required_context"})
+_UPSTREAM_ENUM_LABELS = {
+    "decision": {"patch_allowed", "patch_blocked", "select_targets", "needs_evidence", "retain_current_plan"},
+    "decision_status": {"preparing", "running", "selected", "blocked", "retained_current_plan"},
+    "readiness": {"sufficient", "partial", "insufficient", "contradictory"},
+    "retrieval_status": {"source_scope_rejected", "source_root_missing", "query_terms_missing", "tool_failed",
+        "no_matches", "source_identity_ambiguous", "requested_source_no_matches", "source_decode_failed", "source_observations_returned"},
+    "local_body_status": {"request_write_failed", "response_write_failed", "response_tools_write_failed", "response_metadata_unavailable"},
+    "reason_status": {"reason_unavailable", "model_rationale_local_only"},
+    "trace_scope": {"product_execution"},
+    "fact_delivery_status": {"evidence_pack_enriched_model_delivery_unproven", "evidence_pack_assembled_model_delivery_unproven"},
+}
 ALLOWED_ATTRIBUTE_KEYS = _METADATA_LABELS | _METADATA_NUMBERS | _METADATA_HASHES | {
-    "model", "usage", "call_id", "tool_call_id", "artifact_refs", "consumed_tool_results", "tool_call_ids"} | _IDENTITY_ATTRIBUTES | frozenset(_GATE_LABELS) | _GATE_NUMBERS
+    "model", "usage", "call_id", "tool_call_id", "artifact_refs", "consumed_tool_results", "tool_call_ids",
+    "consumed_materials", "produced_materials", "selected_evidence_ids", "relationship_counts", "local_detail_refs",
+    "terminal_record_ref"} | _IDENTITY_ATTRIBUTES | frozenset(_GATE_LABELS) | _GATE_NUMBERS
+
+
+def _materials(value: Any) -> list[dict] | None:
+    """Export exact material identities, excluding paths and all source text."""
+    if not isinstance(value, (tuple, list)):
+        return None
+    result = []
+    for item in value[:256]:
+        if not isinstance(item, Mapping):
+            continue
+        kept = {}
+        for key in ("source_hash", "excerpt_sha256"):
+            digest = item.get(key)
+            if isinstance(digest, str) and _DIGEST.fullmatch(digest):
+                kept[key] = digest
+        identity = item.get("evidence_id")
+        if isinstance(identity, str) and 0 < len(identity) <= 300:
+            kept["evidence_id_sha256"] = _hash_text(identity)
+        source_type = _machine_text(item.get("source_type"))
+        if source_type is not None:
+            kept["source_type"] = source_type
+        # Partial identities may be shown, but a query must not join them as proof.
+        if kept:
+            result.append(kept)
+    return result
+
+
+def _decision_metadata(attributes: Mapping) -> dict:
+    """Summarize recorded structure; never relay free-form model explanations."""
+    result = {}
+    details = attributes.get("local_detail_refs")
+    if isinstance(details, Mapping):
+        kept = {}
+        for role in ("request", "response", "planning_receipt", "response_tools", "failure"):
+            item = details.get(role)
+            digest = item.get("sha256") if isinstance(item, Mapping) else None
+            if isinstance(digest, str) and _DIGEST.fullmatch(digest):
+                kept[role] = {"sha256": digest}
+        if kept:
+            result["local_detail_refs"] = kept
+    terminal = attributes.get("terminal_record_ref")
+    digest = terminal.get("sha256") if isinstance(terminal, Mapping) else None
+    if isinstance(digest, str) and _DIGEST.fullmatch(digest):
+        result["terminal_record_ref"] = {"sha256": digest}
+    for key in ("consumed_materials", "produced_materials"):
+        materials = _materials(attributes.get(key))
+        if materials is not None:
+            result[key] = materials
+            result[key + "_truncated"] = len(attributes[key]) > 256
+    selected = attributes.get("selected_evidence_ids")
+    if isinstance(selected, (tuple, list)):
+        result["selected_evidence_id_sha256s"] = [_hash_text(value) for value in selected[:256]
+            if isinstance(value, str) and 0 < len(value) <= 300]
+        result["selected_evidence_ids_truncated"] = len(selected) > 256
+    raw = attributes.get("relationship_counts")
+    if isinstance(raw, Mapping):
+        counts = {key: raw[key] for key in ("support", "conflict", "missing")
+                  if type(raw.get(key)) is int and raw[key] >= 0}
+        if counts:
+            result["relationship_counts"] = counts
+    pieces = []
+    if type(attributes.get("source_directory_exists")) is bool:
+        pieces.append("材料目录存在" if attributes["source_directory_exists"] else "材料目录不存在")
+    if type(attributes.get("project_file_discovered")) is bool:
+        pieces.append("已发现项目文件" if attributes["project_file_discovered"] else "未发现项目文件")
+    failure_stage = _machine_text(attributes.get("failure_stage"))
+    if failure_stage is not None:
+        pieces.append("记录失败阶段 " + failure_stage)
+    for key, label in (("input_member_access_count", "增强前API事实"), ("output_member_access_count", "增强后API事实"),
+                       ("added_member_access_count", "新增API事实"), ("removed_member_access_count", "移除API事实"),
+                       ("produced_member_access_fact_count", "最终证据包API事实")):
+        if type(attributes.get(key)) is int and attributes[key] >= 0:
+            pieces.append(label + str(attributes[key]) + "项")
+    fact_delivery = attributes.get("fact_delivery_status")
+    if isinstance(fact_delivery, str) and fact_delivery in _UPSTREAM_ENUM_LABELS["fact_delivery_status"]:
+        pieces.append("整包API事实是否传给模型尚未证明")
+    for key, label in (("requirement_count", "物化需求"), ("relation_count", "关系"), ("query_count", "检索查询")):
+        if type(attributes.get(key)) is int and attributes[key] >= 0:
+            pieces.append(label + str(attributes[key]) + "项")
+    retrieval_labels = {"source_scope_rejected": "材料范围未准入", "source_root_missing": "材料目录不存在",
+        "query_terms_missing": "缺少检索词", "tool_failed": "检索工具失败", "no_matches": "该次检索无匹配",
+        "source_identity_ambiguous": "材料身份不唯一", "requested_source_no_matches": "指定材料无匹配",
+        "source_decode_failed": "材料解码失败", "source_observations_returned": "已返回源码观察"}
+    if isinstance(attributes.get("retrieval_status"), str) and attributes["retrieval_status"] in retrieval_labels:
+        pieces.append(retrieval_labels[attributes["retrieval_status"]])
+    decision_labels = {"patch_allowed": "确定性判断允许进入Patch", "patch_blocked": "确定性判断阻止进入Patch",
+        "select_targets": "模型选择修改目标", "needs_evidence": "模型请求补充证据", "retain_current_plan": "模型建议保留原Plan"}
+    if isinstance(attributes.get("decision"), str) and attributes["decision"] in decision_labels:
+        pieces.append(decision_labels[attributes["decision"]])
+    from_node = _machine_text(attributes.get("from_node"))
+    selected_next = attributes.get("selected_next_node")
+    next_node = selected_next if selected_next == "__end__" else _machine_text(selected_next)
+    if from_node is not None and next_node is not None:
+        pieces.append("已选择路线 " + from_node + " → " + next_node + "（后续是否执行另查）")
+    if "relationship_counts" in result:
+        labels = {"support": "支持", "conflict": "冲突", "missing": "缺证"}
+        pieces.append("结构化判断：" + "，".join(labels[key] + str(value)
+                      for key, value in result["relationship_counts"].items()))
+    if "selected_evidence_id_sha256s" in result:
+        pieces.append("记录选择证据" + str(len(result["selected_evidence_id_sha256s"])) + "项")
+    for key, label in (("produced_materials", "记录返回材料"), ("consumed_materials", "记录输入材料")):
+        if key in result:
+            pieces.append(label + str(len(result[key])) + "项")
+    if type(attributes.get("unresolved_gap_count")) is int and attributes["unresolved_gap_count"] >= 0:
+        pieces.append("未解决缺口" + str(attributes["unresolved_gap_count"]) + "项")
+    if pieces:
+        result["decision_summary"] = "；".join(pieces) + "。计数不证明语义正确或实际模型消费。"
+        result["decision_summary_origin"] = "system_fact_from_recorded_structure"
+        if "relationship_counts" in result or "selected_evidence_id_sha256s" in result:
+            mode, role, decision = attributes.get("selection_mode"), attributes.get("model_role"), attributes.get("decision")
+            model_claim = (mode == "model" or isinstance(role, str) and role in {
+                "requirement_findings", "requirement_findings_correction", "planning"}
+                or isinstance(decision, str) and decision in {"select_targets", "needs_evidence", "retain_current_plan"})
+            result["decision_claim_origin"] = ("model_claim_requires_validation" if model_claim
+                else "injected_claim_requires_validation" if mode == "injected" else "recorded_claim_origin_unknown")
+    return result
 
 
 def _json(value: Any) -> bytes:
@@ -130,12 +272,22 @@ def _usage(attributes: Mapping) -> tuple[dict | None, str]:
 
 def _metadata(attributes: Mapping) -> dict:
     result = {key: value for key, value in _GATE_LABELS.items() if attributes.get(key) == value}
+    result.update(_decision_metadata(attributes))
     for key in _GATE_NUMBERS:
         value = attributes.get(key)
         if type(value) is int and value >= 0:
             result[key] = value
     for key in _METADATA_LABELS:
+        raw_value = attributes.get(key)
+        if key == "selected_next_node" and raw_value == "__end__":
+            result[key] = raw_value
+            continue
+        if key == "route_selector" and isinstance(raw_value, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", raw_value):
+            result[key] = raw_value
+            continue
         value = _machine_text(attributes.get(key))
+        if key in _UPSTREAM_ENUM_LABELS and value not in _UPSTREAM_ENUM_LABELS[key]:
+            continue
         if key == "exception_type" and (value is None or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,95}", value)):
             continue
         if value is not None:
@@ -202,6 +354,11 @@ def _native_status(row: Mapping, attributes: Mapping) -> tuple[str, str]:
     if row["status"] == "failed":
         exception = _metadata(attributes).get("exception_type")
         return "ERROR", "operation_failed" + (":" + exception if exception else "")
+    if isinstance(attributes.get("decision"), str) and attributes["decision"] in {"patch_blocked", "needs_evidence"}:
+        return "WARNING", f"decision={attributes['decision']};operation_completed;not_task_acceptance"
+    if isinstance(attributes.get("retrieval_status"), str) and attributes["retrieval_status"] in {"source_scope_rejected", "source_root_missing", "query_terms_missing",
+            "tool_failed", "no_matches", "source_identity_ambiguous", "requested_source_no_matches", "source_decode_failed"}:
+        return "WARNING", f"retrieval_status={attributes['retrieval_status']};not_semantic_root_cause"
     if row["name"] == "patch.verify":
         status = attributes.get("verification_status")
         if status not in {"passed", "behavior_failed", "needs_evidence", "infrastructure_failed", "identity_failed"}:
@@ -319,7 +476,7 @@ def build_patch_live_otlp(row: Mapping) -> dict:
         metadata["recorded_elapsed_ms"] = elapsed
     level, status_message = _native_status(row, attributes)
     attrs = [_attribute("langfuse.observation.type", kind),
-             _attribute("langfuse.trace.name", "Patch execution"),
+             _attribute("langfuse.trace.name", "Product execution" if attributes.get("trace_scope") == "product_execution" else "Patch execution"),
              {"key": "langfuse.trace.tags", "value": {"arrayValue": {"values": [
                  {"stringValue": "live_execution"}, {"stringValue": "metadata_only"}]}}},
              _attribute("langfuse.observation.level", level),

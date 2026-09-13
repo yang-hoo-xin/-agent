@@ -8,6 +8,7 @@ import json
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
+from functools import wraps
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 from uuid import uuid4
@@ -105,6 +106,7 @@ from src.mod_agent.runtime.stagger_planner_admission import (
 from src.mod_agent.runtime_evidence_consolidation import (
     project_operation_payload as project_consolidated_runtime_evidence,
 )
+from src.mod_agent.upstream_trace import payload_sha256, update_observation
 from src.mod_agent.verification_operations import (
     EVIDENCE_CONSOLIDATION_COMPLETION,
     RUNTIME_EVIDENCE_ONLY_COMPLETION,
@@ -1332,7 +1334,7 @@ def build_graph(
         operation_handler == "runtime_terminalization"
         and validated_verification_operation is not None
     ):
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             START,
             lambda state: _route_runtime_terminal_continuation_entry(
                 state,
@@ -1350,7 +1352,7 @@ def build_graph(
         operation_handler == "runtime_evidence_consolidation"
         and validated_verification_operation is not None
     ):
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             START,
             lambda state: _route_runtime_evidence_consolidation_entry(
                 state,
@@ -1365,7 +1367,7 @@ def build_graph(
         operation_handler == "runtime_execution"
         and validated_verification_operation is not None
     ):
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             START,
             lambda state: _route_runtime_continuation_entry(
                 state,
@@ -1375,7 +1377,7 @@ def build_graph(
             {"continue": "collect_runtime_evidence"},
         )
     elif validated_planning_continuation_mode is not None:
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             START,
             lambda state: _validate_planning_continuation_graph_start(
                 state,
@@ -1385,7 +1387,7 @@ def build_graph(
             {"continue": "create_implementation_plan"},
         )
     elif validated_patch_continuation_mode is not None:
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             START,
             lambda state: _validate_patch_continuation_graph_start(
                 state,
@@ -1397,7 +1399,7 @@ def build_graph(
              else {"continue": "generate_patch_proposal"}),
         )
     elif validated_product_execution_mode is not None:
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             START,
             lambda state: _validate_product_graph_start(
                 state,
@@ -1412,40 +1414,40 @@ def build_graph(
     else:
         graph.add_edge(START, "plan_request")
     if operation_handler == "verification_build":
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             "verification_only_admission",
             lambda state: "blocked" if state["blockers"] else "continue",
             {"blocked": END, "continue": "build"},
         )
     registry = route_registry()
-    graph.add_conditional_edges(
+    _add_traced_conditional_edges(graph,
         "plan_request",
         route_after_plan_request,
         dict(registry["plan_request"]),
     )
-    graph.add_conditional_edges(
+    _add_traced_conditional_edges(graph,
         "planning_brief",
         route_after_planning_brief,
         dict(registry["planning_brief"]),
     )
-    graph.add_conditional_edges(
+    _add_traced_conditional_edges(graph,
         "draft_feature_spec",
         route_after_feature_spec,
         dict(registry["draft_feature_spec"]),
     )
     if stop_after_evidence:
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             "retrieve_evidence",
             route_after_evidence,
             {"continue": END, "blocked": END},
         )
     else:
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             "retrieve_evidence",
             route_after_evidence,
             dict(registry["retrieve_evidence"]),
         )
-    graph.add_conditional_edges(
+    _add_traced_conditional_edges(graph,
         "create_implementation_plan",
         route_after_implementation_plan,
         (
@@ -1456,7 +1458,7 @@ def build_graph(
             else dict(registry["create_implementation_plan"])
         ),
     )
-    graph.add_conditional_edges(
+    _add_traced_conditional_edges(graph,
         "generate_patch_proposal",
         route_after_patch_proposal,
         (
@@ -1466,7 +1468,7 @@ def build_graph(
             else dict(registry["generate_patch_proposal"])
         ),
     )
-    graph.add_conditional_edges(
+    _add_traced_conditional_edges(graph,
         "review_proposal",
         route_after_review,
         (
@@ -1479,7 +1481,7 @@ def build_graph(
         ),
     )
     if enable_dynamic_review_interrupt:
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             "human_review_gate",
             route_after_human_review_gate,
             dict(registry["human_review_gate"]),
@@ -1491,7 +1493,7 @@ def build_graph(
     dry_run_routes = dict(registry["dry_run_apply"])
     if isolated_apply_factory is not None:
         dry_run_routes["continue"] = "isolated_apply"
-    graph.add_conditional_edges(
+    _add_traced_conditional_edges(graph,
         "dry_run_apply",
         route_after_dry_run,
         (
@@ -1501,7 +1503,7 @@ def build_graph(
         ),
     )
     if isolated_apply_factory is not None:
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             "isolated_apply",
             route_after_isolated_apply,
             dict(registry["isolated_apply"]),
@@ -1511,7 +1513,7 @@ def build_graph(
         and validated_product_execution_mode.request.requested_completion_scope
         == "compile_only"
     ):
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             "build",
             route_after_build,
             {
@@ -1521,13 +1523,13 @@ def build_graph(
             },
         )
     elif stop_after_build or operation_controls.stop_after_build:
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             "build",
             route_after_build,
             {"blocked": END, "continue": END, "repair": END},
         )
     else:
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             "build",
             route_after_build,
             dict(registry["build"]),
@@ -1537,23 +1539,23 @@ def build_graph(
     elif operation_handler == "runtime_execution":
         runtime_routes = dict(registry["collect_runtime_evidence"])
         runtime_routes["stop"] = END
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             "collect_runtime_evidence",
             _route_after_typed_runtime_evidence,
             runtime_routes,
         )
     else:
-        graph.add_conditional_edges(
+        _add_traced_conditional_edges(graph,
             "collect_runtime_evidence",
             route_after_runtime_evidence,
             dict(registry["collect_runtime_evidence"]),
         )
-    graph.add_conditional_edges(
+    _add_traced_conditional_edges(graph,
         "resolve_runtime_binding",
         route_after_binding_resolution,
         dict(registry["resolve_runtime_binding"]),
     )
-    graph.add_conditional_edges(
+    _add_traced_conditional_edges(graph,
         "create_repair_plan",
         route_after_repair_plan,
         ({"evidence": "retrieve_evidence", "planning": "create_implementation_plan", "blocked": END,
@@ -1562,7 +1564,7 @@ def build_graph(
          if validated_patch_continuation_mode is not None
          else dict(registry["create_repair_plan"])),
     )
-    graph.add_conditional_edges(
+    _add_traced_conditional_edges(graph,
         "evaluate",
         (
             _route_after_terminal_evaluate
@@ -1583,6 +1585,97 @@ def build_graph(
         interrupt_after=effective_interrupt_after,
     )
 
+
+
+def _route_input_summary(state: ModAgentState, from_node: str) -> dict[str, Any]:
+    """Project selector fields; never copy blocker messages or model rationale."""
+    blockers = state.get("blockers", [])
+    values = {
+        "blocker_count": len(blockers),
+        "blocker_codes": [row.get("code") for row in blockers if isinstance(row, Mapping)],
+        "blocker_stages": [row.get("stage") for row in blockers if isinstance(row, Mapping)],
+    }
+    if from_node == "plan_request":
+        values["execution_path"] = state.get("execution_path")
+    elif from_node == "retrieve_evidence":
+        values["evidence_pack_present"] = "evidence_pack" in state.get("artifacts", {})
+    elif from_node == "review_proposal":
+        review = state.get("review_summary", {})
+        values.update(review_allowed_next_stage=review.get("allowed_next_stage"),
+                      review_decision=review.get("decision"))
+    elif from_node == "generate_patch_proposal":
+        pending = state.get("runtime_summary", {}).get("patch_upstream_pending")
+        values.update(
+            upstream_pending_present=isinstance(pending, Mapping),
+            upstream_plan_hash_matches=(isinstance(pending, Mapping) and
+                pending.get("source_plan_hash") == state.get("artifact_hashes", {}).get("implementation_plan")),
+        )
+    elif from_node == "create_repair_plan":
+        upstream = state.get("runtime_summary", {}).get("patch_upstream_return")
+        values.update(upstream_return_present=isinstance(upstream, Mapping))
+        if isinstance(upstream, Mapping):
+            values.update(
+                upstream_assessment_only=upstream.get("assessment_only"),
+                upstream_required_owner=upstream.get("required_owner"),
+                upstream_repair_plan_hash_matches=(upstream.get("repair_plan_hash")
+                    == state.get("artifact_hashes", {}).get("repair_plan")),
+            )
+    elif from_node in {"build", "collect_runtime_evidence", "evaluate"}:
+        build = state.get("build_summary", {})
+        runtime = state.get("runtime_summary", {})
+        values.update(build_status=build.get("status"), input_execution_mode=build.get("input_execution_mode"))
+        if from_node != "build":
+            values["platform_failure_stage"] = runtime.get("platform_failure_stage")
+        if from_node == "collect_runtime_evidence":
+            failure = runtime.get("failure_ownership")
+            values.update(
+                runtime_acceptance_verified=runtime.get("acceptance_verified"),
+                has_structured_diagnosis=runtime.get("has_structured_diagnosis"),
+                runtime_artifact_present="runtime_evidence" in state.get("artifacts", {}),
+                failure_owner=failure.get("owner") if isinstance(failure, Mapping) else None,
+                source_repair_allowed=failure.get("source_repair_allowed") if isinstance(failure, Mapping) else None,
+            )
+    return values
+
+
+def _add_traced_conditional_edges(graph, from_node, selector, route_map):
+    """Observe only a real selector invocation; keep its return and route map."""
+    execution_trace = current_trace()
+
+    @wraps(selector)
+    def observed(state):
+        if (current_trace() is None and execution_trace is not None
+                and execution_trace.context.finished_at is None):
+            with execution_trace.activate():
+                return select(state)
+        return select(state)
+
+    def select(state):
+        with trace_operation("workflow.route", kind="event", attributes={
+            "workflow_node": from_node,
+            "from_node": from_node,
+            "route_selector": getattr(selector, "__name__", type(selector).__name__),
+            "decision_summary_origin": "deterministic_route_selector",
+        }) as span:
+            try:
+                inputs = _route_input_summary(state, from_node)
+                update_observation(span, route_inputs=inputs,
+                    route_input_sha256=payload_sha256(inputs),
+                    route_input_summary_scope="structured_selector_fields",
+                    artifact_refs=[{"artifact_type": kind, "artifact_hash": digest}
+                        for kind, digest in state.get("artifact_hashes", {}).items()])
+            except Exception:
+                update_observation(span, route_input_summary_status="unavailable")
+            selected = selector(state)
+            try:
+                update_observation(span, selected_route=selected,
+                    selected_next_node=route_map.get(selected),
+                    decision_summary=f"路由 {from_node} 选择 {selected}，映射到 {route_map.get(selected)}；目标是否执行由后续独立观察确认。")
+            except Exception:
+                update_observation(span, route_output_summary_status="unavailable")
+            return selected
+
+    return graph.add_conditional_edges(from_node, observed, route_map)
 
 def _review_route_map(
     route_map: dict[str, str] | Any,

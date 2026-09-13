@@ -10,6 +10,9 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from src.core.trace.execution_trace import trace_operation
+from src.mod_agent.upstream_trace import model_input_materials, update_observation
+
 from src.libs.llm.agent_turn import (
     AgentMessage,
     AgentResponseFormat,
@@ -263,6 +266,47 @@ class ModelPlanningTargetSelector:
     def __call__(
         self, feature_spec: dict[str, Any], evidence_pack: dict[str, Any]
     ) -> tuple[str, ...]:
+        with trace_operation("planning.decision", attributes={
+            "feature_payload_sha256": _sha(feature_spec),
+            "evidence_payload_sha256": _sha(evidence_pack),
+            "reason_status": "reason_unavailable",
+        }) as span:
+            was_used = self._used
+            try:
+                return self._select(feature_spec, evidence_pack, span=span)
+            finally:
+                if not was_used:
+                    self._record_selection_observation(span)
+
+    def _record_selection_observation(self, span) -> None:
+        # The original local receipt retains free-form rationale and missing
+        # evidence text; none is copied into a Cloud-readable summary.
+        try:
+            selection = self._receipt.get("selection", {})
+            rationale = selection.get("rationale")
+            values = {
+                "decision": selection.get("decision"),
+                "decision_status": self._receipt.get("status"),
+                "selected_evidence_ids": selection.get("selected_evidence_ids", []),
+                "unresolved_gap_count": len(selection.get("missing_evidence", [])),
+                "reason_status": "model_rationale_local_only" if isinstance(rationale, str) and rationale.strip() else "reason_unavailable",
+                "reason_sha256": hashlib.sha256(rationale.encode("utf-8")).hexdigest() if isinstance(rationale, str) and rationale.strip() else None,
+                "decision_summary_origin": "deterministic_structured_result",
+                "decision_summary": f"规划选择：{selection.get('decision', 'unavailable')}；修改证据 {len(selection.get('selected_evidence_ids', []))} 项，缺口 {len(selection.get('missing_evidence', []))} 项。",
+            }
+            if self._receipt_owned and self.receipt_path.is_file():
+                values["local_detail_refs"] = {"planning_receipt": {
+                    "path": str(self.receipt_path),
+                    "sha256": hashlib.sha256(self.receipt_path.read_bytes()).hexdigest(),
+                }}
+            update_observation(span, **values)
+        except Exception:
+            # Trace enrichment never replaces the original selection outcome.
+            pass
+
+    def _select(
+        self, feature_spec: dict[str, Any], evidence_pack: dict[str, Any], *, span
+    ) -> tuple[str, ...]:
         from src.mod_agent.fresh_planning_continuation import _validate_source_items
 
         if self._used:
@@ -297,6 +341,12 @@ class ModelPlanningTargetSelector:
             ) from exc
         try:
             request = self.prepare(feature_spec, evidence_pack)
+            update_observation(span,
+                input_payload_sha256=_sha(request.messages[1].content),
+                consumed_materials=model_input_materials(request.messages[1].content),
+                material_delivery_status="model_input_assembled",
+                input_role="planning_model_payload",
+            )
             before = _validate_source_items(evidence_pack, self.workspace_root)
             self._receipt.update(
                 status="running",

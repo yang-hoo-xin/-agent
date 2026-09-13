@@ -1,7 +1,7 @@
 # Active Product Contract
 
 Status: normative daily execution contract
-Last updated: 2026-09-09
+Last updated: 2026-09-13
 
 ## 1. Product
 
@@ -39,6 +39,8 @@ Evaluation, schemas, policies, dashboards, MCP, and retrieval mechanisms serve
 this chain. They are not independent product lines.
 
 ### 1.1 Current Development Selection
+
+The user's current selection is unified product execution tracing, including settings/model/source admission and existing pre-Graph materials/baseline callbacks, followed by requirement interpretation, retrieval, Findings, final evidence assembly, Planning, shared Patch execution and actual Graph routes. The existing run manifest retains one invocation tree; verified continuations correlate through the existing ArtifactStore and logical request. Cloud receives structure, hashes and approved deterministic summaries; bodies and actual rationale remain local with checked joins. Engineering acceptance and its limits are recorded once in [unified execution tracing](audits/UPSTREAM_EXECUTION_TRACE_20260913.md). No new model Actual, real compilation, Apply, game launch or new upstream Cloud readback is claimed. The earlier Patch-only coverage statement below describes the prior recorded runs; missing historical upstream times are not backfilled.
 
 Public recovery of retained `nlcfg_002` output is complete at `e27595c`: the real `continue-fresh-patch --reassemble-saved-patch` entry created new Proposal/Review/Dry-run records and reached `awaiting_exact_diff_approval`, with zero new model calls or compilation, unchanged original code/records, and the original logical budget at 7/14 consumed. The implementation passed hosted CI; see [saved-output acceptance](audits/SAVED_PATCH_REASSEMBLY_20260909.md). First Shot input projection is saved separately on `codex/repair-working-view-input` (`b8b0d63`): 17 focused tests and the exact first-request offline gate passed, with only 19 bytes of gate margin. It is not merged or real-model validated. The user reported 9% remaining weekly quota, so no First Shot Actual or further expansion is started this turn. Completed paging/snapshot regressions and Langfuse query/export work are closed for this round.
 
