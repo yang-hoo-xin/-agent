@@ -1,11 +1,13 @@
 # Project State
 
 Status: active control summary
-Last updated: 2026-09-09
+Last updated: 2026-09-13
 
 Authority and reading order are defined only by `AGENTS.md` section 2.
 
 ## 1. Current Selection
+
+Current selection and authority are in [Active Product Contract, 1.1](ACTIVE_PRODUCT_CONTRACT.md#11-current-development-selection). The three defects from the all-package review are repaired through `47fd506`: installed MCP entry, collection isolation, and source-index lifecycle/version consistency. Exact verification and limitations are kept in the [existing package review](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/capability_package_review_20260913/REVIEW.md), not inferred from the earlier hosted CI. The product task owns selectable source symbol/BM25 integration; an independently authorized single First Shot trial uses the original five-request limit and original checks. Its result is not yet recorded here. Retained configuration delivery is currently source-missing blocked, not merely waiting for approval. The checkpoints below retain historical results and do not override this selection.
 
 The current bounded implementation addresses the reconciled Repair gaps: shared-budget continuous revisions, submission feedback, current-code views, measured counterexample input, and a same-Plan return from explicit upstream assessment. See [Repair continuation](audits/REPAIR_CONTINUATION_20260909.md) for exact implementation and verification boundaries. No new live-model trial or training is claimed; the earlier SFT profile remains unadopted (reconciliation 0.35). First Shot 014 remains 33/36 despite complete compilation/configuration checks. The separate integration task owns Findings and natural-language product acceptance; no new Mod success is established here.
 
