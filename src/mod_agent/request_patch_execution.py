@@ -258,6 +258,115 @@ class RequestPatchExecution:
         self._upstream_effects = normalize_upstream_effects(None)
         self._consumed_reads = 0
         self._consumed_bytes = 0
+        self.last_worker: Any = None
+        self.last_state: dict[str, Any] | None = None
+        self.upstream_context: dict[str, Any] | None = None
+        self.upstream_request: dict[str, Any] | None = None
+        self.replan_count = 0
+        self._upstream_resume: dict[str, Any] | None = None
+        self._last_role = "initial_patch"
+
+    def validate_upstream(self, state, artifact_store):
+        from src.mod_agent.repair.upstream import validate_product_worker_upstream
+
+        context, upstream = validate_product_worker_upstream(
+            execution=self, state=state, artifact_store=artifact_store)
+        self.upstream_context, self.upstream_request = deepcopy(context), deepcopy(upstream)
+        return context, upstream
+
+    def prepare_assessment(self, state, artifact_store):
+        from src.mod_agent.repair.upstream import prepare_product_upstream_assessment
+
+        return prepare_product_upstream_assessment(
+            execution=self, state=state, artifact_store=artifact_store)
+
+    def after_plan(self, state):
+        """Keep one product invocation and its remaining budget after assessment."""
+        from src.mod_agent.fresh_planning_continuation import (
+            PATCH_CONSUMER_STAGE,
+            PatchContinuationError,
+            _validate_selected_plan,
+            _validate_source_items,
+        )
+
+        if state.get("blockers") or not state["runtime_summary"].get("patch_upstream_return"):
+            return state
+        next_state = deepcopy(state)
+        try:
+            if self.replan_count or self.last_worker is None or self.upstream_context is None:
+                raise PatchContinuationError("PATCH_UPSTREAM_CONTINUATION_BUDGET_EXHAUSTED", "upstream_admission",
+                    "The product invocation admits one complete upstream cycle.")
+            self.prepare_assessment(state, self.store)
+            prior = self.last_state
+            if (state["run_id"] != prior["run_id"] or state["request_id"] != prior["request_id"]
+                    or state["feature_id"] != prior["feature_id"]
+                    or state["artifacts"]["feature_spec"] != prior["artifacts"]["feature_spec"]
+                    or state["artifact_hashes"]["feature_spec"] != prior["artifact_hashes"]["feature_spec"]):
+                raise PatchContinuationError("PATCH_UPSTREAM_ATTEMPT_MISMATCH", "upstream_admission",
+                    "Reassessment must preserve the current product task and its original requirements.")
+            refs = {kind: ArtifactRef(feature_id=state["feature_id"], artifact_type=kind,
+                path=state["artifacts"][kind], artifact_hash=state["artifact_hashes"][kind])
+                for kind in ("feature_spec", "evidence_pack", "implementation_plan")}
+            evidence = self.store.read_for_stage(refs["evidence_pack"], consumer_stage=PATCH_CONSUMER_STAGE)["data"]
+            plan = self.store.read_for_stage(refs["implementation_plan"], consumer_stage=PATCH_CONSUMER_STAGE)["data"]
+            _validate_selected_plan(plan, evidence, feature_id=state["feature_id"])
+            _validate_source_items(evidence, self.workspace_root)
+            assessment = state["runtime_summary"].get("planning_upstream_assessment") or {}
+            retain = assessment.get("decision") == "retain_current_plan"
+            if retain and (assessment.get("implementation_plan") != {
+                    "path": prior["artifacts"]["implementation_plan"],
+                    "artifact_hash": prior["artifact_hashes"]["implementation_plan"]}
+                    or assessment.get("repair_plan_hash") != state["artifact_hashes"]["repair_plan"]
+                    or any(state["artifacts"][kind] != prior["artifacts"][kind]
+                           or state["artifact_hashes"][kind] != prior["artifact_hashes"][kind] for kind in refs)):
+                raise PatchContinuationError("PATCH_UPSTREAM_RETAIN_PLAN_IDENTITY_CHANGED", "upstream_admission",
+                    "Plan retention requires all original assessed references unchanged.")
+            budget = self.budget_snapshot()
+            previous_calls = self.last_worker.patch_attempt_receipt()["model_call_count"]
+            available = min(budget["remaining"], budget["by_stage"][self._last_role]["remaining"],
+                self.last_worker.patch_agent_loop_policy.max_total_model_turns - previous_calls)
+            if available < 1:
+                raise PatchContinuationError("PATCH_UPSTREAM_CONTINUATION_BUDGET_EXHAUSTED", "model_admission",
+                    "The original product budget has no remaining worker call.")
+            if min(self.policy.max_tool_rounds - self._consumed_reads,
+                   self.policy.max_observation_bytes - self._consumed_bytes) < 0:
+                raise PatchContinuationError("PATCH_UPSTREAM_CONTINUATION_BUDGET_EXHAUSTED", "model_admission",
+                    "The original product observation allowance is exhausted.")
+            repair_ref = asdict(ArtifactRef(feature_id=state["feature_id"], artifact_type="repair_plan",
+                path=state["artifacts"]["repair_plan"], artifact_hash=state["artifact_hashes"]["repair_plan"]))
+            history = {key: deepcopy(self.upstream_context.get(key)) for key in (
+                "previous_response", "failure_report", "failed_response_ref", "failure_report_ref")}
+            history.update(failure_context_role="diagnostic_history_not_current_plan_authority",
+                prior_plan=asdict(ArtifactRef(feature_id=prior["feature_id"], artifact_type="implementation_plan",
+                    path=prior["artifacts"]["implementation_plan"], artifact_hash=prior["artifact_hashes"]["implementation_plan"])),
+                repair_plan=repair_ref, approval_inherited=False,
+                upstream_request={key: deepcopy(self.upstream_request[key]) for key in
+                    ("required_owner", "reason", "source_refs")},
+                planning_assessment={key: deepcopy(assessment[key]) for key in
+                    ("decision", "rationale", "selected_evidence_ids", "missing_evidence") if key in assessment})
+            self._upstream_resume = {"retain": retain, "history": history, "remaining": available,
+                "previous_calls": previous_calls, "assessment": deepcopy(assessment),
+                "retained_request": self.last_worker.retained_worker_request() if retain else None}
+            self.replan_count += 1
+            for kind in ("patch_proposal", "proposal_review", "dry_run_result", "repair_plan"):
+                next_state["artifacts"].pop(kind, None)
+                next_state["artifact_hashes"].pop(kind, None)
+            next_state["approvals"] = {}
+            next_state["runtime_summary"].pop("patch_upstream_return", None)
+            next_state["runtime_summary"]["replanned_patch_lineage"] = {
+                key: deepcopy(value) for key, value in history.items()
+                if key not in {"previous_response", "failure_report"}}
+            self.journals[-1].record({"phase": "replanned_patch_prepared",
+                "replanned_selected_artifacts": {kind: asdict(ref) for kind, ref in refs.items()},
+                "shared_model_budget": dict(budget), "effective_worker_model_allowance": available,
+                "shared_observation_budget": {
+                    "maximum_reads": self.policy.max_tool_rounds, "consumed_reads": self._consumed_reads,
+                    "maximum_bytes": self.policy.max_observation_bytes, "consumed_bytes": self._consumed_bytes},
+                "plan_retained": retain, "approval_inherited": False, "proposal_admitted": False})
+        except (PatchContinuationError, ValueError) as exc:
+            next_state["blockers"].append({"stage": "upstream_admission",
+                "code": getattr(exc, "code", "PATCH_UPSTREAM_ADMISSION_FAILED"), "message": str(exc)})
+        return next_state
 
     def bind_upstream_effects(self, effects: Mapping[str, str]) -> None:
         self._upstream_effects = normalize_upstream_effects(effects)
@@ -269,11 +378,12 @@ class RequestPatchExecution:
         from src.mod_agent.fresh_planning_continuation import PatchContinuationAttemptJournal
         from src.mod_agent.local_entry import LocalEntryError, LocalOllamaInitialPatchAdapter
 
-        role = "repair" if state.get("current_stage") == "repair_plan" else "initial_patch"
+        resumed = self._upstream_resume
+        role = self._last_role if resumed else ("repair" if state.get("current_stage") == "repair_plan" else "initial_patch")
         repair_context = (admit_product_repair_context(
             artifact_store=self.store, workspace_root=self.workspace_root, state=state,
             implementation=implementation, evidence_pack=evidence_pack, worker_receipts=self.receipts)
-            if role == "repair" else None)
+            if role == "repair" and resumed is None else None)
         refs = {kind: ArtifactRef(feature_id=state["feature_id"], artifact_type=kind,
                                  path=state["artifacts"][kind],
                                  artifact_hash=state["artifact_hashes"][kind])
@@ -286,7 +396,7 @@ class RequestPatchExecution:
         profile = self.repair_profile if role == "repair" and self.repair_profile is not None else self.profile
         limits = self.budget_snapshot()
         remaining = min(limits["remaining"], limits["by_stage"][role]["remaining"],
-                        self.policy.max_total_model_turns)
+                        resumed["remaining"] if resumed else self.policy.max_total_model_turns)
         if remaining < 1:
             raise LocalEntryError("PRODUCT_MODEL_CALL_BUDGET_EXHAUSTED")
         policy = replace(self.policy, max_total_model_turns=remaining,
@@ -307,6 +417,20 @@ class RequestPatchExecution:
             profile=profile, artifact_store=self.store, workspace_root=self.workspace_root,
             patch_agent_loop_policy=policy, identity_reader=self.identity_reader,
             behavior_evaluator=self.behavior_evaluator, enable_recovery_loop=True)
+        if resumed is not None:
+            if resumed["retain"]:
+                worker.patch_agent_loop_policy = replace(policy,
+                    max_total_model_turns=resumed["previous_calls"] + remaining,
+                    max_tool_rounds=self.policy.max_tool_rounds,
+                    max_observation_bytes=self.policy.max_observation_bytes)
+                worker.bind_retained_worker_request(resumed["retained_request"],
+                    consumed_model_turns=resumed["previous_calls"], consumed_tool_rounds=self._consumed_reads,
+                    consumed_observation_bytes=self._consumed_bytes,
+                    planning_rationale=resumed["assessment"]["rationale"])
+            else:
+                worker._upstream_continuation_context = deepcopy(resumed["history"])
+            self._upstream_resume = None
+        self.last_worker, self.last_state, self._last_role = worker, deepcopy(state), role
 
         def record(event):
             if isinstance(event.get("factory_receipt"), Mapping):
@@ -352,6 +476,10 @@ class RequestPatchExecution:
                 return changes
         finally:
             receipt = worker.patch_attempt_receipt()
+            if len(self.receipts) < len(self.journals):
+                self.receipts.append(deepcopy(receipt))
+            else:
+                self.receipts[-1] = deepcopy(receipt)
             loop = receipt.get("patch_agent_loop") or {}
             phases = [loop, *(value["execution"] for value in iter_patch_recovery_revisions(loop)
                              if isinstance(value.get("execution"), Mapping))]

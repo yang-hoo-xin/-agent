@@ -89,6 +89,76 @@ def test_public_external_entry_assembles_shared_worker_before_any_upstream_send(
     assert handler.calls and not handler.wires
 
 
+@pytest.mark.parametrize("role,has_failure,required_class", [
+    ("planning_generated", True, "generated_patch"),
+    ("planning_feedback", True, "verification_feedback"),
+    ("evidence_query", True, "verification_feedback"),
+    ("evidence_findings", True, "verification_feedback"),
+    ("planning_feedback", False, None),
+    ("evidence_query", False, None),
+])
+def test_product_upstream_checks_actual_feedback_disclosure_before_budget_and_send(
+    tmp_path, monkeypatch, role, has_failure, required_class,
+):
+    """Use real run-request provider closures with deterministic send doubles."""
+    from src.libs.llm import ChatResponse
+    from src.libs.llm.agent_turn import AgentMessage, AgentTurnRequest
+    from tests.unit.test_agent_turn_adapters import _format
+
+    captured, sends = {}, []
+    ordinary_adapters = local_entry.ProductExecutionAdaptersV1
+
+    def assemble(**kwargs):
+        adapters = ordinary_adapters(**kwargs)
+        captured["adapters"] = adapters
+        return adapters
+
+    def planning_client(assembly):
+        def complete(request):
+            sends.append(request)
+            return SimpleNamespace(provider="qwen_chat", model=assembly.profile.model, content="{}")
+
+        return SimpleNamespace(provider="qwen_chat", model=assembly.profile.model, complete_turn=complete)
+
+    def complete_json(**kwargs):
+        sends.append(kwargs["payload"])
+        return ChatResponse(model=_profile().model, content='{"queries":[]}'), {}
+
+    monkeypatch.setattr(local_entry, "ProductExecutionAdaptersV1", assemble)
+    monkeypatch.setattr(RunRequestExternalAssembly, "planning_client", planning_client)
+    monkeypatch.setattr(local_entry, "request_requirement_coverage_model", complete_json)
+    test_public_external_entry_assembles_shared_worker_before_any_upstream_send(tmp_path, monkeypatch)
+    adapters = captured["adapters"]
+    worker = adapters.patch_change_factory
+    before = worker.budget_snapshot()
+    observations = [{"check_id": "current_failure", "passed": False}] if has_failure else []
+
+    def invoke():
+        if role in {"planning_generated", "planning_feedback"}:
+            payload = {"upstream_assessment": {
+                "previous_response": "retained generated Patch" if role == "planning_generated" else None,
+                "failure_report": {"observations": observations} if has_failure and role == "planning_feedback" else None,
+            }}
+            request = AgentTurnRequest(messages=(AgentMessage(role="system", content="Deterministic test."),
+                AgentMessage(role="user", content=payload)), response_format=_format())
+            return adapters.patch_upstream_planning_target_selection_factory.client.complete_turn(request)
+        factory = adapters.patch_upstream_evidence_pack_factory
+        feedback = {"observed_failure": observations}
+        if role == "evidence_query":
+            return factory.query_selector({}, {"requirements": [{"requirement_id": "requirement_001"}],
+                "relations": []}, SimpleNamespace(items=()), feedback)
+        return factory.semantic_provider.complete_json("requirement_findings", {"semantic_feedback": feedback}, {})
+
+    if required_class is not None:
+        with pytest.raises(local_entry.LocalEntryError, match=required_class):
+            invoke()
+        assert worker.budget_snapshot() == before and sends == []
+    else:
+        invoke()
+        assert len(sends) == 1
+        assert worker.budget_snapshot()["consumed"] == before["consumed"] + 1
+
+
 @pytest.mark.parametrize("missing", ["authorization", "listing"])
 def test_external_assembly_stops_before_generation_when_admission_is_missing(monkeypatch, missing):
     handler = _install(monkeypatch, direct=True, listed=missing != "listing")

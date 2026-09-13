@@ -167,6 +167,52 @@ def _nested_source_binding(tmp_path: Path) -> tuple[Path, dict[str, object]]:
     return project, binding
 
 
+@pytest.mark.parametrize("retain_plan", [True, False])
+def test_product_upstream_retains_current_failed_plan_and_original_checks(tmp_path, monkeypatch, capsys, retain_plan):
+    """Public run-request; deterministic transport/evaluator, no product Apply."""
+    from tests.unit.test_mod_agent_cli import _public_patch_upstream_scenario
+
+    observed = _public_patch_upstream_scenario(tmp_path, monkeypatch, capsys,
+        owner="planning" if retain_plan else "evidence", fail_first=True,
+        retain_plan=retain_plan, task_limit=10)
+    assert observed.exit_code == 0 and observed.result["status"] == "awaiting_approval", observed.result
+    assert observed.roles == ["product_requirement_projection", "product_requirement_findings",
+        "planning", "patch", "patch",
+        *([] if retain_plan else ["patch_upstream_evidence_queries", "product_requirement_findings"]),
+        "planning", "patch"]
+    assert len(observed.evaluations) == 2
+    initial_context, failed = observed.evaluations[0]
+    final_context, passed = observed.evaluations[-1]
+    assert failed["status"] == "behavior_failed" and passed["status"] == "passed"
+    assessment = observed.planning[-1]["upstream_assessment"]
+    assert assessment["retain_current_plan_allowed"] is retain_plan
+    assert assessment["failure_report"]["generated_changes_sha256"] == failed["generated_changes_sha256"]
+    assert assessment["failure_report"]["source_snapshot_sha256"] == failed["source_snapshot_sha256"]
+    assert assessment["failure_report"]["observations"] == failed["observations"]
+    assert assessment["previous_response"] == observed.generated_responses[0]
+    assert assessment["failed_response_sha256"] == hashlib.sha256(
+        observed.generated_responses[0].encode("utf-8")).hexdigest()
+    assert assessment["failure_report_sha256"] == failed["report_ref"]["sha256"]
+    assert (initial_context["implementation_plan_ref"] == final_context["implementation_plan_ref"]) is retain_plan
+    assert initial_context["generated_changes_sha256"] != final_context["generated_changes_sha256"]
+    assert failed["observations"][0]["check_id"] == passed["observations"][0]["check_id"]
+    if retain_plan:
+        assert initial_context["source_snapshot_sha256"] == final_context["source_snapshot_sha256"]
+        carried = next(row for row in observed.worker_requests[-1]
+            if row.get("message_type") == "patch_same_plan_assessment")
+        assert carried["approval_inherited"] is False
+    else:
+        assert len(final_context["generated_changes"]) == 2
+        assert "RefreshSharedState" in json.dumps(observed.patch_contexts[-1])
+    feedback = next(row for row in observed.worker_requests[-1]
+        if row.get("message_type") == ("patch_behavior_correction" if retain_plan else "patch_replanned_context"))
+    assert feedback["validator_feedback"]["observations"] == failed["observations"]
+    assert feedback["validator_feedback"]["generated_changes_sha256"] == failed["generated_changes_sha256"]
+    assert observed.result["approval_recorded"] is False
+    assert observed.result["actual_write_performed"] is False
+    assert observed.result["model_call_budget"]["consumed"] == (7 if retain_plan else 9)
+
+
 def test_legacy_root_plugin_source_binding_remains_compatible(tmp_path: Path) -> None:
     source = tmp_path / "legacy"
     source.mkdir()

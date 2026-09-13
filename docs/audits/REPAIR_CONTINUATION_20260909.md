@@ -81,3 +81,40 @@ python -B -m pytest tests/unit/test_continuous_behavior_repair.py::test_feedback
 下一次有明确范围的真实任务应继续使用原判定和固定模型版本，记录实际请求数、每份代码/反例/后续动作，以及阶段终点。先检验新增机制能否让原阻断继续并修对，再决定是否调整模型或做新的SFT。调用次数与代码修订次数分别统计；不能把阶段完成率、编译通过或一次简单案例通过写成真实Mod交付。
 
 本轮代码尚需与另一页已验证的主树WIP按提交对齐。Findings自然语言入口、First Shot原36项行为、完整修改编译、真实配置路径和适用游戏Runtime仍需各自证据。独立多任务稳定性评测未完成；本轮没有改变这些未验证状态。
+
+## 5. 2026-09-13：默认产品入口的 Patch 上游补查与续行
+
+本次从已验证的 `ed5234b9e0c6a2c453a0fbc0352e7a43964e958e` 建立独立分支 `codex/product-patch-upstream`，未带入原主工作区的文档 WIP，也未合入 `b8b0d63`。以下是新增产品装配的工程验收，不是新的模型或 Mod 验收。
+
+默认 `run-request` 现在将合法 Patch 上游请求交回同一个 Graph：首次尚无失败代码时，使用当前产品 journal 和材料不足请求，不制造失败记录；当前 worker 已生成且验证失败时，核验实际响应、物化代码、报告及后续消费的反馈。Evidence 路径实际执行原 `rg` 检索，合并新旧证据并重算完整 Findings，再由全新单次 Planning selector 形成合法 Plan。明确 `retain_current_plan` 时，重新检查依赖后保留原引用和 worker 历史。新段回到原验证、Review、Dry-run 和精确批准入口。
+
+预算仍使用原任务和五个阶段：查询与 Planning 重评记入 `repair`；完整 Findings 记入 `requirement_findings`；续 worker 消费原 Patch 阶段余量。请求、读取和观察字节不退款，不在运行中增加任何上限。默认无失败补查正例使用原阶段额度 `2/2/1/2/2`，总额 9、实用 8：Projection、Findings、Planning、Patch、查询、Findings、Planning、Patch。失败后的两个正例在执行前分配原任务总额 10、Patch 阶段 3，分别使用 7 和 9 次确定性传输。
+
+产品模式使用自己的实例，不构造 Fresh 请求。产品生命周期只识别一次有精确材料引用的上游评估插入，仍复用原流程与普通 Repair 校验。旧 diff 和 Review 批准清除；仅从原 typed 产品请求重取 `confirmed_write`，以进入本次精确审批 reader，不能代替新 diff 批准。缺 provider、第二次上游请求、当前失败错绑、预算耗尽和 Planning 超时均明确停止。外部发送生成代码或验证反馈前，仍要求已有对应披露授权；拒绝发生在预算预留与发送前。
+
+新增查询和重规划分别使用 `upstream_evidence_queries`、`patch_upstream_planning`，通过原 `trace_upstream_model_call`，Findings 沿用原角色。联合测试验证一次传输对应一条 generation、本地请求与回复文件哈希、同任务两段 journal、新 Evidence 到第二次 Planning 输入的哈希关系，以及原离线联查中的新增材料消费。没有调用 Fresh `_RecordedProvider` 来冒充这些产品调用的统一追踪。
+
+验证全过程只用确定性模型传输、基线编译替身和行为判定替身，真实执行源码检索及原 Graph／worker／静态检查／Review／Dry-run。无真实模型、产品 Apply、真实编译、游戏或 Cloud 上传。
+
+旧路径复现：在短临时目录解压 `git archive ed5234b9e0c6a2c453a0fbc0352e7a43964e958e`，只加入新测试，运行以下首项，得到 **1 failed，6.29s**，精确错误为 `PATCH_AGENT_UPSTREAM_REQUESTED`，仅执行前四次传输，没有补查。修复后以下三个选择共 **4 passed，24.02s**（产品失败用例参数化为保留／新 Plan）：
+
+```powershell
+python -B -m pytest tests/unit/test_mod_agent_cli.py::test_cli_run_request_patch_evidence_return_executes_new_search_and_reaches_original_review tests/unit/test_product_execution.py::test_product_upstream_retains_current_failed_plan_and_original_checks tests/unit/test_upstream_product_trace.py::test_product_patch_upstream_trace_keeps_one_task_and_current_material_lineage -q --tb=short --basetemp="$env:TEMP\pupr-four-$PID"
+```
+
+最终只做一次有界并行检查，选择 **299 项**：
+
+```powershell
+python -X utf8 -B -m pytest tests/unit/test_patch_upstream_replanning.py tests/unit/test_patch_upstream_cli.py tests/unit/test_patch_upstream_unchanged_plan.py tests/unit/test_patch_upstream_budget.py tests/unit/test_product_execution.py tests/unit/test_mod_agent_cli.py tests/unit/test_upstream_product_trace.py tests/unit/test_product_patch_journal.py tests/unit/test_run_request_shared_worker.py tests/unit/test_run_request_external_worker.py tests/unit/test_request_patch_repair_context.py tests/unit/test_deferred_product_approval.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\pucp-$PID"
+```
+
+结果 **233 passed / 58 failed / 8 errors，132.36s**。Windows 子进程未继承父进程的 `-X utf8`，旧测试夹具以 GBK 读取 UTF-8 回执。此次并行验证不能称为全绿。未改源码或测试来消除错误，先串行分类两项，再仅补跑剩余失败选择：
+
+```powershell
+python -X utf8 -B -m pytest tests/unit/test_patch_upstream_replanning.py::test_human_finding_runs_repair_then_model_planning_in_the_existing_graph tests/unit/test_run_request_external_worker.py::test_production_assembly_uses_external_adapter_inside_original_request_worker -q --tb=short --basetemp="$env:TEMP\puclass-$PID"
+python -X utf8 -B -m pytest tests/unit/test_patch_upstream_replanning.py tests/unit/test_patch_upstream_cli.py tests/unit/test_patch_upstream_unchanged_plan.py tests/unit/test_patch_upstream_budget.py tests/unit/test_request_patch_repair_context.py --lf -q --tb=short --basetemp="$env:TEMP\pufix-$PID"
+```
+
+分别 **2 passed，3.77s** 和 **64 passed / 6 deselected，145.82s**。因此该 299 项选择最终无未解决失败；未重跑已通过的 233 项，也未声称单次 299 项并行全绿。检查期间生产源码与测试未再变化，之后仅添加本节。15 个改动 Python 文件 AST 解析及 `git diff --check` 通过。Ruff 未安装，未安装新工具。未执行全仓或新 hosted CI；此前的历史通过数量不与本次相加。
+
+未覆盖的触发点与下一交付门：初次 Findings 缺证（尚未进入 Patch）仍会停止；普通 Build 后的 Repair worker 若本段尚未生成新代码而提出上游请求，也仍停止。本次补查仅接已有源码检索与完整 Findings，不声明新增程序集 metadata／IL 调查能力。真实模型能否正确使用新材料、热切换业务是否需要修改及能否通过原业务判定，均待单独授权验收；基线已满足时允许不修改。热切换还需固定真实用户操作、统一源码／依赖快照和独立判定，不能预设坐标或向模型提供正确 Hook。原页继续负责前置失败持久留存，部分 Apply 失败事实记录在其后；本提交不声称解决它们。

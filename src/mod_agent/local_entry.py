@@ -1298,18 +1298,38 @@ class LocalOllamaInitialPatchAdapter:
                         [asdict(message) for message in repair_messages]).encode("utf-8"))
                 if self._upstream_continuation_context is not None and self._resumed_worker_request is None:
                     history = self._upstream_continuation_context
-                    agent_messages = (*agent_messages,
-                        AgentMessage(role="assistant", content=history["previous_response"]),
-                        AgentMessage(role="user", content={
-                            "message_type": "patch_replanned_context",
-                            "prior_code_role": "previously_checked_code_under_prior_plan",
-                            "validator_feedback": self._model_failure_feedback(history["failure_report"]),
-                            "current_plan_sha256": state["artifact_hashes"]["implementation_plan"],
-                            "required_action": "The preceding code failed under the prior Plan. Use it and its observations "
+                    failed_code = history["previous_response"]
+                    failure_report = history["failure_report"]
+                    if (failed_code is None) != (failure_report is None):
+                        raise LocalEntryError("PATCH_UPSTREAM_FAILURE_CONTEXT_INCOMPLETE")
+                    upstream_context = {
+                        "message_type": "patch_replanned_context",
+                        "current_plan_sha256": state["artifact_hashes"]["implementation_plan"],
+                        **{key: history[key] for key in ("upstream_request", "planning_assessment")
+                           if key in history},
+                    }
+                    if failed_code is not None:
+                        upstream_context.update(
+                            prior_code_role="previously_checked_code_under_prior_plan",
+                            validator_feedback=self._model_failure_feedback(failure_report),
+                            required_action="The preceding code failed under the prior Plan. Use it and its observations "
                                 "as diagnostic history. The initial context contains the new current Plan and bindings. "
                                 "Old binding identifiers grant no current permission. Submit a complete replacement "
                                 "relative to the unchanged B0 using the current bindings, preserving every original "
-                                "requirement and the original verification expectations. Inspect only when useful."}))
+                                "requirement and the original verification expectations. Inspect only when useful.")
+                        history_messages = (AgentMessage(role="assistant", content=failed_code),)
+                    else:
+                        upstream_context.update(
+                            prior_code_role="no_failed_code_generated",
+                            required_action="The upstream request was assessed before failed code or a validation report existed. "
+                                "Use the current Evidence, Plan and bindings in the initial context, together with the "
+                                "bound upstream request and Planning assessment. Submit a complete replacement against "
+                                "the current bound source, preserving every original requirement and verification expectation.")
+                        history_messages = ()
+                    history_messages = (*history_messages, AgentMessage(role="user", content=upstream_context))
+                    agent_messages = (*agent_messages, *history_messages)
+                    self._recovery_observation_bytes += len(_patch_agent_context_json(
+                        [asdict(message) for message in history_messages]).encode("utf-8"))
                     self._receipt["upstream_continuation_context"] = {
                         key: value for key, value in history.items() if key not in {"previous_response", "failure_report"}}
                 initial_user_payload = json.loads(str(agent_messages[1].content))
@@ -7430,6 +7450,12 @@ def run_local_request(
         local_model_input_audit: dict[str, Any] | None = None
         model_call_count = 0
         requirement_coverage_model_audits: list[dict[str, Any]] = []
+        from src.mod_agent.evidence.reassessment import RequirementCoverageReassessmentFactory
+        from src.mod_agent.evidence.requirement_coverage_provider import (
+            StructuredModelRequirementCoverageProvider,
+            _source_observation_model_view,
+            admit_requirement_projection_response,
+        )
         from src.mod_agent.patch_worker_configuration import PatchWorkerConfiguration
         from src.mod_agent.planning.model_selection import ModelPlanningTargetSelector
         from src.mod_agent.request_patch_execution import RequestPatchExecution
@@ -7493,6 +7519,13 @@ def run_local_request(
                     "run_local_api_member_metadata_facts",
                 )
             )
+            feedback = (
+                payload.get("failure_feedback") if role == "upstream_evidence_queries"
+                else payload.get("semantic_feedback")
+                if role in {"requirement_findings", "requirement_findings_correction"} else None
+            )
+            if isinstance(feedback, Mapping) and feedback.get("observed_failure"):
+                data_classes = (*data_classes, "verification_feedback")
             if local_ollama:
                 if local_model_identity is None or ollama_model is None:
                     raise LocalEntryError("Local Ollama model identity is missing.")
@@ -7522,6 +7555,7 @@ def run_local_request(
                 "requirement_projection_correction": "requirement_projection",
                 "requirement_findings": "requirement_findings",
                 "requirement_findings_correction": "requirement_findings",
+                "upstream_evidence_queries": "repair",
             }[role]
             reserve_model_call(stage_role)
             response, provider_request = request_requirement_coverage_model(
@@ -7546,6 +7580,7 @@ def run_local_request(
                 )
             audit = {
                 "model_role": role,
+                "budget_stage": stage_role,
                 "payload_sha256": _sha256_json(exact_payload),
                 "structured_output_sha256": hashlib.sha256(
                     response.content.encode("utf-8")
@@ -7554,7 +7589,7 @@ def run_local_request(
                 "model_identity": (
                     dict(local_model_identity)
                     if local_model_identity is not None
-                    else dict(model_admission.get("destination") or {})
+                    else dict(external_assembly.identity)
                 ),
                 "provider_adapter": model_admission.get("provider_adapter"),
                 "execution_locality": model_admission.get("execution_locality"),
@@ -7682,18 +7717,28 @@ def run_local_request(
             adapter_factory=(external_assembly.make_worker if external_assembly is not None else None),
         )
         class PlanningClient:
-            def __init__(self):
+            def __init__(self, *, budget_stage="planning", trace_role="planning"):
                 self.client = (external_assembly.planning_client() if external_assembly is not None
                                else LocalOllamaInitialPatchAdapter._default_agent_turn_client(worker_profile))
                 self.provider = self.client.provider
                 self.model = self.client.model
+                self.budget_stage = budget_stage
+                self.trace_role = trace_role
 
             def complete_turn(self, request):
+                assessment = request.messages[1].content.get("upstream_assessment")
+                if external_assembly is not None and isinstance(assessment, Mapping):
+                    requested = tuple(data_class for field, data_class in (
+                        ("previous_response", "generated_patch"),
+                        ("failure_report", "verification_feedback"),
+                    ) if assessment.get(field) is not None)
+                    if requested:
+                        _verify_source_disclosure(source_disclosure, requested_data_classes=requested)
                 admitted_worker_identity(worker_profile.base_url, worker_profile.model)
-                reserve_model_call("planning")
+                reserve_model_call(self.budget_stage)
                 from src.mod_agent.upstream_model_trace import trace_upstream_model_call
                 response = trace_upstream_model_call(
-                    role="planning", provider=self.provider, model=self.model,
+                    role=self.trace_role, provider=self.provider, model=self.model,
                     input_payload=request.messages[1].content,
                     request_document=asdict(request), body_root=run_root,
                     invoke=lambda: self.client.complete_turn(request))
@@ -7707,6 +7752,54 @@ def run_local_request(
                 receipt_path=run_root / "planning_model_selection.json",
                 model_identity=(external_assembly.identity if external_assembly is not None else local_model_identity),
             )
+        )
+
+        # Reassessment spends only the original task's fixed stage allowances:
+        # query selection and replanning use repair; complete Findings retains
+        # its requirement_findings owner. The resumed worker keeps its stage.
+        upstream_query_limit = 3
+        upstream_search_root = f"generated_mods/{source.name}"
+
+        def select_upstream_queries(feature, projection, old, feedback):
+            requirement_ids = [item["requirement_id"] for item in projection["requirements"]]
+            schema = {
+                "type": "object", "additionalProperties": False, "required": ["queries"],
+                "properties": {"queries": {
+                    "type": "array", "maxItems": upstream_query_limit,
+                    "items": {"type": "object", "additionalProperties": False,
+                        "required": ["query", "requirement_id"], "properties": {
+                            "query": {"type": "string", "minLength": 1},
+                            "requirement_id": {"type": "string", "enum": requirement_ids},
+                        }},
+                }},
+            }
+            result = complete_requirement_coverage_json("upstream_evidence_queries", {
+                "message_type": "patch_upstream_evidence_queries", "feature": feature,
+                "requirements": projection["requirements"], "relations": projection["relations"],
+                "source_observations": [_source_observation_model_view(item.to_dict()) for item in old.items],
+                "failure_feedback": feedback, "search_root": upstream_search_root,
+                "instruction": (
+                    "Choose bounded source queries needed to resolve the observed gap. "
+                    "Queries grant no edit permission."
+                ),
+            }, schema)
+            admit_requirement_projection_response(result, schema=schema)
+            return result["queries"]
+
+        upstream_evidence_factory = RequirementCoverageReassessmentFactory(
+            artifact_store=artifact_store, workspace_root=run_root,
+            search_root=upstream_search_root, source_provider=evidence_provider,
+            semantic_provider=StructuredModelRequirementCoverageProvider(
+                complete_requirement_coverage_json),
+            query_selector=select_upstream_queries, max_additional_queries=upstream_query_limit,
+        )
+        # Initial selection is single-use. This is a distinct admitted instance
+        # even when initial Planning used operator-supplied evidence identities.
+        upstream_planning_selector = ModelPlanningTargetSelector(
+            client=PlanningClient(budget_stage="repair", trace_role="patch_upstream_planning"),
+            workspace_root=run_root, receipt_path=run_root / "planning_upstream_model_selection.json",
+            model_identity=(external_assembly.identity if external_assembly is not None
+                            else local_model_identity),
         )
 
         def dry_run_factory(
@@ -8036,6 +8129,9 @@ def run_local_request(
             evidence_pack_factory=evidence_factory,
             planning_target_selection_factory=planning_selector,
             patch_change_factory=patch_change_factory,
+            product_patch_upstream_execution=patch_change_factory,
+            patch_upstream_evidence_pack_factory=upstream_evidence_factory,
+            patch_upstream_planning_target_selection_factory=upstream_planning_selector,
             dry_run_factory=dry_run_factory,
             isolated_apply_factory=isolated_apply_factory,
             build_result_factory=build_result_factory,
