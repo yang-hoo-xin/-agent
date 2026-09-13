@@ -119,3 +119,43 @@ python -m pytest -q --basetemp C:/Users/10160/AppData/Local/Temp/all-pack-integr
 ```
 
 生产代码在该检查后未变，之后仅补记本记录和当前合同。
+
+## 2026-09-13：保存布局贯穿批准后隔离 Apply
+
+在 `03225b3` 的独立 `saved_apply_layout_001` 树，用临时Product布局
+（Store位于workspace下）、真实ArtifactStore／ProductJournal、保存准入、
+原Graph、Review／Dry-run及精确批准，复现了两个工程接缝：
+
+1. 已合法完成保存产物重组，`prepare_reviewed_patch_apply`仍在
+   `_apply_inputs`丢掉保存来源语义，抛`PATCH_CONTINUATION_ROOTS_OVERLAP`：
+   1 failed，4.10秒。
+2. 接回保存来源后，原全目录复制把Store也复制进隔离源码。Graph写回业务记录
+   使完整workspace快照变化，导致隔离代码已经写入、`blockers=[]`且下一节点为
+   Build，却返回blocked和`source_workspace_written=True`：1 failed，4.93秒。
+
+`reviewed_patch_continuation.py`现在从已核验journal的原
+`saved_patch.source_attempt_ref`和`logical_budget.logical_budget_ref`重新执行
+保存准入，并比较保存修改与当前Proposal的`diff_intent`；没有伪造来源选择。
+只有经过该准入的保存布局，才把已验证Store的精确相对路径绑定进原显示批准数据。
+同一范围用于原源码快照、隔离复制、写前/写后核对及后续checkpoint的来源复验。
+普通Fresh根隔离未放宽，不按`a`等目录名泛排，也不让目标源码位于Store中。
+
+测试的上游模型和编译收据为明确替身；本节不声称重新从自然语言产生真实模型修改。
+保存后的准入、Graph、审批与Applier使用生产实现，临时文件有实际写入。
+最终4项核对隔离C#字节、Store未复制、原源码未变及已保存批准hash；源码漂移、
+错误批准在复制和写入前拒绝，普通Fresh仍拒绝原重叠布局：4 passed，9.95秒。
+
+唯一相关checkpoint在上述独立目录执行，解释器为原主树`.venv/Scripts/python.exe`：
+
+```powershell
+$env:PYTHONUTF8='1'
+python -B -m pytest tests/unit/test_saved_apply_layout.py -q --tb=short --basetemp="$env:TEMP\sal6"
+python -B -m pytest tests/unit/test_saved_apply_layout.py tests/unit/test_saved_patch_admission.py tests/unit/test_saved_patch_graph.py tests/unit/test_saved_patch_cli.py tests/unit/test_reviewed_patch_continuation.py tests/unit/test_reviewed_patch_cli.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\sac"
+```
+
+第一条是较早的2项正例/普通Fresh负例检查（2 passed，5.85秒），随后补齐上述
+4项必要断言；第二条最终74 passed，45.85秒。Ruff致命规则及diff检查通过。
+结果来自本任务工具输出，未生成独立JUnit或把临时目录当作测试报告。
+
+该修复只证明临时保存布局的工程贯穿。真实`nlcfg_002`仍先受原目标文件缺失阻断：
+本次没有恢复这些文件、改写历史refs、调用模型或Cloud、执行真实Build、游戏或用户Mod Apply。

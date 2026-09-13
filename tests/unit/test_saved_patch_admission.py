@@ -24,6 +24,10 @@ def _snapshot(path):
 
 @pytest.fixture
 def case(tmp_path):
+    return saved_case(tmp_path)
+
+
+def saved_case(tmp_path, *, product_layout=False):
     """Independent fixture receipts, with real parser/materializer and no compiler."""
     from src.mod_agent.artifacts import ArtifactRef
     from src.mod_agent.execution.patch_apply import materialize_exact_text_patch
@@ -55,12 +59,54 @@ def case(tmp_path):
     inputs = _inputs(tmp_path)
     request = _patch_request(inputs)
     admitted = preflight_patch_continuation(request)
-    adapter, _ = _local_patch_adapter(inputs)  # A scripted test provider, never HTTP.
-    completed = run_fresh_patch_continuation(request, patch_change_factory=adapter,
-        dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace))
-    j = json.loads(Path(completed.attempt_receipt["path"]).read_text())
-    f = j["factory_receipt"]
-    original = inputs.store.semantic_read_immutable(ArtifactRef(**completed.patch_proposal_artifact))["data"]
+    if product_layout:
+        # Product runs use workspace/a. Create new fixture Artifacts at that
+        # layout before the scripted worker produces its retained response.
+        # Ordinary Fresh root admission is never relaxed or mocked.
+        from src.mod_agent.artifacts import ArtifactStore
+        from src.mod_agent.fresh_planning_continuation import PatchContinuationAttemptJournal
+        from src.mod_agent.workflow.state import create_initial_state
+        store = ArtifactStore(inputs.workspace / "a")
+        feature_ref = store.write(feature_id=inputs.feature_ref.feature_id, artifact_type="feature_spec",
+                                  payload=admitted.feature_spec, status="success")
+        evidence_ref = store.write(feature_id=feature_ref.feature_id, artifact_type="evidence_pack",
+            payload=admitted.evidence_pack, status="success", upstream_refs=[feature_ref])
+        plan_ref = store.write(feature_id=feature_ref.feature_id, artifact_type="implementation_plan",
+            payload=admitted.implementation_plan, status="success", upstream_refs=[feature_ref, evidence_ref])
+        request = replace(request, artifact_store_root=str(store.root), feature_spec_ref=feature_ref,
+                          evidence_pack_ref=evidence_ref, implementation_plan_ref=plan_ref)
+        inputs = replace(inputs, store=store, feature_ref=feature_ref, evidence_ref=evidence_ref)
+        admitted = replace(admitted, artifact_store=store)
+        journal = PatchContinuationAttemptJournal.for_product_execution(artifact_root=store.root,
+            run_id="fixture-worker", request_id="fixture-logical", parent_run_id="fixture-product",
+            feature_spec_ref=feature_ref, evidence_pack_ref=evidence_ref, implementation_plan_ref=plan_ref,
+            workspace_root=inputs.workspace, max_model_calls=4)
+        state = create_initial_state(run_id="fixture-worker", request_id="fixture-logical",
+                                     user_request=admitted.feature_spec["user_request"])
+        state.update(feature_id=feature_ref.feature_id,
+            artifacts={ref.artifact_type: ref.path for ref in (feature_ref, evidence_ref, plan_ref)},
+            artifact_hashes={ref.artifact_type: ref.artifact_hash for ref in (feature_ref, evidence_ref, plan_ref)})
+        adapter, _ = _local_patch_adapter(inputs)
+        adapter.bind_attempt_recorder(journal.record)
+        generated_changes = adapter(state, admitted.implementation_plan, admitted.evidence_pack)
+        j = json.loads(journal.path.read_text(encoding="utf-8"))
+        f = adapter.patch_attempt_receipt()
+        j["factory_receipt"] = f
+        original = PatchProposalBuilder().build(
+            {**admitted.implementation_plan, "proposed_changes": list(generated_changes)},
+            evidence_pack=admitted.evidence_pack).to_artifact_payload()
+        j["terminal_result"] = {"run_id": state["run_id"], "request_id": state["request_id"],
+            "feature_id": state["feature_id"], "status": "terminal", "first_failure": None,
+            "execution_counts": {"apply": 0, "build": 0, "runtime": 0},
+            "feature_spec_artifact": asdict(feature_ref), "evidence_pack_artifact": asdict(evidence_ref),
+            "implementation_plan_artifact": asdict(plan_ref)}
+    else:
+        adapter, _ = _local_patch_adapter(inputs)  # A scripted test provider, never HTTP.
+        completed = run_fresh_patch_continuation(request, patch_change_factory=adapter,
+            dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace))
+        j = json.loads(Path(completed.attempt_receipt["path"]).read_text())
+        f = j["factory_receipt"]
+        original = inputs.store.semantic_read_immutable(ArtifactRef(**completed.patch_proposal_artifact))["data"]
     # Recover native parser output independently from the adapter's final Plan metadata.
     from src.libs.llm import ChatResponse
     from src.mod_agent.local_entry import (
@@ -161,6 +207,7 @@ def case(tmp_path):
         "approval_granted": False, "dry_run_artifact": None, "patch_proposal_artifact": asdict(proposal_ref),
         "proposal_review_artifact": asdict(review_ref)}
     j.update(continuation_selection="product_graph_current_implementation_plan", status="product_execution_finished",
+        proposal_admitted=inputs.store.semantic_read_immutable(proposal_ref)["status"] == "success",
         caller={"workspace_root": str(inputs.workspace)}, request_id=logical_id, parent_run_id=parent_id,
         parent_product_run_id=parent_id, model_role="initial_patch", max_model_calls=4,
         artifacts={"patch_proposal": asdict(proposal_ref), "proposal_review": asdict(review_ref)},

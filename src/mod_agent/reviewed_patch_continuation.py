@@ -192,14 +192,29 @@ def review_run(*, artifact_store_root: str, workspace_root: str, feature_id: str
 _COPY_IGNORED = frozenset({"bin", "obj", ".git", ".idea"})
 
 
-def _copy_source_snapshot(root):
+def _copy_source_snapshot(root, *, excluded_copy_paths=()):
     from src.mod_agent.product_executor import source_snapshot
 
+    excluded = []
+    for relative in excluded_copy_paths:
+        path = (root / relative).resolve()
+        if Path(relative).is_absolute() or path == root or not path.is_relative_to(root):
+            raise ValueError("APPLY_COPY_EXCLUSION_OUTSIDE_WORKSPACE")
+        excluded.append(path)
+    files = []
     for path in root.rglob("*"):
         if any(part in _COPY_IGNORED for part in path.relative_to(root).parts):
             continue
+        if any(path == omitted or path.is_relative_to(omitted) for omitted in excluded):
+            continue
         if path.is_symlink() or not path.resolve().is_relative_to(root):
             raise ValueError("APPLY_COPY_LINK_OUTSIDE_SOURCE")
+        if excluded and path.is_file():
+            raw = path.read_bytes()
+            files.append({"path": path.relative_to(root).as_posix(),
+                          "sha256": hashlib.sha256(raw).hexdigest(), "size": len(raw)})
+    if excluded:
+        return sorted(files, key=lambda row: row["path"])
     return [row for row in source_snapshot(root)
             if not any(part in _COPY_IGNORED for part in Path(row["path"]).parts)]
 
@@ -228,16 +243,34 @@ def _apply_inputs(*, artifact_store_root, workspace_root, feature_id, run_id):
     selected = {kind: ArtifactRef(**_terminal_ref(document, terminal, feature_id, kind, field))
                 for kind, field in _INPUT_FIELDS.items()}
     store = ArtifactStore(artifact_store_root)
+    saved_selection = None
+    if document.get("continuation_selection") == "saved_generated_patch_reassembly":
+        saved = document.get("saved_patch") or {}
+        budget = document.get("logical_budget") or {}
+        if (document.get("generation_origin") != "reused_saved_response"
+                or not isinstance(saved.get("source_attempt_ref"), dict)
+                or not isinstance(budget.get("logical_budget_ref"), dict)):
+            raise ValueError("APPLY_SAVED_SOURCE_SELECTION_MISSING")
+        saved_selection = {"source_attempt_ref": saved["source_attempt_ref"],
+                           "logical_budget_ref": budget["logical_budget_ref"]}
     request = PatchContinuationInputV1(contract_version=PATCH_CONTINUATION_CONTRACT_VERSION,
         artifact_store_root=artifact_store_root, workspace_root=workspace_root,
         feature_spec_ref=selected["feature_spec"], evidence_pack_ref=selected["evidence_pack"],
-        implementation_plan_ref=selected["implementation_plan"])
+        implementation_plan_ref=selected["implementation_plan"], saved_patch_selection=saved_selection,
+        # This is a read-only re-admission of the inspected run, not a new
+        # reassembly execution or a claim about its original CLI attempt label.
+        attempt_id=run_id if saved_selection is not None else None)
     admitted = preflight_patch_continuation(request, artifact_store=store)
     refs = {kind: ArtifactRef(**ref) for kind, ref in viewed["artifacts"].items()}
     documents = {kind: store.semantic_read_immutable(ref) for kind, ref in refs.items()}
     if any(document["status"] != "success" for document in documents.values()):
         raise ValueError("APPLY_ARTIFACT_STATUS_NOT_SUCCESS")
     payloads = {kind: document["data"] for kind, document in documents.items()}
+    if admitted.saved_patch is not None:
+        from src.mod_agent.proposal.builder import PatchProposalBuilder
+        expected_changes = [PatchProposalBuilder._change_intent(change) for change in admitted.saved_patch["changes"]]
+        if payloads["patch_proposal"]["diff_intent"] != expected_changes:
+            raise ValueError("APPLY_SAVED_PATCH_DIFF_CHANGED")
     dry = ExactTextPatchApplier().run(workspace_root=workspace_root,
         proposal=payloads["patch_proposal"], implementation_plan=admitted.implementation_plan,
         review=payloads["proposal_review"], allow_write=False)
@@ -268,13 +301,19 @@ def prepare_reviewed_patch_apply(*, artifact_store_root, workspace_root, feature
     destination = destination_root / hashlib.sha256(operation_id.encode("utf-8")).hexdigest()[:32]
     if destination.exists():
         raise ValueError("APPLY_OPERATION_DESTINATION_ALREADY_EXISTS")
-    snapshot = _copy_source_snapshot(source)
+    excluded_copy_paths = (
+        (store_root.relative_to(source).as_posix(),)
+        if _admitted.saved_patch is not None and store_root.is_relative_to(source) else ()
+    )
+    snapshot = _copy_source_snapshot(source, excluded_copy_paths=excluded_copy_paths)
     binding = {"run_id": run_id, "feature_id": feature_id, "operation_id": operation_id,
         "journal_sha256": viewed["journal_ref"]["sha256"], "diff_hash": dry["diff_hash"],
         "unified_diff_sha256": dry["unified_diff_sha256"],
         "source_snapshot_sha256": _sha256_json(snapshot), "workspace_root": str(source),
         "isolated_root": str(destination_root), "isolated_workspace": str(destination),
         "human_semantic_decision_binding": dry["human_semantic_decision_binding"]}
+    if excluded_copy_paths:
+        binding["excluded_copy_paths"] = list(excluded_copy_paths)
     return {**viewed, "apply_preparation": {"binding": binding,
         "write_target": str(destination), "copy_scope": "configured_workspace_tree",
         "copy_exclusions": sorted(_COPY_IGNORED), "source_file_count": len(snapshot),
@@ -387,11 +426,21 @@ def _apply_reviewed_patch_once(*, artifact_store_root, workspace_root, feature_i
     _, store, admitted, refs, payloads, _ = _apply_inputs(artifact_store_root=artifact_store_root,
         workspace_root=workspace_root, feature_id=feature_id, run_id=run_id)
     source, destination = Path(workspace_root).resolve(), Path(current["isolated_workspace"])
-    before = _copy_source_snapshot(source)
+    excluded_copy_paths = tuple(current.get("excluded_copy_paths", ()))
+    before = _copy_source_snapshot(source, excluded_copy_paths=excluded_copy_paths)
     if _sha256_json(before) != current["source_snapshot_sha256"]:
         raise ValueError("APPLY_SOURCE_CHANGED_BEFORE_COPY")
-    shutil.copytree(source, destination, ignore=shutil.ignore_patterns(*sorted(_COPY_IGNORED)))
-    if _copy_source_snapshot(destination) != before or _copy_source_snapshot(source) != before:
+    ignored_names = shutil.ignore_patterns(*sorted(_COPY_IGNORED))
+    def ignored(directory, names):
+        excluded = set(ignored_names(directory, names))
+        for name in names:
+            relative = (Path(directory) / name).relative_to(source).as_posix()
+            if relative in excluded_copy_paths:
+                excluded.add(name)
+        return excluded
+    shutil.copytree(source, destination, ignore=ignored)
+    if (_copy_source_snapshot(destination) != before
+            or _copy_source_snapshot(source, excluded_copy_paths=excluded_copy_paths) != before):
         raise ValueError("APPLY_ISOLATED_COPY_SOURCE_MISMATCH")
     applier = ExactTextPatchApplier()
 
@@ -403,7 +452,7 @@ def _apply_reviewed_patch_once(*, artifact_store_root, workspace_root, feature_i
         return dry
 
     def isolated_apply_factory(proposal, implementation, review):
-        if _copy_source_snapshot(source) != before:
+        if _copy_source_snapshot(source, excluded_copy_paths=excluded_copy_paths) != before:
             raise ValueError("APPLY_SOURCE_CHANGED_AFTER_APPROVAL")
         return applier.run(workspace_root=destination, proposal=proposal,
             implementation_plan=implementation, review=review, allow_write=True,
@@ -421,7 +470,7 @@ def _apply_reviewed_patch_once(*, artifact_store_root, workspace_root, feature_i
     config = {"configurable": {"thread_id": state["run_id"]}}
     resumed = graph.update_state(config, state, as_node="review_proposal")
     finished = graph.invoke(None, resumed)
-    source_unchanged = _copy_source_snapshot(source) == before
+    source_unchanged = _copy_source_snapshot(source, excluded_copy_paths=excluded_copy_paths) == before
     apply_ref = ArtifactRef(feature_id=feature_id, artifact_type="isolated_apply_result",
         path=finished["artifacts"]["isolated_apply_result"],
         artifact_hash=finished["artifact_hashes"]["isolated_apply_result"])
@@ -508,7 +557,11 @@ def _reviewed_build_inputs(store, checkpoint_ref, resume_payload):
             or destination.resolve().is_relative_to(source.resolve())
             or source.resolve().is_relative_to(destination.resolve())):
         raise ValueError("REVIEWED_BUILD_WORKSPACE_BINDING_INVALID")
-    if _copy_source_snapshot(source) != selected["source_snapshot"]:
+    excluded_copy_paths = tuple(binding.get("excluded_copy_paths", ()))
+    if excluded_copy_paths and (not store.root.resolve().is_relative_to(source.resolve())
+            or excluded_copy_paths != (store.root.resolve().relative_to(source.resolve()).as_posix(),)):
+        raise ValueError("REVIEWED_BUILD_COPY_BOUNDARY_CHANGED")
+    if _copy_source_snapshot(source, excluded_copy_paths=excluded_copy_paths) != selected["source_snapshot"]:
         raise ValueError("REVIEWED_BUILD_ORIGINAL_SOURCE_CHANGED")
     # Older reviewed-copy checkpoints inventory their workspace root. Product
     # checkpoints explicitly inventory only their declared source subtree, so
@@ -544,7 +597,8 @@ def _verify_reviewed_build_result(result, *, destination, feature_id, mode, sour
         if (not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(destination)
                 or hashlib.sha256(path.read_bytes()).hexdigest() != row["sha256"]):
             raise ValueError("REVIEWED_BUILD_INPUT_CHANGED_DURING_BUILD")
-    if _copy_source_snapshot(Path(source_binding["displayed_binding"]["workspace_root"])) != source_binding["source_snapshot"]:
+    if _copy_source_snapshot(Path(source_binding["displayed_binding"]["workspace_root"]),
+            excluded_copy_paths=tuple(source_binding["displayed_binding"].get("excluded_copy_paths", ()))) != source_binding["source_snapshot"]:
         raise ValueError("REVIEWED_BUILD_ORIGINAL_SOURCE_CHANGED")
     if result.status == "success" and (
         result.claims_real_build_success is not True or result.artifact_verification.get("status") != "verified"
