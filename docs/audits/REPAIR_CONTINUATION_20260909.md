@@ -240,3 +240,73 @@ Ruff致命规则和diff检查通过。未重跑429项，未调用模型、embedd
 与保存布局修复`dd43117`整合后，代码身份`1b13a93`补一组共同入口/追踪接缝检查：
 `python -B -m pytest tests/unit/test_saved_apply_layout.py tests/unit/test_symbol_materialization_trace.py -q --tb=short -n 2 --dist=loadfile --basetemp=C:/Users/10160/AppData/Local/Temp/bound-integration-0913 -o cache_dir=C:/Users/10160/AppData/Local/Temp/bound-integration-cache`，
 使用同一主树解释器并设置`PYTHONUTF8=1`，16 passed，12.97秒；未重跑两包的完整选择。
+
+## 9. First Shot完整工具往返预算修复：工程验收
+
+原真实运行`0bef5bc`的`13f25df8cff9e222f1a62d8afaee1505.json`仍保留
+34,351 > 32,768的失败。新实现基于该执行版本开发，提交`6731a16`；
+输入投影与修复分别整合为`c1ff3d2`、`9155a88`，没有第二次真实模型Actual。
+
+先回放原首响应和绑定源码，复现5调用／3新窗口／2复用、原观察超限及第二请求未发送。
+两个原假设经源码核对后需纠正：`model_payload_bytes`为展开视图诊断值，808/807的
+引用本来就直接进入工具wire，不能据差额宣称线上重复展开；同adapter已有首响应token
+校准，第二请求不必然沿首轮未校准代理，但该校准仍是启发式，非数学token上界。
+
+实际重复发生在第5窗口1–124行与第1窗口51–179行。复用现有引用协议，新增
+`excerpt_parts`按顺序组合新文字和先前完整正文的行区间；校验相同源码/快照身份、
+连续范围和完整展开hash。只能引用仍在可见历史的完整正文，重复recipe不形成链。
+所有调用仍保留独立结果，B0/Ck、绑定和原验收要求不删除。
+
+整个只读batch在dispatch前检查结果预算；完整batch不能准入时逐call返回明确否定，
+不把未供给材料当作成功，也不建议接口不支持的缩窗重试。连否定反馈也放不下时停止。
+这里的`not_executed`仅表示未dispatch工具结果；准备阶段确实读取源码，不能报零物理IO。
+历史消耗继续继承；resume下界同时参考已记录的模型/观察/读取累计值，压缩不退款。
+已超额的旧34,351账本仍会在发送前被拒，不能以新编码换实例继续领取额度。
+
+根页在干净代码`9155a88f69040953bea0a3c66e06fadff029a98b`再次完成原材料离线测量：
+
+| 项目 | 新实现的实际回放结果 |
+| --- | ---: |
+| 既有恢复观察 | 17,657 bytes，保留 |
+| 五个工具结果 | 5,387／4,647／808／807／2,611 bytes |
+| 工具编码合计＋既有观察 | 14,260＋17,657＝31,917／32,768，剩851 |
+| 第一完整HTTP请求体 | 45,042 bytes；原代理加4,096输出预留为49,138／49,152 |
+| 第二完整HTTP请求体 | 60,977 bytes；纯字节代理加输出为65,073，超限 |
+| 第二请求实际采用的原准入模式 | `same_model_observed_prompt_ratio_upper_bound_v1`，估计38,325，admitted |
+
+五个完整结果均到达原生传输替身，分段展开与实际源码逐字相同。新工具协议说明改变了
+首请求；保存的canonical请求还丢失原dict插入顺序，因此不声称wire SHA与旧Actual相同。
+校准中的12,642输入tokens来自保存首响应fixture，不是新首请求或第二请求的新实测。
+测试返回的第二回复为旧失败C1；loop完成不能算First Shot修复成功。当前剩851观察字节
+也不证明足以容纳任意后续新失败，下一真实验收须核定完整预算和既有消耗，不运行中扩额。
+
+原材料回放与两份完整请求在原目录的[整合回放结果](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/scratch/firstshot_tool_roundtrip_001/integrated_9155a88/final-metrics.json)；
+驱动`replay_integrated_9155a88.py`显式核对代码根、旧journal与响应hash、原Artifact引用，
+禁用socket连接，并写入新目录，不覆盖旧记录。独立的共享worker接缝测试使用自有marker
+fixture，真实执行原生编码→解析/物化→原验证callback，核对所测文件/hash与第二回复一致，
+然后通过原Review／Dry-run；判定为明确替身，Apply／Build／Runtime均0。
+
+一次185项checkpoint为180 passed／5 failed，63.26秒。其中1项旧断言把未dispatch正文
+计入新增准入字节，已改成保留prior并断言没有新准入/派发；4项在未改`0bef5bc`也失败，
+原因是替身索取输入投影已移除的`source_excerpt`。替身现只读取实际提供的Ck引用，
+不恢复生产重复正文、不改原行为断言，定向4 passed，23.30秒。该185选择无遗留失败，
+不是一次185全绿；后加共享worker接缝1 passed，3.10秒。最后补累计read下界：
+已有1次＋本段3次却传3的红例1 failed，1.87秒；修后传3拒绝、传4继续，1 passed，1.33秒。
+新文件最终14项与相关预算6项共20 passed，3.64秒，未重跑已通过180项。
+
+独立树`firstshot_tool_roundtrip_001`使用主树`.venv/Scripts/python.exe`、`PYTHONUTF8=1`：
+
+```powershell
+python -B -m pytest tests/unit/test_patch_tool_roundtrip_budget.py tests/unit/test_patch_source_coverage_reuse.py tests/unit/test_patch_excerpt_references.py tests/unit/test_patch_agent_loop.py tests/unit/test_repair_input_projection.py tests/unit/test_continuous_behavior_repair.py tests/unit/test_patch_behavior_feedback.py tests/unit/test_external_patch.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\rtcp-$PID"
+python -B -m pytest tests/unit/test_external_patch.py::test_external_qwen_reuses_source_feedback_revision_and_original_review_without_ollama_identity tests/unit/test_external_patch.py::test_json_mode_does_not_extract_patch_from_prose_and_retains_exact_response tests/unit/test_continuous_behavior_repair.py::test_initial_repair_context_renders_the_exact_failed_materialization -q --tb=short --basetemp="$env:TEMP\rtfix4-$PID"
+python -B -m pytest tests/unit/test_patch_tool_roundtrip_budget.py tests/unit/test_patch_source_coverage_reuse.py::test_resume_cost_floor_uses_new_windows_and_planning_helper_matches_actual_encoding tests/unit/test_patch_source_coverage_reuse.py::test_new_failure_segment_can_recheck_the_same_reference_without_resetting_budget tests/unit/test_patch_source_coverage_reuse.py::test_new_window_budget_exhaustion_keeps_reference_tool_available tests/unit/test_patch_source_coverage_reuse.py::test_visible_reference_still_costs_bytes_and_snapshot_drift_blocks tests/unit/test_patch_source_coverage_reuse.py::test_007_shape_reuses_complete_visible_windows_in_initial_and_failure_rounds -q --tb=short --basetemp="$env:TEMP\rtrcp-$PID"
+```
+
+与检索和保存Apply整合后的`9155a88`在`independent_package_fixes_001`执行：
+
+```powershell
+python -B -m pytest tests/unit/test_patch_tool_roundtrip_budget.py tests/unit/test_repair_input_projection.py tests/unit/test_indexed_source_product_entry.py tests/unit/test_saved_apply_layout.py -q --tb=short -n 2 --dist=loadfile --basetemp=C:/Users/10160/AppData/Local/Temp/roundtrip-integrated -o cache_dir=C:/Users/10160/AppData/Local/Temp/roundtrip-integrated-cache
+```
+
+41 passed，38.83秒。Ruff致命规则和diff检查通过。原始pytest结果仅在工具输出中，
+未把测试数当任务数。本包没有真实模型、Cloud、Embedding、游戏、真实Build或用户Mod Apply。
