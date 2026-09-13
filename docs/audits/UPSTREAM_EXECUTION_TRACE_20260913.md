@@ -180,3 +180,15 @@ overlap and are not independent product tasks. No real model, compilation,
 product Apply, game or network operation was part of these checks. This proves
 retention after handled failure and process exit; it does not claim recovery
 after uncatchable termination, total storage failure or partial product writes.
+
+Product reassessment `9d23b7d` and retention `8b950c8` were integrated at
+`9bb3d5c0df736471865e5cdb27ad1aa9b2c5544a`. The combined selection below passed
+**15 tests in 37.64 seconds**; Ruff `E9,F63,F7,F821` passed on all Python files
+changed since `ed5234b`. This checks both lines together, with no real model,
+product Apply, compiler or Cloud operation. The source stayed unchanged during
+this check; this paragraph is a subsequent evidence-only update.
+
+```powershell
+$env:PYTHONUTF8='1'
+python -m pytest -q --basetemp C:/Users/10160/AppData/Local/Temp/two-lines-integrated -o cache_dir=C:/Users/10160/AppData/Local/Temp/pf-ret-cache tests/unit/test_mod_agent_cli.py::test_cli_run_request_patch_evidence_return_executes_new_search_and_reaches_original_review tests/unit/test_product_execution.py::test_product_upstream_retains_current_failed_plan_and_original_checks tests/unit/test_upstream_product_trace.py tests/unit/test_preflight_failure_retention.py
+```
