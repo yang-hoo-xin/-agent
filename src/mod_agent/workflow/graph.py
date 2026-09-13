@@ -5783,12 +5783,12 @@ def _run_isolated_apply(
         except GraphInterrupt:
             raise
         except Exception as exc:
+            from src.mod_agent.execution.patch_apply import patch_apply_failure_details
+
             payload = {
                 "execution_mode": "isolated_apply",
-                "actual_write_performed": False,
-                "real_patch_applied": False,
+                **patch_apply_failure_details(exc),
                 "approved_by_review": review.get("allowed_next_stage") == "dry_run_apply",
-                "changed_files": [],
                 "error": f"{type(exc).__name__}: {exc}",
             }
             status = "failed"
@@ -5848,17 +5848,35 @@ def _run_isolated_apply(
         ),
         "human_semantic_decision": human_semantic_decision,
     }
-    artifact_ref = artifact_store.write(
-        feature_id=proposal["feature_id"],
-        artifact_type="isolated_apply_result",
-        payload=complete_payload,
-        status=status,
-        upstream_refs=[
-            _artifact_ref_from_state(state, "patch_proposal"),
-            _artifact_ref_from_state(state, "proposal_review"),
-            _artifact_ref_from_state(state, "dry_run_result"),
-        ],
-    )
+    try:
+        artifact_ref = artifact_store.write(
+            feature_id=proposal["feature_id"],
+            artifact_type="isolated_apply_result",
+            payload=complete_payload,
+            status=status,
+            upstream_refs=[
+                _artifact_ref_from_state(state, "patch_proposal"),
+                _artifact_ref_from_state(state, "proposal_review"),
+                _artifact_ref_from_state(state, "dry_run_result"),
+            ],
+        )
+    except BaseException as error:
+        from src.mod_agent.execution.patch_apply import attach_patch_apply_failure
+
+        # An ArtifactStore failure after an Apply return is not evidence of
+        # zero filesystem effects. Preserve facts on the escaping exception.
+        attach_patch_apply_failure(error, {
+            **{key: complete_payload[key] for key in (
+                "actual_write_performed", "real_patch_applied", "changed_files",
+                "diff_hash", "approved_diff_hash", "context_hashes", "approved_by_user",
+            ) if key in complete_payload},
+            "write_completion": complete_payload.get("write_completion",
+                "complete" if complete_payload.get("real_patch_applied") is True else
+                "not_started" if complete_payload.get("actual_write_performed") is False else "unknown"),
+            "write_failure": {"operation": "result_persistence",
+                "file_observations": (complete_payload.get("write_failure") or {}).get("file_observations", [])},
+        })
+        raise
     next_state["current_stage"] = "isolated_apply"
     _record_artifact(next_state, "isolated_apply_result", artifact_ref)
     return next_state

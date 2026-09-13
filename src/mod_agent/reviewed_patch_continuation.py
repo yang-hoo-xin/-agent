@@ -437,6 +437,8 @@ def _apply_reviewed_patch_once(*, artifact_store_root, workspace_root, feature_i
         "source_workspace_written": not source_unchanged, "isolated_workspace": str(destination),
         "isolated_workspace_created": True, "artifact_writes_performed": True,
         "product_source_writes_performed": applied["actual_write_performed"],
+        "apply_write_details": {key: applied[key] for key in (
+            "actual_write_performed", "real_patch_applied", "changed_files", "write_completion", "write_failure") if key in applied},
         "isolated_apply_result": {"feature_id": apply_ref.feature_id, "artifact_type": apply_ref.artifact_type,
             "path": apply_ref.path, "artifact_hash": apply_ref.artifact_hash},
         "workflow_checkpoint": _artifact_reference(checkpoint_ref),
@@ -770,6 +772,8 @@ def resume_deferred_approval(*, artifact_store_root, checkpoint_ref, resume_payl
             result = {**base, "status": "applied_in_isolation" if complete else "blocked",
                 "isolated_apply_result": _artifact_reference(apply_ref), "workflow_checkpoint": _artifact_reference(following),
                 "product_source_writes_performed": applied["actual_write_performed"],
+                "apply_write_details": {key: applied[key] for key in (
+                    "actual_write_performed", "real_patch_applied", "changed_files", "write_completion", "write_failure") if key in applied},
                 "source_workspace_written": not source_unchanged, "blockers": finished["blockers"],
                 "trace_events": finished["trace_events"], "next_nodes": list(graph.get_state(config).next)}
             trace.update(workflow_status=result["status"], terminal_stage="isolated_apply")

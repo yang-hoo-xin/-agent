@@ -6242,6 +6242,19 @@ def _run_pre_graph_step(
             raise
 
 
+def _observed_product_write_status(apply_payloads, effect_events) -> bool | None:
+    """Aggregate observed writes without turning missing Apply facts into zero."""
+    values = [payload.get("actual_write_performed") if isinstance(payload, Mapping) else None
+              for payload in apply_payloads]
+    if any(value is True for value in values):
+        return True
+    if any(value is not False for value in values):
+        return None
+    started = sum(event.effect_role == "isolated_apply" and event.event_status == "started"
+                  for event in effect_events)
+    return None if started > len(apply_payloads) else False
+
+
 def _persist_graph_terminal_result(
     *,
     run_root: Path,
@@ -6250,7 +6263,7 @@ def _persist_graph_terminal_result(
     summary: Mapping[str, Any],
     model_call_count: int,
     patch_payload_parser_entered: bool,
-    actual_write_performed: bool,
+    actual_write_performed: bool | None,
 ) -> None:
     manifest_path = run_root / "run_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -6314,6 +6327,8 @@ def _persist_graph_terminal_failure(
     model_call_count: int,
     extra: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    from src.mod_agent.execution.patch_apply import patch_apply_failure_details
+
     diagnostics = getattr(error, "diagnostics", None)
     diagnostic_record = dict(diagnostics) if isinstance(diagnostics, Mapping) else {}
     patch_payload_parser_entered = (
@@ -6331,7 +6346,7 @@ def _persist_graph_terminal_failure(
         "model_call_count": model_call_count,
         "graph_invoked": True,
         "patch_payload_parser_entered": patch_payload_parser_entered,
-        "actual_write_performed": False,
+        **patch_apply_failure_details(error),
         "run_root": str(run_root),
     }
     if extra:
@@ -6356,7 +6371,9 @@ def _persist_graph_terminal_failure(
             "model_call_count": model_call_count,
             "graph_invoked": True,
             "patch_payload_parser_entered": patch_payload_parser_entered,
-            "actual_write_performed": False,
+            "actual_write_performed": failure["actual_write_performed"],
+            "changed_files": failure["changed_files"],
+            "write_completion": failure["write_completion"],
         }
     )
     manifest_path.write_text(
@@ -8257,19 +8274,12 @@ def run_local_request(
             ),
         }
         output_readback = validation_details.get("output_readback") or []
-        isolated_apply_payload = next(
-            (
-                item.get("data")
-                for item in output_readback
-                if isinstance(item, Mapping)
-                and item.get("artifact_type") == "isolated_apply_result"
-            ),
-            {},
-        )
-        actual_write_performed = bool(
-            isinstance(isolated_apply_payload, Mapping)
-            and isolated_apply_payload.get("actual_write_performed") is True
-        )
+        apply_payloads = [item.get("data") for item in output_readback
+                          if isinstance(item, Mapping) and item.get("artifact_type") == "isolated_apply_result"]
+        actual_write_performed = _observed_product_write_status(apply_payloads, product_result.effect_events)
+        apply_write_details = [{key: payload[key] for key in (
+            "actual_write_performed", "real_patch_applied", "changed_files", "write_completion", "write_failure")
+            if key in payload} for payload in apply_payloads if isinstance(payload, Mapping)]
         patch_payload_parser_entered = "patch_proposal" in output_paths
         selected_classification = dict(product_request.completion_classification)
         final_artifact_verification = validation_details.get("compiled_artifact")
@@ -8302,6 +8312,7 @@ def run_local_request(
             "graph_invoked": True,
             "patch_payload_parser_entered": patch_payload_parser_entered,
             "actual_write_performed": actual_write_performed,
+            "apply_write_details": apply_write_details,
             "model_admission": model_admission,
             "local_model_identity": local_model_identity,
             "repair_local_model_identity": repair_local_model_identity,

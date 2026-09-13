@@ -1319,7 +1319,9 @@ def test_graph_patch_failure_updates_same_run_manifest(tmp_path: Path) -> None:
     assert failure["graph_invoked"] is True
     assert failure["model_call_count"] == 1
     assert failure["patch_payload_parser_entered"] is True
-    assert failure["actual_write_performed"] is False
+    # A diagnostic phase name does not prove that the whole prior Graph run
+    # performed no writes; an executor receipt is needed for that assertion.
+    assert failure["actual_write_performed"] is None
     assert manifest["status"] == "failed"
     assert manifest["terminal_failure_stage"] == (
         "deterministic_patch_validation"

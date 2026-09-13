@@ -117,6 +117,14 @@ class PlanRequestResult:
     mod_planning_brief: dict[str, object]
 
 
+def _apply_failure_cli_details(error):
+    from .execution.patch_apply import patch_apply_failure_details
+
+    details = patch_apply_failure_details(error)
+    return {"product_source_writes_performed": details["actual_write_performed"],
+            "apply_write_details": details, **exception_execution_trace_projection(error)}
+
+
 def _execution_trace_configuration(args):
     from src.mod_agent.patch_execution_trace import PatchExecutionTraceConfiguration
 
@@ -2324,6 +2332,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     execution_trace_configuration=_execution_trace_configuration(args))
             except (ValueError, RuntimeError, OSError, TypeError) as exc:
                 result = {"entry": "apply-patch", "status": "blocked", "feature_id": args.feature_id,
+                    **_apply_failure_cli_details(exc),
                     "reason": str(exc), "execution_outcome": "not_confirmed_check_resume_report_and_apply_artifacts"}
             print(json.dumps(result, ensure_ascii=False))
             return 0 if result["status"] == "applied_in_isolation" else 2
@@ -2362,7 +2371,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 result = {"entry": "apply-patch", "status": "blocked", "run_id": args.run_id,
                     "feature_id": args.feature_id, "reason": str(exc),
                     "execution_outcome": "not_confirmed_check_isolated_output_if_created",
-                    "product_source_writes_performed": None, "model_calls_performed": 0,
+                    **_apply_failure_cli_details(exc), "model_calls_performed": 0,
                     "builds_performed": 0, "runtime_executions_performed": 0, "stopped_before": "build"}
             print(json.dumps(result, ensure_ascii=False))
             return 0

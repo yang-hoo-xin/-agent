@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from collections.abc import Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path, PurePosixPath
@@ -20,6 +21,54 @@ from src.mod_agent.proposal.models import SemanticAssuranceV1
 
 class PatchApplyError(RuntimeError):
     """Raised when an executable patch is unsafe, stale, or ambiguous."""
+
+
+def patch_apply_failure_details(error: BaseException) -> dict[str, Any]:
+    """Read executor-owned facts; an uninstrumented factory failure is unknown."""
+    facts = getattr(error, "patch_apply_failure", None)
+    if isinstance(facts, dict) and (
+        type(facts.get("actual_write_performed")) is bool
+        or facts.get("actual_write_performed") is None
+    ) and facts.get("write_completion") in {"not_started", "partial", "complete", "unknown"}:
+        return deepcopy(facts)
+    return {"actual_write_performed": None, "real_patch_applied": False,
+        "changed_files": [], "write_completion": "unknown",
+        "write_failure": {"operation": "unreported_factory_failure", "file_observations": []}}
+
+
+def attach_patch_apply_failure(error: BaseException, facts: Mapping[str, Any]) -> None:
+    """Keep the original exception while preserving measured target effects."""
+    try:
+        error.patch_apply_failure = deepcopy(dict(facts))
+    except Exception:
+        pass
+
+
+def _write_failure_details(root, staged, originals, replacements, operation, cleanup_errors):
+    observations, confirmed = [], []
+    for target, expected in staged.items():
+        path = target.relative_to(root).as_posix()
+        before_hash, expected_hash = _sha256_bytes(originals[target]), _sha256_bytes(expected)
+        replacement = replacements[target]
+        row = {"path": path, "before_sha256": before_hash, "expected_after_sha256": expected_hash,
+               "replacement_status": replacement, "observed_sha256": None, "target_state": "unreadable"}
+        if replacement == "confirmed":
+            confirmed.append(path)
+        try:
+            observed = _sha256_bytes(target.read_bytes())
+            row.update(observed_sha256=observed,
+                       target_state="expected" if observed == expected_hash else "baseline" if observed == before_hash else "other")
+        except Exception as read_error:
+            row["observation_error_type"] = type(read_error).__name__
+        observations.append(row)
+    uncertain = any(value == "uncertain" for value in replacements.values())
+    complete = bool(observations) and all(
+        row["replacement_status"] == "confirmed" and row["target_state"] == "expected" for row in observations)
+    return {"actual_write_performed": True if confirmed else None if uncertain else False,
+        "real_patch_applied": complete, "changed_files": sorted(confirmed),
+        "write_completion": "complete" if complete else "partial" if confirmed else "unknown" if uncertain else "not_started",
+        "write_failure": {"operation": operation, "file_observations": observations,
+                          "temporary_cleanup_errors": cleanup_errors}}
 
 
 class ExactDiffApprovalRejectedError(RuntimeError):
@@ -293,6 +342,25 @@ class ExactTextPatchApplier:
     """Validate exact replacements and optionally write them inside one workspace."""
 
     def run(
+        self, *, workspace_root: str | Path, proposal: dict[str, Any],
+        implementation_plan: dict[str, Any], review: dict[str, Any], allow_write: bool,
+        approved_diff_hash: str | None = None,
+        human_semantic_decision: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        try:
+            return self._run(workspace_root=workspace_root, proposal=proposal,
+                implementation_plan=implementation_plan, review=review, allow_write=allow_write,
+                approved_diff_hash=approved_diff_hash, human_semantic_decision=human_semantic_decision)
+        except BaseException as error:
+            if not hasattr(error, "patch_apply_failure"):
+                # Every physical target replacement is covered by the inner
+                # handler. Errors before that point have confirmed zero writes.
+                attach_patch_apply_failure(error, {"actual_write_performed": False,
+                    "real_patch_applied": False, "changed_files": [], "write_completion": "not_started",
+                    "write_failure": {"operation": "validation", "file_observations": []}})
+            raise
+
+    def _run(
         self,
         *,
         workspace_root: str | Path,
@@ -393,22 +461,47 @@ class ExactTextPatchApplier:
                         "User rejected the displayed exact diff after semantic review.",
                         human_semantic_decision=validated_human_decision,
                     )
-            for target, content in staged.items():
-                temporary = target.with_name(f".{target.name}.v2-codegen.tmp")
-                try:
-                    temporary.write_bytes(content)
-                    if temporary.read_bytes() != content:
-                        raise PatchApplyError(
-                            "Temporary patch output does not match dry-run bytes."
-                        )
-                    os.replace(temporary, target)
-                    if target.read_bytes() != content:
-                        raise PatchApplyError(
-                            "Applied patch bytes do not match dry-run bytes."
-                        )
-                finally:
-                    if temporary.exists():
-                        temporary.unlink()
+            replacements = {target: "not_attempted" for target in staged}
+            operation = "temporary_write"
+            cleanup_errors = []
+            try:
+                for target, content in staged.items():
+                    temporary = target.with_name(f".{target.name}.v2-codegen.tmp")
+                    original_error = None
+                    try:
+                        operation = "temporary_write"
+                        temporary.write_bytes(content)
+                        operation = "temporary_readback"
+                        if temporary.read_bytes() != content:
+                            raise PatchApplyError("Temporary patch output does not match dry-run bytes.")
+                        operation = "replace"
+                        replacements[target] = "uncertain"
+                        os.replace(temporary, target)
+                        replacements[target] = "confirmed"
+                        operation = "target_readback"
+                        if target.read_bytes() != content:
+                            raise PatchApplyError("Applied patch bytes do not match dry-run bytes.")
+                    except BaseException as error:
+                        original_error = error
+                        raise
+                    finally:
+                        try:
+                            if temporary.exists():
+                                temporary.unlink()
+                        except BaseException as cleanup_error:
+                            if original_error is None:
+                                operation = "temporary_cleanup"
+                                raise
+                            cleanup_errors.append({"path": target.relative_to(root).as_posix(),
+                                                   "error_type": type(cleanup_error).__name__})
+            except BaseException as error:
+                facts = _write_failure_details(root, staged, original_by_target, replacements, operation, cleanup_errors)
+                facts.update(diff_hash=diff_hash, approved_diff_hash=approved_diff_hash,
+                    approved_by_user=True, context_hashes=context_hashes,
+                    human_semantic_decision=validated_human_decision,
+                    human_semantic_review_result="approved" if validated_human_decision is not None else "not_required_for_legacy_non_semantic_contract")
+                attach_patch_apply_failure(error, facts)
+                raise
 
         return {
             "execution_mode": "isolated_apply" if allow_write else "dry_run",

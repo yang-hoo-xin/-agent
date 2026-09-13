@@ -56,7 +56,13 @@ def test_reviewed_diff_explicit_approval_reaches_original_graph_apply_and_stops_
     assert len(roots) == 1 and roots[0]["attributes"]["workflow_status"] == "applied_in_isolation"
     assert not any(row["kind"] == "generation" for row in observations.values())
     assert {row["attributes"]["workflow_node"] for row in observations.values()
-            if "workflow_node" in row["attributes"]} == {"dry_run_apply", "isolated_apply"}
+            if "workflow_node" in row["attributes"] and row["name"] != "workflow.route"} == {"dry_run_apply", "isolated_apply"}
+    # Resuming after Review selects its outgoing route without re-executing
+    # Review. A route observation must not be counted as an executed node.
+    assert any(row["name"] == "workflow.route"
+               and row["attributes"].get("from_node") == "review_proposal"
+               and row["attributes"].get("selected_next_node") == "dry_run_apply"
+               for row in observations.values())
     for row in observations.values():
         assert row["trace_id"] == summary["trace_id"] and row["status"] == "completed"
         assert row["started_at"] and row["finished_at"] and row["elapsed_ms"] >= 0

@@ -57,3 +57,54 @@ Graph最小旧反例先因旧1–5模型额度规则失败；保存分支通过�
 $pythonSaved = 'C:/Users/10160/.codex/visualizations/2026/08/11/019ff15f-9eac-7b13-aad5-faffde4b36b7/rag_capability_mainline/.venv/Scripts/python.exe'
 & $pythonSaved -B -m pytest tests/unit/test_saved_patch_admission.py tests/unit/test_saved_patch_graph.py tests/unit/test_saved_patch_cli.py tests/unit/test_fresh_planning_continuation.py tests/unit/test_patch_upstream_budget.py tests/unit/test_patch_upstream_unchanged_plan.py tests/unit/test_reviewed_patch_continuation.py tests/unit/test_reviewed_patch_cli.py tests/unit/test_product_patch_journal.py tests/unit/test_product_execution_query.py tests/unit/test_patch_execution_index.py tests/unit/test_cli_unicode_output.py -q --tb=short -n 2 --dist=loadfile --basetemp=C:/Users/10160/AppData/Local/Temp/saved-cp-0909 --junitxml=C:/Users/10160/.codex/visualizations/2026/09/08/01a07fb9-9dfe-7a20-a345-de16b4ab1892/saved-resume-checkpoint.xml
 ```
+
+## 2026-09-13：部分写入失败事实及续接边界
+
+本次基线 `dbe18ae89ec53b0c40db206027d346e489757249`，独立分支
+`codex/partial-apply-failure`。先用两份临时源码、原 Applier Dry-run
+及其精确批准hash复现：第一文件确实被修改，第二次替换抛错，原异常没有
+目标写入事实。另在原 Graph 节点及条件边复现写入结果被记成False：
+1项失败，1.59秒。原审批和修改范围规则未放宽。
+
+Applier现在保留原异常类型/实例，附带已测量的 `patch_apply_failure`。
+每目标记录原/预期/实际读取hash、替换是否正常返回以及当前字节状态。
+`actual_write_performed=True`表示至少一次目标替换已确认；False仅用于
+确认没有目标替换；没有确认且替换结果不明时保留None。`changed_files`
+只列正常返回的替换，其他目标的未知状态仍在逐文件观察中。
+`real_patch_applied`只有全部目标替换完成且读取字节匹配时才True；即使目标
+全部写成后仅清理失败，Graph仍是failed/blocked，不能进入Build或生成续接批准。
+
+Graph不再将未知factory异常或部分写入硬编码为零写入。Apply已返回、而
+ArtifactStore保存结果失败时，逃逸异常仍携带已确认目标事实。任务汇总对
+所有已回查Apply结果保留三态，存在调用而缺结果时不填False；异常终态文件、
+manifest及公开reviewed续接结果也保留写入明细。已核查的saved-output准入、
+无blocker完成条件、源码快照及重复消费检查继续阻止错误续行；未发现原False
+直接触发自动清理/重放的现有消费者，不宣称曾经发生数据损坏。
+
+定向验证：9项Applier/Graph故障场景通过，1.63秒。结果投影首次9通过、2失败
+（7.79秒）：新测试误将已有domain_blocked退出码写为2，读原CLI确认应为1后
+修正测试；两项公开入口和新增收据保存故障场景共3项通过，10.12秒。公开入口
+使用原Graph/Store与真实临时文件，模型、编译为明确替身，无真实Mod Apply。
+
+唯一有界检查点选择372项，结果371通过/1失败，112.42秒。失败是旧批准续接
+测试把新增 `workflow.route` 的 `workflow_node` 当作已执行节点；串行在本分支
+及未改基线各复现1失败（3.71秒、3.99秒）。仅修正该测试区分路线与节点，并
+显式检查Review到Dry-run路线，定向1通过，2.41秒；未重跑已通过371项。
+该选择最终无未解决失败，不声称一次372项全绿。改动Python的
+Ruff `E9,F63,F7,F821`及diff检查通过。
+
+```powershell
+$env:PYTHONUTF8='1'
+python -m pytest -q -n 2 --dist=loadfile --basetemp C:/Users/10160/AppData/Local/Temp/partial-final -o cache_dir=C:/Users/10160/AppData/Local/Temp/partial-cache tests/unit/test_partial_apply_failure.py tests/unit/test_apply_failure_projection.py tests/unit/test_patch_apply.py tests/unit/test_local_entry.py tests/unit/test_reviewed_patch_continuation.py tests/unit/test_reviewed_patch_cli.py tests/unit/test_deferred_product_approval.py tests/unit/test_product_execution.py
+python -m pytest -q tests/unit/test_reviewed_patch_continuation.py::test_reviewed_diff_explicit_approval_reaches_original_graph_apply_and_stops_before_build --basetemp C:/Users/10160/AppData/Local/Temp/partial-route-fixed -o cache_dir=C:/Users/10160/AppData/Local/Temp/partial-cache
+```
+
+这解决的是可捕获异常时的事实表达及不误推进；没有跨文件事务、自动回滚、
+任意强杀恢复或并发exactly-once保证。未调用真实模型、编译器、游戏或Cloud，
+没有对用户Mod执行Apply。历史配置任务的精确批准及后续交付状态不改变。
+
+包级复核随后发现两个批准CLI异常出口仍丢弃异常已携带的写入明细。已让
+`apply-patch --resume-approval`和`--human-decision-stdin`复用同一失败投影，
+原退出码/blocked语义保持；2项定向出口测试通过，1.18秒：
+`python -m pytest -q tests/unit/test_apply_failure_projection.py::test_approval_cli_exception_preserves_confirmed_files --basetemp C:/Users/10160/AppData/Local/Temp/partial-cli -o cache_dir=C:/Users/10160/AppData/Local/Temp/partial-cache`。
+未因这次窄改重跑已通过的372项选择；新增CLI与测试Ruff通过。
