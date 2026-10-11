@@ -181,6 +181,21 @@ class TestOllamaInit:
         with patch.dict("os.environ", {"OLLAMA_BASE_URL": "http://env:11434"}):
             llm = OllamaLLM(settings, base_url="http://explicit:11434")
             assert llm.base_url == "http://explicit:11434"
+
+    def test_factory_uses_settings_endpoint_before_environment(self):
+        settings = MockSettings()
+        settings.llm.base_url = "http://127.0.0.1:59123"
+        with patch.dict("os.environ", {"OLLAMA_BASE_URL": "http://env:11434"}):
+            assert LLMFactory.create(settings).base_url == settings.llm.base_url
+            assert LLMFactory.create(settings, base_url="http://explicit:11434").base_url == "http://explicit:11434"
+
+    def test_reranker_uses_configured_endpoint(self, tmp_path):
+        from src.libs.reranker.llm_reranker import LLMReranker
+        settings = MockSettings()
+        settings.llm.base_url = "http://127.0.0.1:59124"
+        prompt = tmp_path / "rerank.txt"
+        prompt.write_text("Rank the supplied passages.", encoding="utf-8")
+        assert LLMReranker(settings, prompt_path=str(prompt)).llm.base_url == settings.llm.base_url
     
     def test_init_model_from_settings(self):
         """Should read model from settings."""

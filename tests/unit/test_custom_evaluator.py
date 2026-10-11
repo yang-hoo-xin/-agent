@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from src.core.types import RetrievalResult
 from src.libs.evaluator.base_evaluator import NoneEvaluator
 from src.libs.evaluator.custom_evaluator import CustomEvaluator
 from src.libs.evaluator.evaluator_factory import EvaluatorFactory
@@ -11,6 +12,22 @@ from src.libs.evaluator.evaluator_factory import EvaluatorFactory
 
 class TestCustomEvaluator:
     """Tests for CustomEvaluator metrics computation."""
+
+    @pytest.mark.parametrize(
+        ("expected_ids", "expected_metrics"),
+        [(["c2"], {"hit_rate": 1.0, "mrr": 0.5}),
+         (["missing"], {"hit_rate": 0.0, "mrr": 0.0})],
+    )
+    def test_scores_actual_retrieval_results(self, expected_ids, expected_metrics) -> None:
+        evaluator = CustomEvaluator(metrics=["hit_rate", "mrr"])
+        retrieved = [
+            RetrievalResult(chunk_id="c1", text="First context", score=0.9),
+            RetrievalResult(chunk_id="c2", text="Second context", score=0.8),
+        ]
+
+        assert evaluator.evaluate(
+            "query", retrieved, ground_truth={"ids": expected_ids}
+        ) == expected_metrics
 
     def test_hit_rate_and_mrr_success(self) -> None:
         evaluator = CustomEvaluator(metrics=["hit_rate", "mrr"])

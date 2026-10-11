@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 from uuid import uuid4
 
+from src.mod_agent.build.dependencies import RunLocalGameFolderBindingV1
 from src.mod_agent.domain.accurate_crosshair_configuration import (
     ActualCrosshairConfigurationChecker,
 )
@@ -15,7 +16,6 @@ from src.mod_agent.domain.accurate_crosshair_eval import (
 )
 from src.mod_agent.domain.accurate_crosshair_revalidation import CurrentPlanExistingMatrixOracle
 from src.mod_agent.domain.full_project_compilation import FullProjectCompilationChecker, _ref, _save
-from src.mod_agent.local_entry import RunLocalGameFolderBindingV1
 from src.mod_agent.model_qualification import canonical_hash
 
 

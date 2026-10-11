@@ -122,7 +122,7 @@ class CoreReranker:
             try:
                 self._reranker = RerankerFactory.create(settings)
             except Exception as e:
-                logger.warning(f"Failed to create reranker, using NoneReranker: {e}")
+                logger.warning("Failed to create reranker, using NoneReranker (%s)", type(e).__name__)
                 self._reranker = NoneReranker(settings=settings)
         
         # Determine reranker type for result reporting
@@ -326,7 +326,7 @@ class CoreReranker:
             )
             
         except Exception as e:
-            logger.warning(f"Reranking failed, using fallback: {e}")
+            logger.warning("Reranking failed, using fallback (%s)", type(e).__name__)
             
             if self.config.fallback_on_error:
                 # Return original order as fallback

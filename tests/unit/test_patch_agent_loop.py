@@ -886,11 +886,15 @@ def test_repeated_oversized_batch_stops_even_with_new_call_ids(tmp_path: Path) -
 def test_read_batch_rejects_mixed_tools_before_any_read(tmp_path: Path, tool_name) -> None:
     _, _, _, inspector = _fixture(tmp_path, binding_count=2, policy=PatchAgentLoopPolicy(
         allow_batched_reads=True, allow_upstream_request=True, require_source_inspection=False))
-    result = _run(_ScriptedClient([_response(turn=1, tool_calls=(
+    client = _ScriptedClient([_response(turn=1, tool_calls=(
         _tool_call("edit_binding_001", turn=1), _tool_call("edit_binding_002", turn=2, name=tool_name),
-    ))]), inspector)
+    )), _response(turn=2, content='{"changes":[]}')])
+    result = _run(client, inspector)
     assert result.tool_rounds_used == 0 and not result.observation_trace
     assert all(item["status"] == "rejected_not_executed" for item in result.tool_call_trace)
+    # Whole-batch rejection is delivered through the existing loop, without dispatch.
+    # 为什么要有它：模型可用剩余预算纠正协议选择，而不是将批次选择误报为平台执行异常。
+    assert result.completed and len(client.requests[1].tool_results) == 2
 
 
 def test_batch_stops_on_snapshot_drift_without_executing_remaining_reads(tmp_path: Path) -> None:

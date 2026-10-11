@@ -5,9 +5,11 @@ Provides a typed, filterable interface over the raw JSONL trace log.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
+import stat
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +21,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_TRACES_PATH = resolve_path("logs/traces.jsonl")
 
 DEFAULT_MAX_STRING_CHARS = 2000
+MAX_PRODUCT_RECORD_BYTES = 16 * 1024 * 1024
 _REDACTED = "[redacted]"
 _TRUNCATED_SUFFIX = "...[truncated]"
 _SENSITIVE_KEY_PARTS = (
@@ -141,6 +144,699 @@ class TraceService:
                 }
             )
         return timings
+
+    def inspect_product_run(
+        self,
+        *,
+        allowed_root: str | Path,
+        run_root: str | Path,
+        run_id: str,
+        continuation_root: str | Path | None = None,
+        include_local_raw: bool = False,
+    ) -> dict[str, Any]:
+        """Project one explicitly selected Product run and optional continuation.
+
+        Only local files under *allowed_root* are accepted. Raw request/response
+        bodies are read only from hash-bound ``local_detail_refs`` and only when
+        the caller explicitly opts in.
+        """
+        if not isinstance(run_id, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", run_id) is None:
+            raise ValueError("Product run_id is invalid.")
+        allowed = self._existing_directory(allowed_root, label="Allowed Runs Root")
+        original = self._selected_directory(run_root, allowed=allowed, label="Run Root")
+        if original.name != run_id:
+            raise ValueError("Run Root basename does not match run_id.")
+        roots = [("original", original)]
+        if continuation_root is not None and str(continuation_root).strip():
+            continuation = self._selected_directory(
+                continuation_root, allowed=original / "continuations", label="Continuation Root",
+            )
+            roots.append(("continuation", continuation))
+
+        segments = [self._product_segment(
+            kind, root, run_id, include_local_raw, selected_run_root=original,
+        ) for kind, root in roots]
+        calls = []
+        for segment in segments:
+            for call in segment["calls"]:
+                calls.append({**call, "call_number": len(calls) + 1})
+        latest = segments[-1]
+        original_budget = segments[0].get("model_call_budget") or {}
+        latest_budget = latest.get("model_call_budget") or {}
+        findings = (latest_budget.get("by_stage") or {}).get("requirement_findings") or {}
+        return {
+            "run_id": run_id,
+            "read_only": True,
+            "query_execution": {"model_calls_performed": 0, "writes_performed": False},
+            "segments": segments,
+            "calls": calls,
+            "call_accounting": {
+                "original": self._budget_counts(original_budget),
+                "latest": self._budget_counts(latest_budget),
+                "latest_requirement_findings": self._budget_counts(findings),
+                "actual_generation_records": len(calls),
+                "counting_rule": "Each generation with its parent model.request is one call.",
+            },
+            "diagnostic_timeline": self._diagnostic_timeline(segments),
+            "schema_failure_drilldown": self._schema_failure_drilldown(segments),
+            "blind_spots": [
+                "request.json is an application-layer request record, not a byte-for-byte HTTP packet.",
+                "response_format is a service output constraint; it is displayed separately from model messages and does not prove the model read the full schema text.",
+                "Ollama Schema-to-grammar handling was not recorded; support is unknown from these run records.",
+                "Missing parse, schema, business-validation, reservation, invocation, or transport facts remain unknown or not reached.",
+            ],
+        }
+
+    @staticmethod
+    def _budget_counts(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {"maximum": None, "consumed": None, "remaining": None}
+        return {key: value.get(key) if type(value.get(key)) is int else None
+                for key in ("maximum", "consumed", "remaining")}
+
+    @staticmethod
+    def _existing_directory(value: str | Path, *, label: str) -> Path:
+        path = Path(value)
+        if not path.is_absolute() or path.is_symlink():
+            raise ValueError(f"{label} must be an absolute, non-symlink directory.")
+        resolved = path.resolve(strict=True)
+        if not resolved.is_dir():
+            raise ValueError(f"{label} is not a directory.")
+        return resolved
+
+    @classmethod
+    def _selected_directory(cls, value: str | Path, *, allowed: Path, label: str) -> Path:
+        path = cls._existing_directory(value, label=label)
+        allowed = allowed.resolve(strict=True)
+        if path == allowed or not path.is_relative_to(allowed):
+            raise ValueError(f"{label} is outside the allowed root.")
+        return path
+
+    @staticmethod
+    def _read_product_json(path: Path, *, root: Path) -> tuple[dict[str, Any], str]:
+        selected = path
+        if not selected.is_absolute():
+            selected = root / selected
+        if selected.is_symlink():
+            raise ValueError("Product record links are not allowed.")
+        selected = selected.resolve(strict=True)
+        if not selected.is_relative_to(root):
+            raise ValueError("Product record escapes its selected run root.")
+        info = selected.stat()
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_PRODUCT_RECORD_BYTES:
+            raise ValueError("Product record size or type is invalid.")
+        raw = selected.read_bytes()
+        if len(raw) > MAX_PRODUCT_RECORD_BYTES:
+            raise ValueError("Product record is too large.")
+        value = json.loads(raw.decode("utf-8"))
+        if not isinstance(value, dict):
+            raise ValueError("Product record must contain a JSON object.")
+        return value, hashlib.sha256(raw).hexdigest()
+
+    def _product_segment(self, kind: str, root: Path, run_id: str, include_raw: bool,
+                         *, selected_run_root: Path) -> dict[str, Any]:
+        manifest, manifest_hash = self._read_product_json(root / "run_manifest.json", root=root)
+        result, result_hash = self._read_product_json(root / "run_result.json", root=root)
+        if manifest.get("run_id") != run_id or result.get("run_id") != run_id:
+            raise ValueError("Product run record identity does not match run_id.")
+        if kind == "original":
+            terminal = manifest.get("terminal_record")
+            if not isinstance(terminal, dict) or terminal.get("sha256") != result_hash:
+                raise ValueError("Original run_result is not bound by the manifest terminal reference.")
+        elif not root.is_relative_to(root.parents[1] / "continuations"):
+            raise ValueError("Continuation Root is outside the original continuations directory.")
+        trace = manifest.get("execution_trace") if isinstance(manifest.get("execution_trace"), dict) else {}
+        observations = manifest.get("execution_observations")
+        if not isinstance(observations, dict) or any(not isinstance(row, dict) for row in observations.values()):
+            raise ValueError("Product execution observations are missing or invalid.")
+        if any(row.get("trace_id") != trace.get("trace_id") for row in observations.values()):
+            raise ValueError("Product observation trace identity mismatch.")
+        ordered = sorted(observations.values(), key=lambda row: (row.get("started_at") or "", row.get("id") or ""))
+        calls = []
+        by_id = {row.get("id"): row for row in ordered}
+        for generation in (row for row in ordered if row.get("kind") == "generation"):
+            parent = by_id.get(generation.get("parent_id"))
+            if not isinstance(parent, dict) or parent.get("name") != "model.request":
+                raise ValueError("Generation has no bound parent model.request observation.")
+            calls.append(self._product_call(kind, root, parent, generation, include_raw))
+        budget = result.get("model_call_budget") if isinstance(result.get("model_call_budget"), dict) else (
+            manifest.get("model_call_budget") if isinstance(manifest.get("model_call_budget"), dict) else None)
+        diagnostics = []
+        for row in ordered:
+            audit = (row.get("attributes") or {}).get("requirement_findings_attempt_audit")
+            if isinstance(audit, list):
+                diagnostics.extend(self._native_audit_events(kind, row, audit))
+        if kind == "continuation":
+            cause = manifest.get("initial_findings_cause_chain")
+            if isinstance(cause, dict):
+                diagnostics.extend(self._offline_cause_events(cause))
+        blockers = [{key: row.get(key) for key in ("owner", "stage", "code", "message", "source_node")}
+                    for row in result.get("blockers", []) if isinstance(row, dict)]
+        planning = self._planning_decision(root, ordered)
+        evidence_query_count = sum(row.get("name") == "evidence.source_query" for row in ordered)
+        patch_receipts = result.get("patch_execution_receipts")
+        patch_receipt_count = len(patch_receipts) if isinstance(patch_receipts, list) else None
+        initial_patch = ((budget or {}).get("by_stage") or {}).get("initial_patch") or {}
+        reassessment = self._initial_findings_reassessment(
+            result, ordered, root=root, selected_run_root=selected_run_root,
+        )
+        return {
+            "segment": kind,
+            "run_root": str(root),
+            "manifest_ref": {"path": str(root / "run_manifest.json"), "sha256": manifest_hash},
+            "result_ref": {"path": str(root / "run_result.json"), "sha256": result_hash,
+                           "binding": "manifest_terminal_sha256" if kind == "original" else "locally_read_unmodified_record"},
+            "trace": {key: trace.get(key) for key in ("trace_id", "session_id", "environment", "mode", "cloud_readback")},
+            "status": manifest.get("status") or result.get("status") or "unknown",
+            "model_call_count": result.get("model_call_count", manifest.get("model_call_count")),
+            "current_invocation_model_call_count": result.get(
+                "current_invocation_model_call_count", manifest.get("current_invocation_model_call_count")),
+            "model_call_budget": budget,
+            "calls": calls,
+            "diagnostics": diagnostics,
+            "blockers": blockers,
+            "post_findings_gate": {
+                "findings_status": "accepted" if any(row.get("status") == "accepted" for row in diagnostics) else "not_accepted",
+                "supplemental_query_observation_count": evidence_query_count,
+                "supplemental_query_status": "not_observed_in_selected_continuation" if evidence_query_count == 0 else "observed",
+                "planning_model_selection": planning,
+                "patch_execution_receipt_count": patch_receipt_count,
+                "initial_patch_budget_consumed": initial_patch.get("consumed") if type(initial_patch.get("consumed")) is int else None,
+            },
+            "initial_findings_reassessment": reassessment,
+            "runtime_identity": {
+                "ollama_server_version": manifest.get("ollama_server_version"),
+                "model": manifest.get("model"),
+                "local_model_identity": manifest.get("local_model_identity")
+                    if isinstance(manifest.get("local_model_identity"), dict) else None,
+                "provider_adapter": (manifest.get("model_admission") or {}).get("provider_adapter")
+                    if isinstance(manifest.get("model_admission"), dict) else None,
+                "llama_cpp_version": None,
+                "llama_cpp_version_status": "unknown_not_recorded",
+            },
+            "observation_count": len(ordered),
+        }
+
+    @classmethod
+    def _initial_findings_reassessment(
+        cls,
+        result: dict[str, Any],
+        observations: list[dict[str, Any]],
+        *,
+        root: Path,
+        selected_run_root: Path,
+    ) -> dict[str, Any]:
+        """Project the recorded query→Findings chain without executing retrieval."""
+        records: list[tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]] = []
+
+        def collect(value: Any) -> None:
+            if isinstance(value, dict):
+                reassessment = value.get("reassessment")
+                if (isinstance(reassessment, dict)
+                        and isinstance(reassessment.get("queries"), list)
+                        and isinstance(reassessment.get("per_query_execution"), list)):
+                    dependency = value.get("dependency_api_supplement")
+                    if not isinstance(dependency, dict):
+                        augmentation = value.get("source_augmentation")
+                        augmentation_budget = augmentation.get("budget_summary") if isinstance(augmentation, dict) else None
+                        dependency = augmentation_budget.get("dependency_api_supplement") if isinstance(augmentation_budget, dict) else None
+                    initial = value.get("initial_findings_reassessment")
+                    records.append((reassessment, dependency if isinstance(dependency, dict) else None,
+                                    initial if isinstance(initial, dict) else None))
+                for item in value.values():
+                    collect(item)
+            elif isinstance(value, list):
+                for item in value:
+                    collect(item)
+
+        collect(result)
+        if not records:
+            return {"status": "not_recorded"}
+
+        def identity_matches(record: tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]) -> bool:
+            reassessment, _, initial = record
+            prior = initial.get("prior_evidence_ref") if isinstance(initial, dict) else None
+            return (isinstance(prior, dict) and isinstance(prior.get("artifact_hash"), str)
+                    and reassessment.get("old_evidence_hash") == prior.get("artifact_hash"))
+
+        matching = [record for record in records if identity_matches(record)]
+        reassessment, dependency, initial = (matching or records)[-1]
+        dependency = dependency or {}
+        execution_by_id = {row.get("query_id"): row for row in reassessment["per_query_execution"]
+                           if isinstance(row, dict) and isinstance(row.get("query_id"), str)}
+        groups = []
+        for row in reassessment["queries"]:
+            if not isinstance(row, dict):
+                continue
+            metadata_queries = row.get("metadata_queries") if isinstance(row.get("metadata_queries"), list) else None
+            executed = execution_by_id.get(row.get("query_id"), {})
+            groups.append({
+                "query_id": row.get("query_id"),
+                "requirement_id": row.get("requirement_id"),
+                "source_query": row.get("query"),
+                "gap_ids": row.get("gap_ids") if isinstance(row.get("gap_ids"), list) else None,
+                "current_fact_needed": row.get("current_fact_needed"),
+                "modification_impact": row.get("modification_impact"),
+                "authorized_source": row.get("authorized_source"),
+                "metadata_queries": metadata_queries,
+                "metadata_query_count": len(metadata_queries) if metadata_queries is not None else None,
+                "source_retrieval_status": executed.get("retrieval_status"),
+                "source_evidence_ids": executed.get("evidence_ids")
+                    if isinstance(executed.get("evidence_ids"), list) else [],
+            })
+
+        metadata_observations = []
+        for row in observations:
+            attrs = row.get("attributes") if isinstance(row.get("attributes"), dict) else {}
+            if attrs.get("tool") == "search_dotnet_metadata" or attrs.get("retrieval_method") == "search_dotnet_metadata":
+                metadata_observations.append({"observation_id": row.get("id"), "name": row.get("name"),
+                                              "status": row.get("status")})
+
+        prior_ids: set[str] = set()
+        prior_status = "unknown_missing_or_unbound"
+        prior = initial.get("prior_evidence_ref") if isinstance(initial, dict) else None
+        if isinstance(prior, dict) and isinstance(prior.get("path"), str) and isinstance(prior.get("artifact_hash"), str):
+            try:
+                prior_record, _ = cls._read_product_json(Path(prior["path"]), root=selected_run_root)
+                items = (prior_record.get("data") or {}).get("items")
+                if prior_record.get("artifact_hash") == prior["artifact_hash"] and isinstance(items, list):
+                    prior_ids = {item["evidence_id"] for item in items if isinstance(item, dict)
+                                 and isinstance(item.get("evidence_id"), str)}
+                    prior_status = "verified_artifact_identity"
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+
+        findings_generation = next((row for row in reversed(observations)
+            if row.get("kind") == "generation"
+            and isinstance(row.get("attributes"), dict)
+            and row["attributes"].get("model_role") == "requirement_findings"), None)
+        input_rows: list[dict[str, Any]] = []
+        output_findings: list[dict[str, Any]] = []
+        request_integrity = response_integrity = "unknown_missing_or_unbound"
+        if isinstance(findings_generation, dict):
+            attrs = findings_generation["attributes"]
+            refs = attrs.get("local_detail_refs") if isinstance(attrs.get("local_detail_refs"), dict) else {}
+            for role in ("request", "response"):
+                ref = refs.get(role)
+                if not isinstance(ref, dict) or cls._local_ref_summary(ref, root=root)["integrity"] != "verified_bytes":
+                    continue
+                try:
+                    value, _ = cls._read_product_json(Path(ref["path"]), root=root)
+                    if role == "request":
+                        request_integrity = "verified_bytes"
+                        messages = value.get("messages") if isinstance(value.get("messages"), list) else []
+                        user_content = next((item.get("content") for item in messages
+                            if isinstance(item, dict) and item.get("role") == "user"
+                            and isinstance(item.get("content"), str)), None)
+                        payload = json.loads(user_content) if isinstance(user_content, str) else None
+                        rows = payload.get("source_observations") if isinstance(payload, dict) else None
+                        input_rows = rows if isinstance(rows, list) else []
+                    else:
+                        response_integrity = "verified_bytes"
+                        rows = value.get("findings")
+                        output_findings = rows if isinstance(rows, list) else []
+                except (OSError, ValueError, json.JSONDecodeError):
+                    continue
+
+        input_by_id = {row.get("evidence_id"): row for row in input_rows
+                       if isinstance(row, dict) and isinstance(row.get("evidence_id"), str)}
+        new_ids = sorted(set(input_by_id) - prior_ids) if prior_status == "verified_artifact_identity" else []
+        cited = {evidence_id for row in output_findings if isinstance(row, dict)
+                 for evidence_id in row.get("evidence_ids", []) if isinstance(evidence_id, str)}
+        new_inputs = [{
+            "evidence_id": evidence_id,
+            "source_type": input_by_id[evidence_id].get("source_type"),
+            "source_path": input_by_id[evidence_id].get("source_path"),
+            "symbol": input_by_id[evidence_id].get("symbol"),
+            "span": input_by_id[evidence_id].get("span"),
+            "entered_findings_input": True,
+            "cited_by_findings_output": evidence_id in cited,
+        } for evidence_id in new_ids]
+
+        def transport(role: str) -> dict[str, Any] | None:
+            row = next((item for item in reversed(observations)
+                if item.get("kind") == "generation"
+                and isinstance(item.get("attributes"), dict)
+                and item["attributes"].get("model_role") == role), None)
+            if row is None:
+                return None
+            attrs = row["attributes"]
+            return {key: attrs.get(key) for key in (
+                "transport_started", "response_received", "response_complete", "http_status", "response_origin")}
+
+        return {
+            "status": "recorded",
+            "stop": ({key: result["initial_findings_reassessment_stop"].get(key) for key in (
+                "code", "cycle", "prior_item_count", "new_item_count", "new_evidence_ids",
+                "sufficiency_status", "not_started", "fact_boundary",
+            )} if isinstance(result.get("initial_findings_reassessment_stop"), dict) else None),
+            "query_group_count": len(groups),
+            "query_groups": groups,
+            "metadata_supplement": {
+                "query_source": dependency.get("query_source"),
+                "status": dependency.get("status"),
+                "reason": dependency.get("reason"),
+                "metadata_query_count": dependency.get("metadata_query_count"),
+                "tool_calls_completed": dependency.get("tool_calls_completed"),
+                "model_calls_performed": dependency.get("model_calls_performed"),
+                "visible_metadata": dependency.get("visible_metadata")
+                    if isinstance(dependency.get("visible_metadata"), dict) else None,
+                "recorded_metadata_observation_count": len(metadata_observations),
+                "recorded_metadata_observations": metadata_observations,
+                "observation_count_basis": "tool_or_retrieval_method_equals_search_dotnet_metadata",
+            },
+            "transport_boundaries": {
+                "initial_findings_queries": transport("initial_findings_queries"),
+                "requirement_findings": transport("requirement_findings"),
+                "metadata_supplement": "not_requested" if dependency.get("status") == "not_requested" else "see_recorded_status",
+            },
+            "evidence_revision": {
+                "prior_identity_status": prior_status,
+                "prior_item_count": reassessment.get("prior_item_count"),
+                "recorded_new_item_count": reassessment.get("new_item_count"),
+                "recorded_new_evidence_ids": reassessment.get("new_evidence_ids")
+                    if isinstance(reassessment.get("new_evidence_ids"), list) else None,
+                "findings_input_item_count": len(input_by_id),
+                "request_integrity": request_integrity,
+                "response_integrity": response_integrity,
+                "new_inputs": new_inputs,
+            },
+            "findings_outcomes": [{
+                "relation_index": row.get("relation_index"),
+                "relationship": row.get("relationship"),
+                "unresolved_gap_count": len(row.get("unresolved_gaps", []))
+                    if isinstance(row.get("unresolved_gaps"), list) else None,
+            } for row in output_findings if isinstance(row, dict)],
+            "terminal": {
+                "status": result.get("status"),
+                "blockers": [{key: row.get(key) for key in ("code", "message", "source_node")}
+                             for row in result.get("blockers", []) if isinstance(row, dict)],
+            },
+            "scope": "recorded_request_input_and_execution_facts_not_model_attention_or_query_quality",
+        }
+
+    def _planning_decision(self, root: Path, observations: list[dict[str, Any]]) -> dict[str, Any] | None:
+        row = next((item for item in observations if item.get("name") == "planning.decision"), None)
+        if row is None:
+            return None
+        attrs = row.get("attributes") if isinstance(row.get("attributes"), dict) else {}
+        refs = attrs.get("local_detail_refs") if isinstance(attrs.get("local_detail_refs"), dict) else {}
+        ref = refs.get("planning_receipt")
+        result = {
+            "observation_id": row.get("id"), "status": row.get("status"),
+            "started_at": row.get("started_at"), "finished_at": row.get("finished_at"),
+            "decision_status": attrs.get("decision_status"),
+            "reason_status": attrs.get("reason_status"),
+            "receipt": self._local_ref_summary(ref, root=root) if isinstance(ref, dict) else None,
+        }
+        if not isinstance(ref, dict) or result["receipt"]["integrity"] != "verified_bytes":
+            result["receipt_status"] = "unknown_missing_or_unbound"
+            return result
+        receipt, actual_hash = self._read_product_json(Path(ref["path"]), root=root)
+        if actual_hash != ref.get("sha256"):
+            raise ValueError("Planning receipt hash changed after verification.")
+        result["receipt_status"] = "verified_bytes"
+        result["selection"] = {
+            key: receipt.get(key) for key in (
+                "status", "selection_mode", "provider", "model", "automatic_retry",
+                "model_turns_attempted", "model_responses_received", "operator_target_ids_supplied",
+                "evidence_payload_sha256", "feature_payload_sha256", "failure",
+            )
+        }
+        return result
+
+    def _product_call(self, segment: str, root: Path, request_row: dict[str, Any],
+                      generation: dict[str, Any], include_raw: bool) -> dict[str, Any]:
+        attrs = generation.get("attributes") if isinstance(generation.get("attributes"), dict) else {}
+        request_attrs = request_row.get("attributes") if isinstance(request_row.get("attributes"), dict) else {}
+        details = attrs.get("local_detail_refs") if isinstance(attrs.get("local_detail_refs"), dict) else {}
+        references = {role: self._local_ref_summary(ref, root=root) for role, ref in details.items()
+                      if role in {"request", "response", "provider_request"} and isinstance(ref, dict)}
+        raw = {}
+        if include_raw:
+            for role, ref in details.items():
+                if role in {"request", "response", "provider_request"} and isinstance(ref, dict):
+                    raw[role] = self._read_local_detail(ref, root=root, role=role)
+        usage = attrs.get("usage") if isinstance(attrs.get("usage"), dict) else None
+        return {
+            "segment": segment,
+            "request_span_id": request_row.get("id"),
+            "generation_span_id": generation.get("id"),
+            "parent_id": request_row.get("parent_id"),
+            "role": attrs.get("model_role") or request_attrs.get("model_role") or "unknown",
+            "model": attrs.get("model") or request_attrs.get("model") or "unknown",
+            "provider": attrs.get("provider") or request_attrs.get("provider") or "unknown",
+            "status": generation.get("status"),
+            "started_at": generation.get("started_at"),
+            "finished_at": generation.get("finished_at"),
+            "elapsed_ms": generation.get("elapsed_ms"),
+            "transport": {key: attrs.get(key) if key in attrs else None for key in (
+                "transport_started", "response_received", "response_complete", "http_status", "response_origin")},
+            "usage": usage,
+            "input_payload_sha256": attrs.get("input_payload_sha256"),
+            "output_sha256": attrs.get("output_sha256"),
+            "provider_body_sha256": attrs.get("provider_body_sha256"),
+            "provider_request_sha256": attrs.get("provider_request_sha256"),
+            "provider_request_bytes": attrs.get("provider_request_bytes"),
+            "provider_request_metadata": attrs.get("provider_request_metadata")
+                if isinstance(attrs.get("provider_request_metadata"), dict) else None,
+            "local_evidence": references,
+            "raw": raw,
+            "counting": "one generation plus its parent request span equals one model call",
+        }
+
+    @staticmethod
+    def _local_ref_summary(ref: dict[str, Any], *, root: Path) -> dict[str, Any]:
+        path = Path(str(ref.get("path", "")))
+        selected = path.resolve() if path.is_absolute() else (root / path).resolve()
+        within = selected.is_relative_to(root)
+        actual = None
+        if within and selected.is_file() and not selected.is_symlink() and selected.stat().st_size <= MAX_PRODUCT_RECORD_BYTES:
+            actual = hashlib.sha256(selected.read_bytes()).hexdigest()
+        expected = ref.get("sha256")
+        return {"file": selected.name if within else "[outside_selected_run]", "sha256": expected,
+                "integrity": "verified_bytes" if isinstance(expected, str) and actual == expected else
+                             "outside_selected_run" if not within else "missing_or_hash_mismatch"}
+
+    def _read_local_detail(self, ref: dict[str, Any], *, root: Path, role: str) -> Any:
+        summary = self._local_ref_summary(ref, root=root)
+        if summary["integrity"] != "verified_bytes":
+            raise ValueError("Local detail reference is not hash-bound inside the selected run.")
+        path = Path(str(ref["path"])).resolve()
+        raw = path.read_bytes()
+        if role == "request":
+            value = json.loads(raw.decode("utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError("Application request record must be a JSON object.")
+            return {
+                "record_kind": "application_layer_request_not_raw_http",
+                "messages": self._sanitize_value(value.get("messages"), key_path=("messages",)),
+                "response_format": self._sanitize_value(value.get("response_format"), key_path=("response_format",)),
+                "other_fields": self._sanitize_value({key: item for key, item in value.items()
+                    if key not in {"messages", "response_format"}}, key_path=("other_fields",)),
+                "schema_visibility": "service_output_constraint_not_proof_full_schema_was_model_visible",
+            }
+        if role == "provider_request":
+            value = json.loads(raw.decode("utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError("Native provider request record must be a JSON object.")
+            return {
+                "record_kind": "native_provider_request_selected_fields",
+                "format": self._sanitize_value(value.get("format"), key_path=("format",)),
+                "model": value.get("model") if isinstance(value.get("model"), str) else None,
+                "stream": value.get("stream") if type(value.get("stream")) is bool else None,
+                "think": value.get("think") if type(value.get("think")) is bool else None,
+                "messages": "not_displayed_by_trace_drilldown",
+                "raw_body": "not_displayed_by_trace_drilldown",
+            }
+        return {"record_kind": "application_layer_response", "text": self._sanitize_string(
+            raw.decode("utf-8"), key_path=("response",))}
+
+    @staticmethod
+    def _native_audit_events(segment: str, observation: dict[str, Any], rows: list[Any]) -> list[dict[str, Any]]:
+        events = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            diagnostic = row.get("diagnostic") if isinstance(row.get("diagnostic"), dict) else {}
+            accepted = row.get("status") == "accepted"
+            events.append({
+                "segment": segment,
+                "origin": "native_recorded_audit",
+                "attempt_index": row.get("attempt_index"),
+                "status": row.get("status"),
+                "error_code": row.get("error_code"),
+                "time": observation.get("finished_at"),
+                "elapsed_ms": observation.get("elapsed_ms"),
+                "validation": {
+                    "parsing": "passed" if diagnostic.get("phase") == "response_schema_admission" or accepted else "unknown",
+                    "schema": {"status": "passed" if accepted else "failed" if diagnostic else "unknown",
+                               "failure_category": diagnostic.get("failure_category"),
+                               "json_path": diagnostic.get("json_path"),
+                               "schema_keyword": diagnostic.get("schema_keyword"),
+                               "allowed_boundary": diagnostic.get("allowed_boundary")},
+                    "business": "accepted" if accepted else "not_reached_after_schema_failure" if diagnostic else "unknown",
+                },
+                "transport_boundary": row.get("call_boundary") if isinstance(row.get("call_boundary"), dict) else "unknown",
+            })
+        return events
+
+    @staticmethod
+    def _offline_cause_events(cause: dict[str, Any]) -> list[dict[str, Any]]:
+        events = []
+        first = cause.get("first_rejection_reconstruction")
+        if isinstance(first, dict):
+            diagnostic = first.get("diagnostic") if isinstance(first.get("diagnostic"), dict) else {}
+            events.append({"segment": "historical_supplement", "origin": cause.get("reconstruction_origin"),
+                "attempt_index": first.get("attempt_index"), "status": first.get("status"),
+                "error_code": first.get("error_code"), "time": None, "elapsed_ms": None,
+                "validation": {"parsing": "passed_in_offline_replay", "schema": "passed_in_offline_replay",
+                               "business": {"status": "rejected", "violated_rules": diagnostic.get("violated_rules"),
+                                            "relation_index": diagnostic.get("relation_index")}},
+                "history_recorded_live": False})
+        if cause.get("correction_payload_prepared") is True:
+            events.append({"segment": "historical_supplement", "origin": cause.get("reconstruction_origin"),
+                "attempt_index": 2, "status": "prepared_not_sent", "error_code": "PRODUCT_MODEL_CALL_BUDGET_EXHAUSTED",
+                "time": None, "elapsed_ms": None, "validation": {"parsing": "not_reached", "schema": "not_reached",
+                    "business": "not_reached"}, "request_sent": cause.get("correction_model_request_sent"),
+                "request_sent_basis": cause.get("correction_model_request_sent_basis"),
+                "historical_transport_boundary": cause.get("historical_correction_boundary") or "unknown",
+                "history_recorded_live": False})
+        return events
+
+    @staticmethod
+    def _diagnostic_timeline(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        native, supplemental = [], []
+        for segment in segments:
+            for row in segment.get("diagnostics", []):
+                (supplemental if row.get("origin") == "offline_exact_input_replay" else native).append(row)
+        native.sort(key=lambda row: row.get("time") or "")
+        return [*supplemental, *native]
+
+    @classmethod
+    def _schema_failure_drilldown(cls, segments: list[dict[str, Any]]) -> dict[str, Any]:
+        """Separate five evidence layers without inferring an unrecorded grammar."""
+        continuation = next((row for row in segments if row["segment"] == "continuation"), None)
+        current_call = next((row for row in (continuation or {}).get("calls", [])
+                             if row.get("role") == "requirement_findings_correction"), None)
+        current_audit = next((row for row in (continuation or {}).get("diagnostics", [])
+                              if row.get("origin") == "native_recorded_audit"), None)
+        request = (current_call or {}).get("raw", {}).get("request")
+        provider_request = (current_call or {}).get("raw", {}).get("provider_request")
+        response = (current_call or {}).get("raw", {}).get("response")
+        schema = request.get("response_format") if isinstance(request, dict) else None
+        schema_summary = cls._schema_summary(schema)
+        source_path = Path(__file__).resolve().parents[4] / "src" / "libs" / "llm" / "ollama_llm.py"
+        source_hash = hashlib.sha256(source_path.read_bytes()).hexdigest() if source_path.is_file() else None
+        original_runtime = next((row.get("runtime_identity") for row in segments
+                                 if row["segment"] == "original"), {}) or {}
+        continuation_runtime = (continuation or {}).get("runtime_identity") or {}
+        schema_facts = ((current_audit or {}).get("validation") or {}).get("schema")
+        native_format = provider_request.get("format") if isinstance(provider_request, dict) else None
+        application_schema_hash = cls._canonical_json_sha256(schema)
+        native_format_hash = cls._canonical_json_sha256(native_format)
+        response_text = response.get("text") if isinstance(response, dict) else None
+        response_parse = "unknown_not_opened"
+        if isinstance(response_text, str):
+            try:
+                json.loads(response_text)
+                response_parse = "parsed_json_during_read_only_view"
+            except (TypeError, ValueError):
+                response_parse = "invalid_json_during_read_only_view"
+        return {
+            "scope": "current_requirement_findings_correction",
+            "layer_1_schema_builder": {
+                "status": "captured_application_response_format" if isinstance(schema, dict) else "unknown_not_opened",
+                "schema_sha256": application_schema_hash,
+                "constraints": schema_summary,
+                "full_schema_in_model_messages": "not_demonstrated_by_application_messages",
+                "basis": "hash_verified_application_request_record" if isinstance(schema, dict) else "raw_not_selected",
+            },
+            "layer_2_application_to_native_provider": {
+                "application_response_format": "captured" if isinstance(schema, dict) else "unknown_not_opened",
+                "native_provider_format": native_format if isinstance(native_format, dict) else "unknown_not_captured",
+                "native_provider_format_sha256": native_format_hash,
+                "provider_body_sha256": (current_call or {}).get("provider_body_sha256"),
+                "provider_request_sha256": (current_call or {}).get("provider_request_sha256"),
+                "provider_request_bytes": (current_call or {}).get("provider_request_bytes"),
+                "provider_request_metadata": (current_call or {}).get("provider_request_metadata"),
+                "current_adapter_source_analysis": {
+                    "behavior": "current OllamaLLM source copies response_format to the /api/chat format field",
+                    "source": "src/libs/llm/ollama_llm.py",
+                    "source_sha256": source_hash,
+                    "binding": "current_workspace_source_not_run_bound",
+                },
+                "actual_preservation_result": (
+                    "verified_equal_application_schema" if application_schema_hash is not None
+                    and application_schema_hash == native_format_hash else
+                    "recorded_format_differs_from_application_schema" if native_format_hash is not None else
+                    "unknown_not_captured"
+                ),
+                "native_messages_display": "not_displayed",
+            },
+            "layer_3_provider_runtime_support": {
+                "continuation_recorded_ollama_version": continuation_runtime.get("ollama_server_version"),
+                "original_run_recorded_ollama_version": original_runtime.get("ollama_server_version"),
+                "llama_cpp_version": continuation_runtime.get("llama_cpp_version"),
+                "llama_cpp_version_status": continuation_runtime.get("llama_cpp_version_status"),
+                "model": (current_call or {}).get("model"),
+                "original_run_model_identity": original_runtime.get("local_model_identity"),
+                "official_documentation": {
+                    "claim": "Ollama documents JSON Schema structured output through the /api/chat format field.",
+                    "url": "https://docs.ollama.com/api/chat#structured-outputs",
+                    "scope": "official_general_capability_not_this_run",
+                },
+                "version_source_analysis": {
+                    "ollama_version": "0.34.2",
+                    "api_types": "ChatRequest.Format is json.RawMessage",
+                    "server_route": "the recorded version passes req.Format into CompletionRequest.Format",
+                    "sources": [
+                        "https://github.com/ollama/ollama/blob/v0.34.2/api/types.go",
+                        "https://github.com/ollama/ollama/blob/v0.34.2/server/routes.go",
+                    ],
+                    "scope": "fixed_version_source_analysis_not_actual_conversion_capture",
+                },
+                "schema_to_grammar_result": "unknown_not_recorded",
+                "combination_support_result": "unknown_for_this_exact_run",
+            },
+            "layer_4_raw_response_against_recorded_schema": {
+                "response_readback": "hash_verified_local_detail" if isinstance(response_text, str) else "unknown_not_opened",
+                "response_json_parse": response_parse,
+                "response_sha256": (current_call or {}).get("output_sha256"),
+                "schema_violation": schema_facts if isinstance(schema_facts, dict) else "unknown_not_recorded",
+                "error_code": (current_audit or {}).get("error_code"),
+            },
+            "layer_5_local_validators": {
+                "application_parse": "recorded_as_reached_before_schema_admission" if current_audit else "unknown",
+                "schema_validator": schema_facts if isinstance(schema_facts, dict) else "unknown_not_recorded",
+                "business_validator": ((current_audit or {}).get("validation") or {}).get("business", "unknown"),
+                "historical_first_business_rejection": "offline_exact_input_replay_only",
+                "negative_training_status": "not_recorded_as_dpo_negative",
+            },
+        }
+
+    @staticmethod
+    def _schema_summary(schema: Any) -> dict[str, Any] | str:
+        if not isinstance(schema, dict):
+            return "unknown_not_opened"
+        properties = schema.get("properties") if isinstance(schema.get("properties"), dict) else {}
+        findings = properties.get("findings") if isinstance(properties.get("findings"), dict) else {}
+        item = findings.get("items") if isinstance(findings.get("items"), dict) else {}
+        return {
+            "root_type": schema.get("type"),
+            "root_required": schema.get("required") if isinstance(schema.get("required"), list) else None,
+            "findings_min_items": findings.get("minItems"),
+            "findings_max_items": findings.get("maxItems"),
+            "item_required": item.get("required") if isinstance(item.get("required"), list) else None,
+            "item_one_of_branches": len(item.get("oneOf")) if isinstance(item.get("oneOf"), list) else 0,
+        }
+
+    @staticmethod
+    def _canonical_json_sha256(value: Any) -> str | None:
+        if not isinstance(value, dict):
+            return None
+        return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
 
     # ------------------------------------------------------------------
     # Sanitization helpers

@@ -342,6 +342,10 @@ def _metadata(attributes: Mapping) -> dict:
     result = {key: value for key, value in _GATE_LABELS.items() if attributes.get(key) == value}
     result.update(_decision_metadata(attributes))
     result.update(_symbol_check_metadata(attributes))
+    audit = attributes.get("requirement_findings_attempt_audit")
+    if isinstance(audit, (list, tuple)):
+        result["requirement_findings_attempt_audit"] = _findings_audit(audit)
+        result["requirement_findings_attempt_audit_sha256"] = hashlib.sha256(_json(audit)).hexdigest()
     for key in _GATE_NUMBERS:
         value = attributes.get(key)
         if type(value) is int and value >= 0:
@@ -416,6 +420,104 @@ def _metadata(attributes: Mapping) -> dict:
             if kept:
                 result["artifact_refs"].append(kept)
     return result
+
+
+def _findings_audit(rows) -> list[dict]:
+    """Project the native audit without model free text or source identifiers."""
+    result = []
+    known_errors = {"REQUIREMENT_COVERAGE_EDIT_TARGET_SELECTION_INVALID",
+                    "REQUIREMENT_COVERAGE_FINDING_INVALID", "PRODUCT_MODEL_CALL_BUDGET_EXHAUSTED"}
+    for row in rows:
+        if not isinstance(row, Mapping) or row.get("status") not in {"accepted", "rejected", "failed"}:
+            continue
+        kept = {"status": row["status"]}
+        if type(row.get("attempt_index")) is int and row["attempt_index"] > 0:
+            kept["attempt_index"] = row["attempt_index"]
+        error = row.get("error_code")
+        kept["error_code"] = error if error is None or isinstance(error, str) and error in known_errors else "unclassified_error"
+        if isinstance(error, str):
+            kept["error_sha256"] = _hash_text(error)
+        for key in ("rejected_output_sha256", "correction_payload_sha256", "response_schema_sha256"):
+            if isinstance(row.get(key), str) and _DIGEST.fullmatch(row[key]):
+                kept[key] = row[key]
+        if type(row.get("correction_payload_prepared")) is bool:
+            kept["correction_payload_prepared"] = row["correction_payload_prepared"]
+        diagnostic = row.get("diagnostic")
+        if isinstance(diagnostic, Mapping):
+            summary = {"diagnostic_sha256": hashlib.sha256(_json(diagnostic)).hexdigest()}
+            if type(diagnostic.get("relation_index")) is int:
+                summary["relation_index"] = diagnostic["relation_index"]
+            for field, name in (("edit_target_evidence_ids", "edit_target_count"),
+                                ("evidence_ids", "evidence_count"), ("unresolved_gaps", "unresolved_gap_count")):
+                if isinstance(diagnostic.get(field), list):
+                    summary[name] = len(diagnostic[field])
+                    summary[field + "_sha256"] = hashlib.sha256(_json(diagnostic[field])).hexdigest()
+            kept["diagnostic"] = summary
+        boundary = row.get("call_boundary")
+        if isinstance(boundary, Mapping):
+            summary = {}
+            if boundary.get("budget_stage") == "requirement_findings":
+                summary["budget_stage"] = boundary["budget_stage"]
+            for key in ("reservation_succeeded", "model_request_invoked", "model_transport_started"):
+                if type(boundary.get(key)) is bool:
+                    summary[key] = boundary[key]
+            budget = boundary.get("budget")
+            if isinstance(budget, Mapping):
+                def counts(value):
+                    return {key: value[key] for key in ("maximum", "consumed", "remaining")
+                            if type(value.get(key)) is int and value[key] >= 0}
+                selected = counts(budget)
+                stages = budget.get("by_stage")
+                if isinstance(stages, Mapping):
+                    selected["by_stage"] = {role: counts(stages[role]) for role in (
+                        "requirement_projection", "requirement_findings", "planning", "initial_patch", "repair")
+                        if isinstance(stages.get(role), Mapping)}
+                summary["budget"] = selected
+            kept["call_boundary"] = summary
+        result.append(kept)
+    return result
+
+
+def prepare_product_journal_export(journal_path, expected_sha256, *, trace_id) -> dict:
+    """Prepare finished native observations with their original times, no I/O sink.
+
+    Unlike Patch historical snapshots, these rows already have recorded native
+    identities and timing. Never invent an absent row or populate an old audit.
+    """
+    journal = _read_verified_json({"path": str(journal_path), "sha256": expected_sha256,
+                                   "integrity": "verified_bytes"})
+    if journal is None or not isinstance(journal.get("execution_observations"), dict):
+        raise ValueError("PRODUCT_JOURNAL_IDENTITY_INVALID")
+    rows = list(journal["execution_observations"].values())
+    if not rows or any(not isinstance(row, Mapping) or live_trace_id(row.get("trace_id")) != trace_id for row in rows):
+        raise ValueError("PRODUCT_JOURNAL_TRACE_MISMATCH")
+    spans = []
+    for row in rows:
+        payload = build_patch_live_otlp(row)
+        span = payload["resourceSpans"][0]["scopeSpans"][0]["spans"][0]
+        span["attributes"] = [a for a in span["attributes"] if a["key"] not in {
+            "langfuse.observation.metadata.historical_import", "langfuse.trace.tags"}]
+        span["attributes"].extend([
+            _attribute("langfuse.observation.metadata.historical_import", True),
+            _attribute("langfuse.observation.metadata.timing_basis", "recorded_original_execution"),
+            _attribute("langfuse.observation.metadata.source_journal_sha256", expected_sha256),
+            _attribute("langfuse.observation.metadata.source_run_id_sha256", _hash_text(journal["run_id"])),
+            {"key": "langfuse.trace.tags", "value": {"arrayValue": {"values": [
+                {"stringValue": "retained_native_observations"}, {"stringValue": "metadata_only"}]}}},
+        ])
+        spans.append(span)
+    identities = [span["spanId"] for span in spans]
+    if len(set(identities)) != len(identities) or any(
+            span.get("parentSpanId") is not None and span["parentSpanId"] not in identities for span in spans):
+        raise ValueError("PRODUCT_JOURNAL_TREE_INVALID")
+    prepared = {"trace_id": trace_id, "run_id": journal["run_id"],
+                "source_journal_sha256": expected_sha256, "observation_ids": identities, "scores": [],
+                "otlp": {"resourceSpans": [{"resource": {"attributes": [_attribute("service.name", "mod-agent-execution")]},
+                                           "scopeSpans": [{"scope": {"name": "mod_agent.patch_live", "version": LIVE_MAPPING_VERSION},
+                                                           "spans": spans}]}]}}
+    if len(_json(prepared["otlp"])) > MAX_PAYLOAD_BYTES:
+        raise ValueError("PRODUCT_JOURNAL_EXPORT_TOO_LARGE")
+    return prepared
 
 
 def _native_status(row: Mapping, attributes: Mapping) -> tuple[str, str]:

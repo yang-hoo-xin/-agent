@@ -21,6 +21,12 @@ from src.libs.embedding.openai_embedding import OpenAIEmbedding, OpenAIEmbedding
 # Test Fixtures
 # =============================================================================
 
+@pytest.fixture(autouse=True)
+def isolated_embedding_credentials(monkeypatch):
+    """为什么要有它：离线凭据测试只消费自己设置的环境，避免宿主密钥影响结果或出现在断言里。"""
+    for name in ("OPENAI_API_KEY", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_ENDPOINT"):
+        monkeypatch.delenv(name, raising=False)
+
 @pytest.fixture
 def mock_settings_openai() -> Any:
     """Create mock settings for OpenAI embedding."""
@@ -30,6 +36,11 @@ def mock_settings_openai() -> Any:
     settings.embedding.model = "text-embedding-3-small"
     settings.embedding.dimensions = 1536
     settings.embedding.base_url = None  # No base_url in settings by default
+    # 为什么要有它：缺省配置是None；动态Mock属性不能被误认成真实凭据或Azure端点。
+    settings.embedding.api_key = None
+    settings.embedding.azure_endpoint = None
+    settings.embedding.deployment_name = None
+    settings.embedding.api_version = None
     return settings
 
 
@@ -44,6 +55,7 @@ def mock_settings_azure() -> Any:
     settings.embedding.azure_endpoint = "https://my-resource.openai.azure.com/"
     settings.embedding.api_version = "2024-02-01"
     settings.embedding.dimensions = None
+    settings.embedding.api_key = None
     return settings
 
 
@@ -236,6 +248,7 @@ class TestAzureEmbedding:
         """Test initialization with Azure environment variables."""
         monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-env-key")
         monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://env.openai.azure.com/")
+        mock_settings_azure.embedding.azure_endpoint = None
         
         embedding = AzureEmbedding(mock_settings_azure)
         

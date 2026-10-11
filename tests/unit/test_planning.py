@@ -12,6 +12,7 @@ from src.mod_agent.planning import (
     ModPlanningBriefBuilder,
     RequestPlanner,
 )
+from src.mod_agent.planning.evidence_requirements import CONFIGURATION_EVIDENCE
 
 
 def _identity_schema_payload() -> dict[str, object]:
@@ -153,12 +154,12 @@ def test_request_planner_allows_clear_chinese_runtime_request_to_seek_evidence()
     )
 
     assert plan.blocked is False
-    assert plan.route == "game_hook_investigation"
-    assert plan.requires_hook_evidence is True
+    assert plan.route == "standard_feature"
+    assert plan.requires_hook_evidence is False
     assert plan.requires_runtime_evidence is True
     assert plan.hook_requirement == {
-        "required": True,
-        "reason": "gameplay_method_interception",
+        "required": False,
+        "reason": "implementation_mechanism_unresolved",
     }
 
 
@@ -169,23 +170,23 @@ def test_non_goal_damage_terms_do_not_force_hook_evidence() -> None:
     )
 
     assert plan.requires_hook_evidence is False
-    assert plan.hook_requirement == {"required": False, "reason": "not_required"}
+    assert plan.hook_requirement == {"required": False, "reason": "implementation_mechanism_unresolved"}
 
 
-def test_request_planner_classifies_runtime_feature_as_high_risk() -> None:
+def test_request_planner_keeps_runtime_acceptance_without_selecting_hook() -> None:
     plan = RequestPlanner().plan(
         "make enemies glow when damaged in BetterHitFeedback"
     )
 
     assert plan.blocked is False
-    assert plan.route == "game_hook_investigation"
-    assert plan.risk_level == "high"
+    assert plan.route == "standard_feature"
+    assert plan.risk_level == "medium"
     assert plan.target_mod == "BetterHitFeedback"
-    assert plan.requires_hook_evidence is True
+    assert plan.requires_hook_evidence is False
     assert plan.requires_runtime_evidence is True
     assert plan.hook_requirement == {
-        "required": True,
-        "reason": "gameplay_method_interception",
+        "required": False,
+        "reason": "implementation_mechanism_unresolved",
     }
 
 
@@ -195,9 +196,9 @@ def test_request_planner_does_not_downgrade_mixed_config_gameplay_request() -> N
         target_mod="WallCrawler",
     )
 
-    assert plan.route == "game_hook_investigation"
-    assert plan.risk_level == "high"
-    assert plan.requires_hook_evidence is True
+    assert plan.route == "standard_feature"
+    assert plan.risk_level == "medium"
+    assert plan.requires_hook_evidence is False
     assert plan.requires_runtime_evidence is True
 
 
@@ -209,10 +210,10 @@ def test_request_planner_classifies_wallcrawler_chinese_request() -> None:
         target_mod="WallCrawler",
     )
 
-    assert plan.route == "game_hook_investigation"
-    assert plan.risk_level == "high"
+    assert plan.route == "standard_feature"
+    assert plan.risk_level == "medium"
     assert plan.target_mod == "WallCrawler"
-    assert plan.requires_hook_evidence is True
+    assert plan.requires_hook_evidence is False
     assert plan.requires_runtime_evidence is True
 
 
@@ -263,7 +264,7 @@ def test_request_planner_requires_runtime_for_accurate_crosshair_restart() -> No
     assert plan.risk_level == "low"
     assert plan.requires_hook_evidence is False
     assert plan.requires_runtime_evidence is True
-    assert plan.hook_requirement == {"required": False, "reason": "not_required"}
+    assert plan.hook_requirement == {"required": False, "reason": "implementation_mechanism_unresolved"}
     assert spec.runtime_verification_plan == (
         "compile or static validation",
         "startup_loaded",
@@ -299,10 +300,10 @@ def test_feature_spec_builder_creates_verifiable_contract() -> None:
     assert spec.blocked is False
     assert spec.feature_id == plan.feature_id
     assert spec.target_behavior == plan.user_request
-    assert spec.hook_requirement == {"required": False, "reason": "not_required"}
-    assert "config or text evidence" in spec.evidence_requirements
+    assert spec.hook_requirement == {"required": False, "reason": "implementation_mechanism_unresolved"}
+    assert spec.evidence_requirements == ()
     assert spec.acceptance_criteria
-    assert spec.non_goals
+    assert spec.non_goals == ()
 
 
 def test_feature_spec_builder_consumes_planning_brief_handoff() -> None:
@@ -341,9 +342,10 @@ def test_mod_planning_brief_classifies_config_only_request() -> None:
     assert payload["request_type"]["value"] == "config-only"
     assert payload["user_intent"]["target_game"] == "GTFO"
     assert payload["user_intent"]["target_mod"] == "BetterHitFeedback"
-    assert "config schema or settings reference" in (
-        payload["planning_options"][0]["required_evidence"]
+    assert CONFIGURATION_EVIDENCE in (
+        payload["knowledge_query_plan"]["queries"]
     )
+    assert payload["handoff"]["feature_spec_guidance"]["evidence_requirements"] == []
     assert payload["next_action"] == "feature_spec"
     assert payload["blocked"] is False
 
@@ -385,7 +387,7 @@ def test_mod_planning_brief_classifies_hook_required_request() -> None:
 
 def test_planning_only_brief_stops_hook_request_before_feature_spec() -> None:
     plan = RequestPlanner().plan(
-        "WallCrawler JSON config changes enemy movement on walls, slopes, and ceilings.",
+        "Explicitly hook enemy movement methods for WallCrawler.",
         target_mod="WallCrawler",
     )
 

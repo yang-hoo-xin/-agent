@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="Dependencies.props" />
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <AssemblyName>${assembly_name}</AssemblyName>
+    <RootNamespace>${root_namespace}</RootNamespace>
+    <Version>${plugin_version}</Version>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+</Project>

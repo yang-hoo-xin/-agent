@@ -298,7 +298,8 @@ def test_source_drift_after_materialization_stops_before_evaluator(tmp_path, mon
     assert oracle.contexts == []
 
 
-@pytest.mark.parametrize("corruption", ["generated_changes_sha256", "source_snapshot_sha256", "report_bytes"])
+@pytest.mark.parametrize("corruption", ["generated_changes_sha256", "source_snapshot_sha256", "report_bytes",
+                                       "failure_state_observations"])
 def test_behavior_report_must_match_generated_bytes_source_and_persisted_observation(tmp_path, corruption):
     inputs = _inputs(tmp_path)
     client = _BehaviorClient()
@@ -308,6 +309,8 @@ def test_behavior_report_must_match_generated_bytes_source_and_persisted_observa
         report = oracle(context)
         if corruption == "report_bytes":
             Path(report["report_ref"]["path"]).write_text("changed report", encoding="utf-8")
+        elif corruption == "failure_state_observations":
+            report[corruption] = []
         else:
             report[corruption] = "f" * 64
         return report

@@ -45,6 +45,47 @@ def _terminal():
     return {"run_id": "unit-run", "request_id": "unit-request", "feature_id": "unit-feature", "current_stage": "blocked"}
 
 
+@pytest.mark.parametrize("stage", [None, "missing", "blocked"])
+def test_original_terminal_writer_roundtrips_missing_stage(tmp_path, stage):
+    from src.mod_agent.local_entry import _persist_graph_terminal_result
+
+    summary = _terminal()
+    if stage == "missing":
+        summary.pop("current_stage")
+    else:
+        summary["current_stage"] = stage
+    (tmp_path / "run_manifest.json").write_text(json.dumps({
+        "run_id": summary["run_id"], "request_id": summary["request_id"]}), encoding="utf-8")
+    _persist_graph_terminal_result(run_root=tmp_path, run_id=summary["run_id"],
+        request_id=summary["request_id"], summary=summary, model_call_count=0,
+        patch_payload_parser_entered=False, actual_write_performed=False)
+    expected = "blocked" if stage == "blocked" else "unknown"
+    assert project_product_execution(tmp_path)["current_stage"] == expected
+    assert json.loads((tmp_path / "run_result.json").read_text(encoding="utf-8"))["current_stage"] == expected
+    assert summary.get("current_stage") == (None if stage == "missing" else stage)
+
+
+@pytest.mark.parametrize("stage", [None, "missing", "blocked"])
+def test_historical_stage_projection_is_read_only_and_rejects_distinct_stage(tmp_path, stage):
+    terminal = _terminal()
+    terminal["current_stage"] = stage
+    manifest = _record(tmp_path, terminal)
+    if stage == "missing":
+        terminal.pop("current_stage")
+        raw = json.dumps(terminal).encode("utf-8")
+        (tmp_path / "run_result.json").write_bytes(raw)
+        manifest["terminal_record"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    manifest["terminal_stage"] = "unknown"
+    (tmp_path / "run_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    before = {path: path.read_bytes() for path in tmp_path.iterdir()}
+    if stage == "blocked":
+        with pytest.raises(ValueError, match="product_terminal_stage_mismatch"):
+            project_product_execution(tmp_path)
+    else:
+        assert project_product_execution(tmp_path)["current_stage"] == "unknown"
+    assert all(path.read_bytes() == raw for path, raw in before.items())
+
+
 @pytest.mark.parametrize("missing", ["manifest", "reference", "result", "counts"])
 def test_missing_records_remain_unknown_not_zero(tmp_path, missing):
     root = tmp_path / "run"

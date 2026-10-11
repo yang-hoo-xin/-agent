@@ -1,0 +1,146 @@
+{
+  "scope": "historical_aggregate_and_hash_recheck_no_new_model_run_no_manual_answer_regrade",
+  "initial": [
+    {
+      "arm": "bm25",
+      "report_sha256": "cd65d5ac1a9b114198d53ce4b8b6cdbb31b12a6aa6ca03299ad8ebe455aa21f4",
+      "transport_sha256": "f67ad344ec033f36ebfa331e234b97c17246051d18a20018d2aba1720e8980a8",
+      "query_count": 10,
+      "measurement_status": "partial",
+      "elapsed_ms": 1076203.0,
+      "events": {
+        "budget": 1,
+        "reserved": 110,
+        "request": 110,
+        "result": 110,
+        "cli_result": 1
+      },
+      "stage_statuses": {
+        "retrieval_measurement": {
+          "observed": 10
+        },
+        "answer_measurement": {
+          "observed": 10
+        },
+        "evaluator_measurement": {
+          "observed": 10
+        },
+        "citation_measurement": {
+          "observed": 9,
+          "failed_to_measure": 1
+        }
+      },
+      "test_set_sha256": "a1d86e00416d4f7a21cec4d21d42f71e894d008f9c9481eaa2109e5208396b22",
+      "model": {
+        "provider": "openai",
+        "model": "qwen3-coder:30b",
+        "server_revision": "unknown"
+      },
+      "dense_enabled": false
+    },
+    {
+      "arm": "dense",
+      "report_sha256": "84be860464e4ee4367877c66e2e8d640ccc3be10f2821ca8d9221d7fb547608b",
+      "transport_sha256": "98ee2c46961b5d92278a1e40d0821887f0373343830404b603d6a175179855c4",
+      "query_count": 10,
+      "measurement_status": "complete",
+      "elapsed_ms": 1261656.0,
+      "events": {
+        "budget": 1,
+        "reserved": 120,
+        "request": 120,
+        "result": 120,
+        "cli_result": 1
+      },
+      "stage_statuses": {
+        "retrieval_measurement": {
+          "observed": 10
+        },
+        "answer_measurement": {
+          "observed": 10
+        },
+        "evaluator_measurement": {
+          "observed": 10
+        },
+        "citation_measurement": {
+          "observed": 10
+        }
+      },
+      "test_set_sha256": "a1d86e00416d4f7a21cec4d21d42f71e894d008f9c9481eaa2109e5208396b22",
+      "model": {
+        "provider": "openai",
+        "model": "qwen3-coder:30b",
+        "server_revision": "unknown"
+      },
+      "dense_enabled": true
+    }
+  ],
+  "relative_elapsed_reduction": 0.14699173150208933,
+  "expansion": [
+    {
+      "arm": "dev_bm25",
+      "query_count": 6,
+      "report_hash_matches_summary": true,
+      "transport_hash_matches_summary": true,
+      "event_counts": {
+        "budget": 1,
+        "session": 1,
+        "reserved": 66,
+        "request": 66,
+        "result": 66,
+        "process_exit": 1
+      },
+      "measurement_status": "complete"
+    },
+    {
+      "arm": "dev_dense",
+      "query_count": 6,
+      "report_hash_matches_summary": true,
+      "transport_hash_matches_summary": true,
+      "event_counts": {
+        "budget": 1,
+        "session": 1,
+        "reserved": 72,
+        "request": 72,
+        "result": 72,
+        "process_exit": 1
+      },
+      "measurement_status": "complete"
+    },
+    {
+      "arm": "heldout_bm25",
+      "query_count": 4,
+      "report_hash_matches_summary": true,
+      "transport_hash_matches_summary": true,
+      "event_counts": {
+        "budget": 1,
+        "session": 1,
+        "reserved": 44,
+        "request": 44,
+        "result": 44,
+        "process_exit": 1
+      },
+      "measurement_status": "complete"
+    },
+    {
+      "arm": "heldout_dense",
+      "query_count": 4,
+      "report_hash_matches_summary": true,
+      "transport_hash_matches_summary": true,
+      "event_counts": {
+        "budget": 1,
+        "session": 1,
+        "reserved": 48,
+        "request": 48,
+        "result": 48,
+        "process_exit": 1
+      },
+      "measurement_status": "complete"
+    }
+  ],
+  "limitations": [
+    "Timing includes the complete evaluation round, not pure retrieval.",
+    "Current model server revision is not established by historical model labels.",
+    "Historical heldout eligibility is not newly certified; completed evaluation samples are unsuitable for future untouched holdout."
+  ]
+}

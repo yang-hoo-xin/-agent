@@ -4,42 +4,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from .evidence_requirements import default_investigation_guidance
 from .models import ModPlanningBrief, RequestPlan
-from .request_planner import (
-    has_config_intent,
-    requested_scope_text,
-)
-_UI_TERMS = (
-    "ui",
-    "hud",
-    "overlay",
-    "feedback",
-    "message",
-    "indicator",
-    "icon",
-    "color",
-    "colour",
-)
-_RUNTIME_DIAGNOSTIC_TERMS = (
-    "diagnostic",
-    "diagnostics",
-    "log",
-    "logging",
-    "trace",
-    "runtime probe",
-    "startup",
-)
-_HOOK_TERMS = (
-    "hook",
-    "harmony",
-    "il2cpp",
-    "enemy",
-    "enemies",
-    "damage",
-    "gameplay",
-    "method",
-    "patch",
-)
 
 
 class ModPlanningBriefBuilder:
@@ -64,7 +30,7 @@ class ModPlanningBriefBuilder:
             "source_types": list(source_types),
             "queries": self._queries(plan, request_type_value=str(request_type["value"])),
         }
-        normalized_goal = plan.user_request.strip()
+        normalized_goal = plan.user_request
         option = self._planning_option(
             plan,
             request_type_value=str(request_type["value"]),
@@ -86,7 +52,7 @@ class ModPlanningBriefBuilder:
             "hook_discovery_guidance": (
                 "Run hook discovery before implementation planning."
                 if request_type["value"] == "hook-required"
-                else "No hook discovery is required by this planning brief."
+                else "Hook necessity is unresolved; use current evidence to select an implementation mechanism."
             ),
             "patch_review_notes": [
                 "Keep patch scope bound to retrieved evidence.",
@@ -101,6 +67,7 @@ class ModPlanningBriefBuilder:
             decision=decision,
             user_intent={
                 "raw_request": plan.user_request,
+                "request_interpretation": dict(plan.request_interpretation),
                 "normalized_goal": normalized_goal,
                 "target_game": target_game,
                 "target_mod": plan.target_mod,
@@ -165,41 +132,20 @@ class ModPlanningBriefBuilder:
 
     @staticmethod
     def _request_type(plan: RequestPlan) -> dict[str, str]:
-        lowered = plan.user_request.lower()
-        requested_scope = requested_scope_text(plan.user_request)
         if plan.blocked:
             return {
                 "value": "unknown / needs evidence",
                 "rationale": "The request planner reported blocking ambiguity.",
             }
-        if plan.requires_hook_evidence or any(
-            term in requested_scope for term in _HOOK_TERMS
-        ):
-            return {
-                "value": "hook-required",
-                "rationale": (
-                    "The request likely depends on runtime method or gameplay "
-                    "interception evidence."
-                ),
-            }
-        if has_config_intent(plan.user_request):
-            return {
-                "value": "config-only",
-                "rationale": "The request uses configuration or settings language.",
-            }
-        if any(term in lowered for term in _RUNTIME_DIAGNOSTIC_TERMS):
-            return {
-                "value": "runtime diagnostics",
-                "rationale": "The request asks for logging, diagnostics, tracing, or startup evidence.",
-            }
-        if any(term in requested_scope for term in _UI_TERMS):
-            return {
-                "value": "UI feedback",
-                "rationale": "The request asks for user-visible interface or feedback behavior.",
-            }
+        value = plan.request_interpretation.get("request_type")
+        if value is None:
+            # Historical plans retain their recorded decision without rescanning text.
+            # 为什么要有它：重读历史产物不能悄悄改写当时的需求解释。
+            value = ("hook-required" if plan.requires_hook_evidence else
+                     "config-only" if plan.route == "quick_patch" else "gameplay behavior")
         return {
-            "value": "gameplay behavior",
-            "rationale": "The request describes behavior change without a narrower supported planning type.",
+            "value": str(value),
+            "rationale": "Shared provisional request interpretation; semantic decomposition belongs to RequirementProjection.",
         }
 
     @staticmethod
@@ -222,6 +168,7 @@ class ModPlanningBriefBuilder:
         queries = [
             plan.user_request,
             f"request_type:{request_type_value}",
+            *default_investigation_guidance(plan),
         ]
         if plan.target_mod:
             queries.append(f"target_mod:{plan.target_mod}")
@@ -233,13 +180,10 @@ class ModPlanningBriefBuilder:
         *,
         request_type_value: str,
     ) -> dict[str, object]:
-        hook_likelihood = "high" if request_type_value == "hook-required" else "low"
-        if request_type_value == "runtime diagnostics":
-            hook_likelihood = "medium"
-        required_evidence = ["current source or docs evidence"]
-        if request_type_value == "config-only":
-            required_evidence.append("config schema or settings reference")
-        elif request_type_value == "UI feedback":
+        hook_likelihood = "high" if plan.requires_hook_evidence else "unknown"
+        # 为什么要有它：自动通用指导不能升格为用户逐项举证义务；具体能力义务仍由本所有者明确列出。
+        required_evidence: list[str] = []
+        if request_type_value == "UI feedback":
             required_evidence.append("UI or feedback surface evidence")
         elif request_type_value == "runtime diagnostics":
             required_evidence.append("log marker or startup evidence")

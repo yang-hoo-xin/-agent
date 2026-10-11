@@ -254,7 +254,7 @@ def test_dry_run_rejects_unbalanced_csharp_replacement(tmp_path: Path) -> None:
         )
 
 
-def test_dry_run_rejects_new_trailing_whitespace(tmp_path: Path) -> None:
+def test_dry_run_records_new_trailing_whitespace_and_apply_preserves_exact_bytes(tmp_path: Path) -> None:
     source = tmp_path / "Patches" / "Behavior.cs"
     source.parent.mkdir()
     source.write_bytes(b"value = Color.Red;\nnext = true;\n")
@@ -266,14 +266,16 @@ def test_dry_run_rejects_new_trailing_whitespace(tmp_path: Path) -> None:
         "value = Color.Pink;\n    \n"
     )
 
-    with pytest.raises(PatchApplyError, match="trailing whitespace"):
-        ExactTextPatchApplier().run(
-            workspace_root=tmp_path,
-            proposal=proposal,
-            implementation_plan=_plan(),
-            review=_review(),
-            allow_write=False,
-        )
+    applier = ExactTextPatchApplier()
+    dry = applier.run(workspace_root=tmp_path, proposal=proposal,
+        implementation_plan=_plan(), review=_review(), allow_write=False)
+    assert dry["format_diagnostics"] == {"added_trailing_whitespace_count": 1}
+    assert source.read_bytes() == b"value = Color.Red;\nnext = true;\n"
+    applied = applier.run(workspace_root=tmp_path, proposal=proposal,
+        implementation_plan=_plan(), review=_review(), allow_write=True,
+        approved_diff_hash=dry["diff_hash"])
+    assert applied["diff_hash"] == dry["diff_hash"]
+    assert source.read_bytes() == b"value = Color.Pink;\n    \nnext = true;\n"
 
 
 def test_dry_run_allows_unchanged_trailing_whitespace(tmp_path: Path) -> None:
@@ -303,14 +305,10 @@ def test_dry_run_checks_added_code_that_starts_with_double_plus(
     proposal["diff_intent"][0]["patch"]["before_text"] = "counter++;"
     proposal["diff_intent"][0]["patch"]["after_text"] = "++counter; "
 
-    with pytest.raises(PatchApplyError, match="trailing whitespace"):
-        ExactTextPatchApplier().run(
-            workspace_root=tmp_path,
-            proposal=proposal,
-            implementation_plan=_plan(),
-            review=_review(),
-            allow_write=False,
-        )
+    result = ExactTextPatchApplier().run(workspace_root=tmp_path, proposal=proposal,
+        implementation_plan=_plan(), review=_review(), allow_write=False)
+    assert result["format_diagnostics"] == {"added_trailing_whitespace_count": 1}
+    assert source.read_bytes() == b"counter++;\n"
 
 
 def test_approved_isolated_apply_writes_exactly_once(tmp_path: Path) -> None:

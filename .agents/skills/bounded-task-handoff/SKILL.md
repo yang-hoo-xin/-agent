@@ -1,71 +1,66 @@
 ---
 name: bounded-task-handoff
-description: Create a compact, single-capability implementation handoff from explicit scope and repository facts. Use when a decided task must move from planning or audit into a bounded implementation page without copying chat history or the wider roadmap.
+description: Generate one bounded implementation packet using the repository's bounded-task-handoff.v1 input contract after scope and required fields are decided.
 ---
 
 # Bounded Task Handoff
 
-Produce one implementation packet of about 800-1500 tokens. Treat the packet as
-a short-lived handoff, not as product state or a readiness assessment.
+Use this skill only for the current repository's version-1 handoff contract. It
+is not a general planning or task-summary skill.
 
-## Required inputs
+## Required contract
 
-Require the caller to provide every non-Git field below. Read an exact receipt
-when it is the stated source, then pass the value unchanged. Do not infer a
-missing value from filenames, identifier similarity, prior chat, or project
-history.
+The caller must supply these exact non-Git fields:
 
-- task_id
-- goal
-- read_first
-- write_allowlist
-- protected_paths
-- verification_commands
-- done_when
-- stop_when
-- out_of_scope
-- supported_entry_command
-- current_node
-- first_failure_owner
-- vertical_stage
-- surface_objectives.refs
+- `task_id`, `goal`, `read_first`, `write_allowlist`, and
+  `protected_paths`;
+- `verification_commands`, `done_when`, `stop_when`, and `out_of_scope`;
+- `supported_entry_command`, `current_node`, `first_failure_owner`, and
+  `vertical_stage`;
+- `surface_objectives.refs`;
+- `target_commit` as an exact commit identifier or `null`.
 
-The caller must also provide target_commit explicitly as either a commit
-identifier or null. The helper fills base_sha and the current Git snapshot. It
-reports only direct parent relationships for target_commit; it does not derive
-task scope from Git.
+为什么要有它： `scripts/build_handoff.py` enforces
+`bounded-task-handoff.v1` with these exact fields and fails on missing or
+unknown fields. Do not invent filler for a field. If the selected task does not
+have this contract, do not use this skill.
 
-## Workflow
+## Generate
 
-1. Confirm that the handoff describes one already-decided product capability.
-2. Build a strict JSON input using the exact field names accepted by
-   scripts/build_handoff.py. Keep surface_objectives.refs as references; do not
-   copy the nine-item route or another long-term plan into the packet.
-3. Run the helper from the repository that owns the task:
+1. Confirm that one product capability and its acceptance boundary are already
+   decided. 为什么要有它： the helper packages a decision; it does not choose
+   the task.
+2. Read the authoritative source for every supplied value and preserve exact
+   identifiers. 为什么要有它： similar names, prior chat, and old packets are
+   not field authority.
+3. Run from the repository that owns the task:
 
-       python <skill-dir>/scripts/build_handoff.py --input <input.json> --repo <repo> --format markdown
+   ```text
+   python <skill-dir>/scripts/build_handoff.py --input <input.json> --repo <repo> --format markdown
+   ```
 
-4. Check that every supplied scope item remains present and the packet stays
-   near 800-1500 tokens. If it cannot fit without dropping required facts, ask
-   for a narrower work package.
-5. Normally leave the packet on stdout. Pass --output only when a resumable
-   runtime packet is explicitly needed. That flag writes only
-   <git-root>/.codex/task-packet.json. This is the checkout's single active
-   implementation packet, not a multi-page history store. An existing packet
-   blocks replacement unless --replace-active-packet is also explicit.
+   为什么要有它： the helper binds the packet to the current Git snapshot and
+   validates both JSON and Markdown render limits.
+4. Leave output on stdout unless a resumable active packet is explicitly
+   requested. 为什么要有它： `--output` writes
+   `<git-root>/.codex/task-packet.json` and therefore changes checkout state.
+5. Use `--replace-active-packet` only when replacement of that exact active
+   packet is part of the request. 为什么要有它： silent replacement can erase
+   the current handoff context.
 
-For concurrent tasks in one checkout, keep packets on stdout. Use an independent
-worktree when more than one task requires a persisted active packet.
+The current helper caps complete rendered output at an estimated 1,500 tokens
+and rejects oversized input rather than dropping fields. 为什么要有它：
+truncation would change the authorized scope.
 
 ## Boundaries
 
-- Do not copy chat history or restate the complete delivery roadmap.
-- Do not decide product readiness, permissions, or the next product objective.
-- Do not add paths, commands, identifiers, or acceptance rules that the caller
-  did not supply.
-- Do not write product code or control documents.
-- Do not use the packet as evidence that verification ran.
-- Do not truncate scope or Git status to satisfy the output limit. Oversized
-  input or either oversized complete renderer must fail closed.
-- Stop when an input is missing, inconsistent, or broader than one vertical
-  work package.
+- Do not copy chat history or the wider roadmap. 为什么要有它： the packet is
+  one short-lived implementation handoff.
+- Do not decide readiness, permission, or the next objective. 为什么要有它：
+  a derived packet has no decision authority.
+- Do not add paths, commands, identifiers, or acceptance rules. 为什么要有它：
+  only the explicit caller inputs and Git snapshot belong in the packet.
+- Do not treat packet generation as executed verification. 为什么要有它：
+  rendering evidence references does not run their commands.
+- For concurrent persisted tasks, use independent worktrees. 为什么要有它：
+  the version-1 contract supports one active packet per checkout.

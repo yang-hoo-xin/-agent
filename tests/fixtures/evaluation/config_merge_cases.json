@@ -1,0 +1,1786 @@
+{
+  "schema": "config-merge-cases.v1",
+  "scope": "exposed development case; each CLI action runs in a fresh process against the same per-case sandbox file; independent_task_increment=0",
+  "independent_task_increment": 0,
+  "cases": [
+    {
+      "name": "recursive-delete-retain",
+      "seed_file": "{\"ui\":{\"theme\":{\"fg\":\"white\",\"bg\":\"black\",\"keep\":1},\"enabled\":true},\"unknown\":{\"retained\":[1,null]},\"remove\":9}",
+      "actions": [
+        {
+          "id": "merge-recursive",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"ui\":{\"theme\":{\"fg\":\"green\",\"bg\":null,\"added\":2}},\"remove\":null,\"absent\":null}"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "merged",
+              "key": null
+            },
+            "file_json": {
+              "ui": {
+                "theme": {
+                  "fg": "green",
+                  "keep": 1,
+                  "added": 2
+                },
+                "enabled": true
+              },
+              "unknown": {
+                "retained": [
+                  1,
+                  null
+                ]
+              }
+            }
+          }
+        },
+        {
+          "id": "reopen",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "ui": {
+                "theme": {
+                  "fg": "green",
+                  "keep": 1,
+                  "added": 2
+                },
+                "enabled": true
+              },
+              "unknown": {
+                "retained": [
+                  1,
+                  null
+                ]
+              }
+            },
+            "file_json": {
+              "ui": {
+                "theme": {
+                  "fg": "green",
+                  "keep": 1,
+                  "added": 2
+                },
+                "enabled": true
+              },
+              "unknown": {
+                "retained": [
+                  1,
+                  null
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "why": "为什么要有它：验证两层递归、删除、未知字段保留及新进程重读，不能只检查顶层替换。"
+    },
+    {
+      "name": "object-over-nonobjects",
+      "seed_file": "{\"scalar\":3,\"array\":[1,2],\"nil\":null,\"boolean\":false,\"keep\":8}",
+      "actions": [
+        {
+          "id": "objects",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"scalar\":{\"inner\":{\"ok\":1},\"gone\":null},\"array\":{\"inside\":[]},\"nil\":{\"k\":2},\"boolean\":{\"missing\":null}}"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "merged",
+              "key": null
+            },
+            "file_json": {
+              "scalar": {
+                "inner": {
+                  "ok": 1
+                }
+              },
+              "array": {
+                "inside": []
+              },
+              "nil": {
+                "k": 2
+              },
+              "boolean": {},
+              "keep": 8
+            }
+          }
+        },
+        {
+          "id": "reopen",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "scalar": {
+                "inner": {
+                  "ok": 1
+                }
+              },
+              "array": {
+                "inside": []
+              },
+              "nil": {
+                "k": 2
+              },
+              "boolean": {},
+              "keep": 8
+            },
+            "file_json": {
+              "scalar": {
+                "inner": {
+                  "ok": 1
+                }
+              },
+              "array": {
+                "inside": []
+              },
+              "nil": {
+                "k": 2
+              },
+              "boolean": {},
+              "keep": 8
+            }
+          }
+        }
+      ],
+      "why": "为什么要有它：对象补丁覆盖非对象时必须从空对象递归，不能把null删除标记存下来。"
+    },
+    {
+      "name": "whole-value-replacement",
+      "seed_file": "{\"items\":[1,2,3],\"obj\":{\"x\":1},\"text\":\"old\",\"num\":1,\"keep\":{\"x\":1}}",
+      "actions": [
+        {
+          "id": "replace-values",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"items\":[{\"x\":null},[1,2],null],\"obj\":8,\"text\":false,\"num\":\"now-string\"}"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "merged",
+              "key": null
+            },
+            "file_json": {
+              "items": [
+                {
+                  "x": null
+                },
+                [
+                  1,
+                  2
+                ],
+                null
+              ],
+              "obj": 8,
+              "text": false,
+              "num": "now-string",
+              "keep": {
+                "x": 1
+              }
+            }
+          }
+        },
+        {
+          "id": "reopen",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "items": [
+                {
+                  "x": null
+                },
+                [
+                  1,
+                  2
+                ],
+                null
+              ],
+              "obj": 8,
+              "text": false,
+              "num": "now-string",
+              "keep": {
+                "x": 1
+              }
+            },
+            "file_json": {
+              "items": [
+                {
+                  "x": null
+                },
+                [
+                  1,
+                  2
+                ],
+                null
+              ],
+              "obj": 8,
+              "text": false,
+              "num": "now-string",
+              "keep": {
+                "x": 1
+              }
+            }
+          }
+        }
+      ],
+      "why": "为什么要有它：数组整体替换且数组内部null是数据，标量替换不得误用对象递归。"
+    },
+    {
+      "name": "case-sensitive-keys",
+      "seed_file": "{\"Name\":1,\"name\":2,\"nested\":{\"Key\":8,\"key\":9},\"标签\":\"保留\"}",
+      "actions": [
+        {
+          "id": "case-sensitive",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"name\":4,\"nested\":{\"key\":7}}"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "merged",
+              "key": null
+            },
+            "file_json": {
+              "Name": 1,
+              "name": 4,
+              "nested": {
+                "Key": 8,
+                "key": 7
+              },
+              "标签": "保留"
+            }
+          }
+        },
+        {
+          "id": "reopen",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "Name": 1,
+              "name": 4,
+              "nested": {
+                "Key": 8,
+                "key": 7
+              },
+              "标签": "保留"
+            },
+            "file_json": {
+              "Name": 1,
+              "name": 4,
+              "nested": {
+                "Key": 8,
+                "key": 7
+              },
+              "标签": "保留"
+            }
+          }
+        }
+      ],
+      "why": "为什么要有它：不同大小写的键必须保持独立，同时验证非ASCII键。"
+    },
+    {
+      "name": "empty-existing-object",
+      "seed_file": " { \"unknown\" : [1,null], \"x\" : {\"y\":2} }\n",
+      "actions": [
+        {
+          "id": "empty",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{}"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "merged",
+              "key": null
+            },
+            "file_json": {
+              "unknown": [
+                1,
+                null
+              ],
+              "x": {
+                "y": 2
+              }
+            }
+          }
+        },
+        {
+          "id": "reopen",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "unknown": [
+                1,
+                null
+              ],
+              "x": {
+                "y": 2
+              }
+            },
+            "file_json": {
+              "unknown": [
+                1,
+                null
+              ],
+              "x": {
+                "y": 2
+              }
+            }
+          }
+        }
+      ],
+      "why": "为什么要有它：空补丁保留语义内容，不要求成功写入保持原格式。"
+    },
+    {
+      "name": "missing-create-object",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "create",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"a\":{\"b\":1,\"absent\":null},\"array\":[null],\"gone\":null}"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "merged",
+              "key": null
+            },
+            "file_json": {
+              "a": {
+                "b": 1
+              },
+              "array": [
+                null
+              ]
+            }
+          }
+        },
+        {
+          "id": "reopen",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "a": {
+                "b": 1
+              },
+              "array": [
+                null
+              ]
+            },
+            "file_json": {
+              "a": {
+                "b": 1
+              },
+              "array": [
+                null
+              ]
+            }
+          }
+        }
+      ],
+      "why": "为什么要有它：缺失文件和目录允许由有效对象补丁创建，删除不存在字段不应留下null。"
+    },
+    {
+      "name": "missing-empty-object",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "create-empty",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{}"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "merged",
+              "key": null
+            },
+            "file_json": {}
+          }
+        },
+        {
+          "id": "reopen",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {},
+            "file_json": {}
+          }
+        }
+      ],
+      "why": "为什么要有它：空对象也是有效补丁，缺失目标必须形成对象文件。"
+    },
+    {
+      "name": "root-null-existing",
+      "seed_file": " { \"keep\" : 42 }\r\n",
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "null"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：根补丁仅允许对象；拒绝不得改动既有字节或创建缺失文件。"
+    },
+    {
+      "name": "root-null-missing",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "null"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_missing": true
+          }
+        }
+      ],
+      "why": "为什么要有它：根补丁仅允许对象；拒绝不得改动既有字节或创建缺失文件。"
+    },
+    {
+      "name": "root-array-existing",
+      "seed_file": " { \"keep\" : 42 }\r\n",
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "[]"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：根补丁仅允许对象；拒绝不得改动既有字节或创建缺失文件。"
+    },
+    {
+      "name": "root-array-missing",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "[]"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_missing": true
+          }
+        }
+      ],
+      "why": "为什么要有它：根补丁仅允许对象；拒绝不得改动既有字节或创建缺失文件。"
+    },
+    {
+      "name": "root-number-existing",
+      "seed_file": " { \"keep\" : 42 }\r\n",
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "3"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：根补丁仅允许对象；拒绝不得改动既有字节或创建缺失文件。"
+    },
+    {
+      "name": "root-number-missing",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "3"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_missing": true
+          }
+        }
+      ],
+      "why": "为什么要有它：根补丁仅允许对象；拒绝不得改动既有字节或创建缺失文件。"
+    },
+    {
+      "name": "root-string-existing",
+      "seed_file": " { \"keep\" : 42 }\r\n",
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "\"text\""
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：根补丁仅允许对象；拒绝不得改动既有字节或创建缺失文件。"
+    },
+    {
+      "name": "root-string-missing",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "\"text\""
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_missing": true
+          }
+        }
+      ],
+      "why": "为什么要有它：根补丁仅允许对象；拒绝不得改动既有字节或创建缺失文件。"
+    },
+    {
+      "name": "root-true-existing",
+      "seed_file": " { \"keep\" : 42 }\r\n",
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "true"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：根补丁仅允许对象；拒绝不得改动既有字节或创建缺失文件。"
+    },
+    {
+      "name": "root-true-missing",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "true"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_missing": true
+          }
+        }
+      ],
+      "why": "为什么要有它：根补丁仅允许对象；拒绝不得改动既有字节或创建缺失文件。"
+    },
+    {
+      "name": "root-false-existing",
+      "seed_file": " { \"keep\" : 42 }\r\n",
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "false"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：根补丁仅允许对象；拒绝不得改动既有字节或创建缺失文件。"
+    },
+    {
+      "name": "root-false-missing",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "false"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_missing": true
+          }
+        }
+      ],
+      "why": "为什么要有它：根补丁仅允许对象；拒绝不得改动既有字节或创建缺失文件。"
+    },
+    {
+      "name": "malformed-patch-existing",
+      "seed_file": "{\n \"keep\":7\n}\n",
+      "actions": [
+        {
+          "id": "reject-syntax",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"wouldChange\":1,\"broken\":"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：部分可解析输入不能造成部分写入。"
+    },
+    {
+      "name": "malformed-patch-missing",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "reject-syntax",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"wouldChange\":1,\"broken\":"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_missing": true
+          }
+        }
+      ],
+      "why": "为什么要有它：部分可解析输入不能造成部分写入。"
+    },
+    {
+      "name": "invalid-existing-malformed",
+      "seed_file": "{\"old\":",
+      "actions": [
+        {
+          "id": "reject-existing",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"new\":1}"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：Merge要求已存在文件根为对象，即使旧Read兼容null也不能覆盖非对象原件。"
+    },
+    {
+      "name": "invalid-existing-null",
+      "seed_file": "null\n",
+      "actions": [
+        {
+          "id": "reject-existing",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"new\":1}"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：Merge要求已存在文件根为对象，即使旧Read兼容null也不能覆盖非对象原件。"
+    },
+    {
+      "name": "invalid-existing-array",
+      "seed_file": "[1,2]\n",
+      "actions": [
+        {
+          "id": "reject-existing",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"new\":1}"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：Merge要求已存在文件根为对象，即使旧Read兼容null也不能覆盖非对象原件。"
+    },
+    {
+      "name": "invalid-existing-number",
+      "seed_file": "42\n",
+      "actions": [
+        {
+          "id": "reject-existing",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"new\":1}"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：Merge要求已存在文件根为对象，即使旧Read兼容null也不能覆盖非对象原件。"
+    },
+    {
+      "name": "invalid-existing-string",
+      "seed_file": "\"old\"\n",
+      "actions": [
+        {
+          "id": "reject-existing",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"new\":1}"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：Merge要求已存在文件根为对象，即使旧Read兼容null也不能覆盖非对象原件。"
+    },
+    {
+      "name": "invalid-existing-boolean",
+      "seed_file": "false\n",
+      "actions": [
+        {
+          "id": "reject-existing",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"new\":1}"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：Merge要求已存在文件根为对象，即使旧Read兼容null也不能覆盖非对象原件。"
+    },
+    {
+      "name": "show-set-merge-sequence",
+      "seed_file": "{\"unknown\":{\"keep\":9}}",
+      "actions": [
+        {
+          "id": "original",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "unknown": {
+                "keep": 9
+              }
+            },
+            "file_json": {
+              "unknown": {
+                "keep": 9
+              }
+            }
+          }
+        },
+        {
+          "id": "set-null",
+          "args": [
+            "set",
+            "$CONFIG",
+            "nullable",
+            "null"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "saved",
+              "key": "nullable"
+            },
+            "file_json": {
+              "unknown": {
+                "keep": 9
+              },
+              "nullable": null
+            }
+          }
+        },
+        {
+          "id": "set-array",
+          "args": [
+            "set",
+            "$CONFIG",
+            "arbitrary",
+            "[1,{\"nested\":null}]"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "saved",
+              "key": "arbitrary"
+            },
+            "file_json": {
+              "unknown": {
+                "keep": 9
+              },
+              "nullable": null,
+              "arbitrary": [
+                1,
+                {
+                  "nested": null
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "merge-delete",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"nullable\":null,\"unknown\":{\"new\":2}}"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "merged",
+              "key": null
+            },
+            "file_json": {
+              "unknown": {
+                "keep": 9,
+                "new": 2
+              },
+              "arbitrary": [
+                1,
+                {
+                  "nested": null
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "set-object",
+          "args": [
+            "set",
+            "$CONFIG",
+            "unknown",
+            "{\"replacement\":true}"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "saved",
+              "key": "unknown"
+            },
+            "file_json": {
+              "unknown": {
+                "replacement": true
+              },
+              "arbitrary": [
+                1,
+                {
+                  "nested": null
+                }
+              ]
+            }
+          }
+        },
+        {
+          "id": "final",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "unknown": {
+                "replacement": true
+              },
+              "arbitrary": [
+                1,
+                {
+                  "nested": null
+                }
+              ]
+            },
+            "file_json": {
+              "unknown": {
+                "replacement": true
+              },
+              "arbitrary": [
+                1,
+                {
+                  "nested": null
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "why": "为什么要有它：原set仍接受任意JSON值并整体替换单键，不能被新Merge的null删除和递归语义改变。"
+    },
+    {
+      "name": "legacy-null-read-update",
+      "seed_file": "null\n",
+      "actions": [
+        {
+          "id": "show-null",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {},
+            "file_unchanged": true
+          }
+        },
+        {
+          "id": "set-after-null",
+          "args": [
+            "set",
+            "$CONFIG",
+            "enabled",
+            "true"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "saved",
+              "key": "enabled"
+            },
+            "file_json": {
+              "enabled": true
+            }
+          }
+        },
+        {
+          "id": "reopen",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "enabled": true
+            },
+            "file_json": {
+              "enabled": true
+            }
+          }
+        }
+      ],
+      "why": "为什么要有它：新Merge拒绝null文件不应改变旧Read将null当空配置、旧Update可写入的行为。"
+    },
+    {
+      "name": "legacy-missing-read",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "show-missing",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {},
+            "file_missing": true
+          }
+        },
+        {
+          "id": "set-create",
+          "args": [
+            "set",
+            "$CONFIG",
+            "freeform",
+            "\"hello\""
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "saved",
+              "key": "freeform"
+            },
+            "file_json": {
+              "freeform": "hello"
+            }
+          }
+        },
+        {
+          "id": "reopen",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "freeform": "hello"
+            },
+            "file_json": {
+              "freeform": "hello"
+            }
+          }
+        }
+      ],
+      "why": "为什么要有它：旧show不创建缺失文件，旧set仍可创建并持久化任意键。"
+    },
+    {
+      "name": "reject-wrong-arity",
+      "seed_file": "{\"keep\":1}",
+      "actions": [
+        {
+          "id": "missing-patch",
+          "args": [
+            "merge",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        },
+        {
+          "id": "extra-argument",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{}",
+            "extra"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        },
+        {
+          "id": "still-original",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "keep": 1
+            },
+            "file_json": {
+              "keep": 1
+            }
+          }
+        }
+      ],
+      "why": "为什么要有它：merge只接受约定的参数数量，拒绝路径不能执行写入。"
+    },
+    {
+      "name": "success-then-reject-then-success",
+      "seed_file": "{\"keep\":1}",
+      "actions": [
+        {
+          "id": "first",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"nested\":{\"x\":2}}"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "merged",
+              "key": null
+            },
+            "file_json": {
+              "keep": 1,
+              "nested": {
+                "x": 2
+              }
+            }
+          }
+        },
+        {
+          "id": "middle-reject",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "null"
+          ],
+          "expected": {
+            "exit_code": 2,
+            "stdout_json": {
+              "status": "rejected",
+              "key": null
+            },
+            "file_unchanged": true
+          }
+        },
+        {
+          "id": "second",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"nested\":{\"y\":3}}"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "status": "merged",
+              "key": null
+            },
+            "file_json": {
+              "keep": 1,
+              "nested": {
+                "x": 2,
+                "y": 3
+              }
+            }
+          }
+        },
+        {
+          "id": "reopen",
+          "args": [
+            "show",
+            "$CONFIG"
+          ],
+          "expected": {
+            "exit_code": 0,
+            "stdout_json": {
+              "keep": 1,
+              "nested": {
+                "x": 2,
+                "y": 3
+              }
+            },
+            "file_json": {
+              "keep": 1,
+              "nested": {
+                "x": 2,
+                "y": 3
+              }
+            }
+          }
+        }
+      ],
+      "why": "为什么要有它：拒绝的字节比较必须针对当前文件，且后续进程不能观察到隐藏状态污染。"
+    },
+    {
+      "name": "api-recursive-delete-retain",
+      "seed_file": "{\"ui\":{\"theme\":{\"fg\":\"white\",\"bg\":\"black\",\"keep\":1},\"enabled\":true},\"unknown\":{\"retained\":[1,null]},\"remove\":9}",
+      "actions": [
+        {
+          "id": "merge-recursive",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"ui\":{\"theme\":{\"fg\":\"green\",\"bg\":null,\"added\":2}},\"remove\":null,\"absent\":null}"
+          ],
+          "expected": {
+            "file_json": {
+              "ui": {
+                "theme": {
+                  "fg": "green",
+                  "keep": 1,
+                  "added": 2
+                },
+                "enabled": true
+              },
+              "unknown": {
+                "retained": [
+                  1,
+                  null
+                ]
+              }
+            },
+            "exception_types": [
+              null
+            ]
+          }
+        }
+      ],
+      "why": "为什么要有它：直接调用公开Merge必须实现递归语义，CLI成功不能替代API入口验证。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-root-null-existing",
+      "seed_file": " { \"keep\" : 42 }\r\n",
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "null"
+          ],
+          "expected": {
+            "file_unchanged": true,
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ]
+          }
+        }
+      ],
+      "why": "为什么要有它：直接调用Merge的非法根输入必须抛ArgumentException或JsonException并保留文件，防止仅在CLI校验。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-root-null-missing",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "null"
+          ],
+          "expected": {
+            "file_missing": true,
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ]
+          }
+        }
+      ],
+      "why": "为什么要有它：直接调用Merge的非法根输入必须抛ArgumentException或JsonException并保留文件，防止仅在CLI校验。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-root-array-existing",
+      "seed_file": " { \"keep\" : 42 }\r\n",
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "[]"
+          ],
+          "expected": {
+            "file_unchanged": true,
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ]
+          }
+        }
+      ],
+      "why": "为什么要有它：直接调用Merge的非法根输入必须抛ArgumentException或JsonException并保留文件，防止仅在CLI校验。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-root-array-missing",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "[]"
+          ],
+          "expected": {
+            "file_missing": true,
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ]
+          }
+        }
+      ],
+      "why": "为什么要有它：直接调用Merge的非法根输入必须抛ArgumentException或JsonException并保留文件，防止仅在CLI校验。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-root-number-existing",
+      "seed_file": " { \"keep\" : 42 }\r\n",
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "3"
+          ],
+          "expected": {
+            "file_unchanged": true,
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ]
+          }
+        }
+      ],
+      "why": "为什么要有它：直接调用Merge的非法根输入必须抛ArgumentException或JsonException并保留文件，防止仅在CLI校验。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-root-number-missing",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "3"
+          ],
+          "expected": {
+            "file_missing": true,
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ]
+          }
+        }
+      ],
+      "why": "为什么要有它：直接调用Merge的非法根输入必须抛ArgumentException或JsonException并保留文件，防止仅在CLI校验。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-root-string-existing",
+      "seed_file": " { \"keep\" : 42 }\r\n",
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "\"text\""
+          ],
+          "expected": {
+            "file_unchanged": true,
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ]
+          }
+        }
+      ],
+      "why": "为什么要有它：直接调用Merge的非法根输入必须抛ArgumentException或JsonException并保留文件，防止仅在CLI校验。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-root-string-missing",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "\"text\""
+          ],
+          "expected": {
+            "file_missing": true,
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ]
+          }
+        }
+      ],
+      "why": "为什么要有它：直接调用Merge的非法根输入必须抛ArgumentException或JsonException并保留文件，防止仅在CLI校验。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-root-true-existing",
+      "seed_file": " { \"keep\" : 42 }\r\n",
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "true"
+          ],
+          "expected": {
+            "file_unchanged": true,
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ]
+          }
+        }
+      ],
+      "why": "为什么要有它：直接调用Merge的非法根输入必须抛ArgumentException或JsonException并保留文件，防止仅在CLI校验。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-root-true-missing",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "true"
+          ],
+          "expected": {
+            "file_missing": true,
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ]
+          }
+        }
+      ],
+      "why": "为什么要有它：直接调用Merge的非法根输入必须抛ArgumentException或JsonException并保留文件，防止仅在CLI校验。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-root-false-existing",
+      "seed_file": " { \"keep\" : 42 }\r\n",
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "false"
+          ],
+          "expected": {
+            "file_unchanged": true,
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ]
+          }
+        }
+      ],
+      "why": "为什么要有它：直接调用Merge的非法根输入必须抛ArgumentException或JsonException并保留文件，防止仅在CLI校验。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-root-false-missing",
+      "seed_file": null,
+      "actions": [
+        {
+          "id": "reject-root",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "false"
+          ],
+          "expected": {
+            "file_missing": true,
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ]
+          }
+        }
+      ],
+      "why": "为什么要有它：直接调用Merge的非法根输入必须抛ArgumentException或JsonException并保留文件，防止仅在CLI校验。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-invalid-existing-malformed",
+      "seed_file": "{\"old\":",
+      "actions": [
+        {
+          "id": "reject-existing",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"new\":1}"
+          ],
+          "expected": {
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ],
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：有效对象补丁遇到已有损坏或根非对象配置时，公开Merge也必须直接拒绝并保持原字节；仅CLI预检通过不能证明API合同。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-invalid-existing-null",
+      "seed_file": "null\n",
+      "actions": [
+        {
+          "id": "reject-existing",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"new\":1}"
+          ],
+          "expected": {
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ],
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：有效对象补丁遇到已有损坏或根非对象配置时，公开Merge也必须直接拒绝并保持原字节；仅CLI预检通过不能证明API合同。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-invalid-existing-array",
+      "seed_file": "[1,2]\n",
+      "actions": [
+        {
+          "id": "reject-existing",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"new\":1}"
+          ],
+          "expected": {
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ],
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：有效对象补丁遇到已有损坏或根非对象配置时，公开Merge也必须直接拒绝并保持原字节；仅CLI预检通过不能证明API合同。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-invalid-existing-number",
+      "seed_file": "42\n",
+      "actions": [
+        {
+          "id": "reject-existing",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"new\":1}"
+          ],
+          "expected": {
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ],
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：有效对象补丁遇到已有损坏或根非对象配置时，公开Merge也必须直接拒绝并保持原字节；仅CLI预检通过不能证明API合同。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-invalid-existing-string",
+      "seed_file": "\"old\"\n",
+      "actions": [
+        {
+          "id": "reject-existing",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"new\":1}"
+          ],
+          "expected": {
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ],
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：有效对象补丁遇到已有损坏或根非对象配置时，公开Merge也必须直接拒绝并保持原字节；仅CLI预检通过不能证明API合同。",
+      "mode": "api_merge"
+    },
+    {
+      "name": "api-invalid-existing-boolean",
+      "seed_file": "false\n",
+      "actions": [
+        {
+          "id": "reject-existing",
+          "args": [
+            "merge",
+            "$CONFIG",
+            "{\"new\":1}"
+          ],
+          "expected": {
+            "exception_types": [
+              "System.ArgumentException",
+              "System.Text.Json.JsonException"
+            ],
+            "file_unchanged": true
+          }
+        }
+      ],
+      "why": "为什么要有它：有效对象补丁遇到已有损坏或根非对象配置时，公开Merge也必须直接拒绝并保持原字节；仅CLI预检通过不能证明API合同。",
+      "mode": "api_merge"
+    }
+  ]
+}

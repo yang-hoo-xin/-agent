@@ -1,0 +1,91 @@
+{
+  "scope": "existing_run_read_only_projection_not_new_execution",
+  "status": "projected",
+  "top_level_keys": [
+    "schema_version",
+    "run_id",
+    "read_only",
+    "scope",
+    "inspection_model_calls",
+    "segments",
+    "last_selected_result_ref",
+    "quality_assessment",
+    "limits"
+  ],
+  "segments": [
+    {
+      "segment": "original",
+      "run_root": "C:\\Users\\10160\\ModAgentRuns\\hotkey\\dsh_df9865b86c3a4cc7b5a43d7a39d6bc29",
+      "cost": {
+        "generation_records": 2,
+        "money": "unknown",
+        "scope": "selected_generation_records",
+        "unaccounted_request_possible": false,
+        "input_tokens": {
+          "total": 7008,
+          "known_subtotal": 7008,
+          "observed_calls": 2
+        },
+        "output_tokens": {
+          "total": 1978,
+          "known_subtotal": 1978,
+          "observed_calls": 2
+        },
+        "generation_elapsed_ms_sum": 182983.7273,
+        "elapsed_scope": "sum_of_model_spans_not_end_to_end_or_tool_total"
+      },
+      "stage_names": [
+        "requirements",
+        "findings",
+        "query",
+        "planning",
+        "patch"
+      ],
+      "record_count": 20
+    },
+    {
+      "segment": "continuation",
+      "run_root": "C:\\Users\\10160\\ModAgentRuns\\hotkey\\dsh_df9865b86c3a4cc7b5a43d7a39d6bc29\\continuations\\9b66dc12db2f734d558732f6",
+      "cost": {
+        "generation_records": 2,
+        "money": "unknown",
+        "scope": "selected_generation_records",
+        "unaccounted_request_possible": false,
+        "input_tokens": {
+          "total": 14920,
+          "known_subtotal": 14920,
+          "observed_calls": 2
+        },
+        "output_tokens": {
+          "total": 808,
+          "known_subtotal": 808,
+          "observed_calls": 2
+        },
+        "generation_elapsed_ms_sum": 125967.92670000001,
+        "elapsed_scope": "sum_of_model_spans_not_end_to_end_or_tool_total"
+      },
+      "stage_names": [
+        "requirements",
+        "findings",
+        "query",
+        "planning",
+        "patch"
+      ],
+      "record_count": 10
+    }
+  ],
+  "claims": null,
+  "source_hashes_before": {
+    "C:\\Users\\10160\\ModAgentRuns\\hotkey\\dsh_df9865b86c3a4cc7b5a43d7a39d6bc29\\run_manifest.json": "5566de1debd3cc83b187109abd7a1a6b1d230e275d08f313ff1f5316cc04e413",
+    "C:\\Users\\10160\\ModAgentRuns\\hotkey\\dsh_df9865b86c3a4cc7b5a43d7a39d6bc29\\run_result.json": "b1a492ec2d20a5a4ccf5b180d2eedcd745eff7cb21a0318e6dfc712e78ff7f02",
+    "C:\\Users\\10160\\ModAgentRuns\\hotkey\\dsh_df9865b86c3a4cc7b5a43d7a39d6bc29\\continuations\\9b66dc12db2f734d558732f6\\run_manifest.json": "e39a889b1657ad15f30cfb0501e0962431a9032776fc394d3a44b1a3edb6a6e0",
+    "C:\\Users\\10160\\ModAgentRuns\\hotkey\\dsh_df9865b86c3a4cc7b5a43d7a39d6bc29\\continuations\\9b66dc12db2f734d558732f6\\run_result.json": "0b8c8ef264a4946a47eb02d9f7a029042d450b912adb1d6b66cba488cdc4e03a"
+  },
+  "source_hashes_after": {
+    "C:\\Users\\10160\\ModAgentRuns\\hotkey\\dsh_df9865b86c3a4cc7b5a43d7a39d6bc29\\run_manifest.json": "5566de1debd3cc83b187109abd7a1a6b1d230e275d08f313ff1f5316cc04e413",
+    "C:\\Users\\10160\\ModAgentRuns\\hotkey\\dsh_df9865b86c3a4cc7b5a43d7a39d6bc29\\run_result.json": "b1a492ec2d20a5a4ccf5b180d2eedcd745eff7cb21a0318e6dfc712e78ff7f02",
+    "C:\\Users\\10160\\ModAgentRuns\\hotkey\\dsh_df9865b86c3a4cc7b5a43d7a39d6bc29\\continuations\\9b66dc12db2f734d558732f6\\run_manifest.json": "e39a889b1657ad15f30cfb0501e0962431a9032776fc394d3a44b1a3edb6a6e0",
+    "C:\\Users\\10160\\ModAgentRuns\\hotkey\\dsh_df9865b86c3a4cc7b5a43d7a39d6bc29\\continuations\\9b66dc12db2f734d558732f6\\run_result.json": "0b8c8ef264a4946a47eb02d9f7a029042d450b912adb1d6b66cba488cdc4e03a"
+  },
+  "original_manifest_result_bytes_unchanged": true
+}

@@ -137,7 +137,6 @@ def test_qwen_chat_adapter_uses_native_tools_without_thinking_or_parallel_calls(
             "output_tokens": 20,
             "total_tokens": 120,
             "reasoning_tokens": 0,
-            "cached_input_tokens": 0,
         },
     }
 

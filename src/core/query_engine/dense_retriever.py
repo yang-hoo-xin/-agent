@@ -129,6 +129,13 @@ class DenseRetriever:
         # Validate inputs
         self._validate_query(query)
         self._validate_dependencies()
+
+        # 为什么要有它：已绑定集合是存储容器边界，不是每条记录必有的元数据；重复过滤会把真实向量结果全部筛空。
+        bound_collection = getattr(self.vector_store, "collection_name", None)
+        selected_filters = dict(filters) if filters else {}
+        if isinstance(bound_collection, str) and "collection" in selected_filters:
+            if selected_filters.pop("collection") != bound_collection:
+                raise ValueError("DENSE_COLLECTION_SCOPE_MISMATCH")
         
         # Use default top_k if not specified
         effective_top_k = top_k if top_k is not None else self.default_top_k
@@ -150,7 +157,7 @@ class DenseRetriever:
             raw_results = self.vector_store.query(
                 vector=query_vector,
                 top_k=effective_top_k,
-                filters=filters,
+                filters=selected_filters or None,
                 trace=trace,
             )
         except Exception as e:

@@ -212,7 +212,10 @@ def _historical_verification(factory, native, inspector, materialized, plan_ref,
     _require(_json(compilation["source_inputs_ref"]) == expected_sources,
              "SAVED_PATCH_COMPILE_BASELINE_CHANGED")
     # Environment identity is the explicitly declared dependency tree, not the host.
-    from src.mod_agent.local_entry import _binary_tree_snapshot, _binary_tree_snapshot_sha256
+    from src.mod_agent.build.dependencies import (
+        _binary_tree_snapshot,
+        _binary_tree_snapshot_sha256,
+    )
     binding = compilation["dependency_binding"]
     snapshot = _binary_tree_snapshot(Path(binding["source_root"]))
     _require(len(snapshot) == binding["file_count"]

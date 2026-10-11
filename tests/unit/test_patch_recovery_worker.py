@@ -147,8 +147,9 @@ class _DeclaredOracle:
 
 
 class _RepeatFailedClient(_InvestigatingClient):
-    def __init__(self, on_investigation=None):
+    def __init__(self, failed_response, on_investigation=None):
         super().__init__()
+        self.failed_response = deepcopy(failed_response)
         self.on_investigation = on_investigation
 
     def complete_turn(self, request):
@@ -156,7 +157,8 @@ class _RepeatFailedClient(_InvestigatingClient):
         if self.investigated_failure and self.on_investigation:
             self.on_investigation()
         if response.content:
-            payload = json.loads(response.content.replace("RecordMissingMarker", "RecordRuntimeMarker"))
+            # 为什么要有它：重复场景须复用已绑定的失败代码；公共生成夹具可能对当前 Ck 再加一次 marker。
+            payload = deepcopy(self.failed_response)
             for row in payload["changes"]:
                 row["rationale"] = f"Explanation changed on turn {len(self.requests)}."
             return replace(response, content=json.dumps(payload))
@@ -167,8 +169,10 @@ class _RepeatFailedClient(_InvestigatingClient):
 def test_repeated_failed_materialized_code_uses_same_budget_and_only_explicit_reuse(tmp_path, reuse, change_environment):
     from tests.unit.test_patch_repair_continuation import _repair_case
     inputs, request, _ = _repair_case(tmp_path)
+    failed_response = json.loads(Path(request.repair_parent_response_ref["path"]).read_text(encoding="utf-8"))
     oracle = _DeclaredOracle(tmp_path / "verification", reusable=reuse)
-    client = _RepeatFailedClient(lambda: setattr(oracle, "environment", 2) if change_environment else None)
+    client = _RepeatFailedClient(failed_response,
+        lambda: setattr(oracle, "environment", 2) if change_environment else None)
     adapter = _adapter(inputs, client, oracle)
     adapter.enable_recovery_loop = True
     adapter.patch_agent_loop_policy = PatchAgentLoopPolicy(
@@ -182,6 +186,9 @@ def test_repeated_failed_materialized_code_uses_same_budget_and_only_explicit_re
     assert len(client.requests) == receipt["model_call_count"] == 5
     assert len(rows) == 3
     assert all(row["code_revision"]["same_materialized_code"] for row in rows)
+    expected_text = {row["edit_binding_id"]: row["after_text"] for row in failed_response["changes"]}
+    assert all({row["edit_binding_id"]: row["patch"]["after_text"] for row in context["generated_changes"]}
+               == expected_text for context in oracle.contexts)
     assert rows[0]["materialized_code_identity"]["baseline_sha256"] != rows[0]["materialized_code_identity"]["code_sha256"]
     feedback = next(m.content for m in client.requests[2].messages if isinstance(m.content, dict)
                     and m.content.get("message_type") == "patch_behavior_correction")

@@ -129,7 +129,7 @@ from .checkpointing import (
 )
 from .interrupts import InterruptRequest, ResumePayload
 from .nodes import StubNodeRunner
-from .state import ModAgentState
+from .state import ModAgentState, _copy_mod_agent_state
 from .transitions import (
     route_after_binding_resolution,
     route_after_build,
@@ -379,6 +379,7 @@ def _route_after_typed_runtime_evidence(state: ModAgentState) -> str:
 def _validate_product_graph_start(
     state: ModAgentState,
     mode: ProductExecutionGraphModeV1,
+    artifact_store: ArtifactStore | None = None,
 ) -> str:
     """Reject typed product request drift before the first node can act."""
 
@@ -401,6 +402,34 @@ def _validate_product_graph_start(
             "Product Graph isolated-write authority changed after preflight.",
             side_effects_may_have_started=False,
         )
+    if mode.interrupted_patch_selection is not None or mode.pretransport_patch_selection is not None:
+        from src.mod_agent.interrupted_patch_admission import admit_interrupted_patch
+        from src.mod_agent.workflow.state import create_initial_state
+        if artifact_store is None:
+            raise ProductExecutionContractError("Interrupted Patch START requires its original Store.",
+                                                side_effects_may_have_started=False)
+        if mode.pretransport_patch_selection is not None:
+            from src.mod_agent.pretransport_patch_admission import admit_pretransport_patch
+            admit_interrupted_patch = admit_pretransport_patch
+        try:
+            admitted = admit_interrupted_patch(mode.pretransport_patch_selection or mode.interrupted_patch_selection,
+                workspace_root=Path(request.isolated_workspace_root), artifact_store=artifact_store)
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            raise ProductExecutionContractError("Interrupted Patch START admission changed: " + str(exc),
+                                                side_effects_may_have_started=False) from exc
+        expected_state = create_initial_state(run_id=request.run_id, request_id=request.request_id,
+            user_request=request.user_request, target_domain=request.target_domain,
+            target_mod=request.target_mod, confirmed_isolated_write=True)
+        expected_state.update(feature_id=admitted["feature_id"], risk_level=admitted["feature_spec"]["risk_level"],
+            current_stage="implementation_plan", next_stage="patch_proposal",
+            artifacts={role: ref["path"] for role, ref in admitted["selected_artifacts"].items()},
+            artifact_hashes={role: ref["artifact_hash"] for role, ref in admitted["selected_artifacts"].items()})
+        # 为什么要有它：Graph START重新核对原始只读准入及最小初态，避免调用者借恢复入口继承审批或注入重试/状态。
+        if (state != expected_state or admitted["request_id"] != request.request_id
+                or admitted["parent_run_id"] != request.run_id
+                or admitted["user_request"] != request.user_request):
+            raise ProductExecutionContractError("Interrupted Patch Graph initial state changed after admission.",
+                                                side_effects_may_have_started=False)
     return "continue"
 
 
@@ -466,6 +495,9 @@ def _validate_patch_continuation_graph_start(
             "SAVED_PATCH_LOGICAL_REQUEST_DRIFT", "patch_admission",
             "Saved output continuation must retain its original logical request.",
         )
+    if mode.candidate_reverification_selection is not None and (
+            admitted.saved_candidate is None or state.get("request_id") != admitted.saved_candidate["request_id"]):
+        raise PatchContinuationError("SAVED_CANDIDATE_LOGICAL_REQUEST_DRIFT", "patch_admission", "Candidate retry must retain the original request.")
     expected_artifacts = {
         "feature_spec": mode.feature_spec_ref.path,
         "evidence_pack": mode.evidence_pack_ref.path,
@@ -572,8 +604,9 @@ def build_graph(
     """Build a compiled LangGraph graph with real planning/review routing.
 
     Planning, evidence retrieval, implementation planning, patch proposal, and
-    review are real controlled nodes. Dry-run remains fake; build and runtime
-    evidence can be injected for controlled contract tests.
+    review are real controlled nodes. Dry-run defaults to the no-write fake path
+    and can use an injected exact no-write adapter; build and runtime evidence
+    can be injected for controlled contract tests.
     """
 
     if (
@@ -615,7 +648,7 @@ def build_graph(
         )
     saved_patch_reassembly = (
         validated_patch_continuation_mode is not None
-        and validated_patch_continuation_mode.saved_patch_selection is not None
+        and validated_patch_continuation_mode.reuses_model_output
     )
     if saved_patch_reassembly and (
         patch_change_factory is not None
@@ -1439,8 +1472,11 @@ def build_graph(
             lambda state: _validate_product_graph_start(
                 state,
                 validated_product_execution_mode,
+                artifact_store,
             ),
-            {"continue": "plan_request"},
+            {"continue": ("generate_patch_proposal" if (validated_product_execution_mode.interrupted_patch_selection is not None
+                    or validated_product_execution_mode.pretransport_patch_selection is not None)
+                          else "plan_request")},
         )
     elif repair_planning_authority_request_ref is not None:
         graph.add_edge(START, "stagger_repair_planning_gate")
@@ -1998,6 +2034,21 @@ def _run_retrieve_evidence(
                 query=request.query,
                 reason=f"Collection resolution failed: {exc}",
             )
+    from src.mod_agent.evidence.reassessment import (
+        RequirementCoverageReassessmentFactory, validate_unchanged_source_reassessment,
+    )
+
+    if isinstance(evidence_pack_factory, RequirementCoverageReassessmentFactory):
+        reuse = validate_unchanged_source_reassessment(pack, state=state, artifact_store=artifact_store,
+            workspace_root=(product_execution_mode.request.isolated_workspace_root if product_execution_mode is not None
+                else getattr(evidence_pack_factory, "workspace_root", None)), feature_data=feature_data)
+        if reuse is not None:
+            next_state = _copy_state(state)
+            next_state["current_stage"] = "evidence_retrieval"
+            next_state["runtime_summary"]["evidence_reassessment"] = reuse
+            next_state["runtime_summary"].setdefault("evidence_reassessment_history", []).append(copy.deepcopy(reuse))
+            # 为什么要有它：本次真实查询保存在执行状态/原查询trace中，不能为相同证据改写head而使旧Plan依赖失效。
+            return next_state
     artifact_ref = artifact_store.write(
         feature_id=state["feature_id"] or state["request_id"],
         artifact_type="evidence_pack",
@@ -2009,7 +2060,11 @@ def _run_retrieve_evidence(
     )
     next_state = _copy_state(state)
     _record_artifact(next_state, "evidence_pack", artifact_ref)
+    from src.mod_agent.evidence.compilation_candidate import compilation_candidate_scope
+
+    candidate_scope = compilation_candidate_scope(pack.to_artifact_payload(), feature_data)
     if (product_execution_mode is not None and enable_initial_findings_reassessment and not state["blockers"]
+            and candidate_scope is None
             and not any(kind in state["artifacts"] for kind in ("evidence_pack", "implementation_plan", "repair_plan", "patch_proposal"))):
         from src.mod_agent.evidence.reassessment import initial_findings_reassessment_allowed
 
@@ -2045,9 +2100,11 @@ def _run_retrieve_evidence(
         "missing_evidence": list(pack.missing_evidence),
         "disabled_modes": dict(pack.disabled_modes),
         "timing": dict(pack.timing),
+        **({"compilation_repair_candidate": candidate_scope} if candidate_scope is not None else {}),
     }
     _record_artifact(next_state, "evidence_pack", artifact_ref)
-    if not pack.can_generate_patch:
+    # 为什么要有它：保留原不足Evidence与疑问，已绑定源码错误可进入只读候选生成；执行仍由原验收和批准约束。
+    if not pack.can_generate_patch and candidate_scope is None:
         next_state["blockers"].extend(pack.blockers)
     return next_state
 
@@ -2085,15 +2142,27 @@ def _run_create_implementation_plan(
     prior_feedback = None
     prior_assessment = None
     assessment_context = None
+    preserved_plan_boundaries = ()
     if state["runtime_summary"].get("patch_upstream_return") and isinstance(
             planning_target_selection_factory, ModelPlanningTargetSelector):
+        from src.mod_agent.model_call_budget import total_only
+        if product_patch_upstream_execution is not None and total_only(product_patch_upstream_execution.budget_snapshot()):
+            planning_target_selection_factory = planning_target_selection_factory.for_product_assessment(
+                state["artifact_hashes"]["repair_plan"])
         repair = artifact_store.semantic_read_immutable(_artifact_ref_from_state(state, "repair_plan"))["data"]
         upstream = repair["repair_context"]["upstream_request"]
         prior_feedback = planning_target_selection_factory.semantic_feedback
         prior_assessment = planning_target_selection_factory.upstream_assessment
+        preserved_plan_boundaries = tuple(upstream["preserved_plan_boundaries"])
+        recommendation = {key: copy.deepcopy(upstream[key]) for key in (
+            "origin", "required_owner", "reason", "source_refs")}
+        if upstream.get("source_worker_response_ref") is not None:
+            recommendation["source_worker_response_ref"] = {
+                "sha256": upstream["source_worker_response_ref"]["sha256"]}
         planning_target_selection_factory.semantic_feedback = tuple(dict.fromkeys((
-            *prior_feedback, *upstream["preserved_plan_boundaries"], upstream["reason"],
-            json.dumps({"observed_failure": repair["failure_findings"], "failure_report_ref": upstream["failure_report_ref"],
+            *prior_feedback, *preserved_plan_boundaries,
+            json.dumps({"recommendation": recommendation,
+                "observed_failure": repair["failure_findings"], "failure_report_ref": upstream["failure_report_ref"],
                 "recommendation_is_not_observation": True}, ensure_ascii=False, sort_keys=True))))
     try:
         if prior_feedback is not None and (patch_continuation_mode is not None or product_patch_upstream_execution is not None):
@@ -2105,6 +2174,28 @@ def _run_create_implementation_plan(
             except PatchContinuationError as exc:
                 raise PlanningTargetSelectionError(exc.code, exc.reason) from exc
             planning_target_selection_factory.upstream_assessment = copy.deepcopy(assessment_context)
+        reused_evidence = state["runtime_summary"].get("evidence_reassessment")
+        if (assessment_context is not None and assessment_context["retain_current_plan_allowed"] is True
+                and all(value in assessment_context["current_plan"]["side_effect_boundaries"]
+                    for value in (prior_feedback or ()))
+                and isinstance(reused_evidence, dict)
+                and reused_evidence.get("origin") == "executed_source_recheck_reusing_unchanged_judgments"
+                and reused_evidence.get("repair_plan_hash") == assessment_context["repair_plan_hash"]
+                and reused_evidence.get("selected_artifact_hashes") == assessment_context["selected_artifact_hashes"]):
+            next_state = _copy_state(state)
+            next_state["current_stage"] = "implementation_plan"
+            next_state["approvals"] = {}
+            next_state["runtime_summary"]["planning_upstream_assessment"] = {
+                "decision": "retain_current_plan", "origin": reused_evidence["origin"],
+                "rationale": "The requested queries executed and returned no new source facts. "
+                    "The same complete source observations remain fresh; original Findings, bindings, "
+                    "requirements and scope are unchanged. This is not proof of a repair. "
+                    "Use the retained observations, or request evidence that is still missing.",
+                "implementation_plan": {"path": state["artifacts"]["implementation_plan"],
+                    "artifact_hash": state["artifact_hashes"]["implementation_plan"]},
+                "repair_plan_hash": assessment_context["repair_plan_hash"],
+                "trace_refs": [], "approval_inherited": False}
+            return next_state
         if planning_continuation_mode is not None and isinstance(
             planning_target_selection_factory, ModelPlanningTargetSelector
         ):
@@ -2157,16 +2248,29 @@ def _run_create_implementation_plan(
             formal_requirement_coverage_required=formal_requirement_coverage_required,
             planning_target_evidence_ids=planning_target_evidence_ids,
         )
+        from src.mod_agent.planning.target_correction import correct_unsafe_target_selection
+
+        implementation = correct_unsafe_target_selection(
+            implementation=implementation, selector=planning_target_selection_factory,
+            feature_spec=feature_spec, evidence_pack=evidence_pack,
+            formal_requirement_coverage_required=formal_requirement_coverage_required,
+            allow_correction=(planning_continuation_mode is None and patch_continuation_mode is None
+                              and not state["runtime_summary"].get("patch_upstream_return")),
+        )
         if not implementation.blocking and isinstance(
             planning_target_selection_factory, ModelPlanningTargetSelector
         ):
+            # 为什么要有它：上游诊断可供规划推翻，不能把模型猜想或检查观测升级为 Patch 的硬约束；原边界仍继承。
+            boundary_feedback = (planning_target_selection_factory.semantic_feedback
+                if prior_feedback is None else (*prior_feedback, *preserved_plan_boundaries))
             implementation = replace(
                 implementation,
+                verification_questions=planning_target_selection_factory.verification_questions,
                 side_effect_boundaries=tuple(
                     dict.fromkeys(
                         (
                             *implementation.side_effect_boundaries,
-                            *planning_target_selection_factory.semantic_feedback,
+                            *boundary_feedback,
                         )
                     )
                 ),
@@ -2619,7 +2723,9 @@ def _run_generate_patch_with_upstream(state, artifact_store, *, enable_upstream_
     if enable_upstream_replanning and product_patch_upstream_execution is not None and not isinstance(
             upstream_planning_factory, ModelPlanningTargetSelector):
         effects = {"planning": "provider_unavailable_stop", "evidence": "provider_unavailable_stop"}
-    if product_patch_upstream_execution is not None and product_patch_upstream_execution.replan_count:
+    from src.mod_agent.model_call_budget import total_only
+    if (product_patch_upstream_execution is not None and product_patch_upstream_execution.replan_count
+            and not total_only(product_patch_upstream_execution.budget_snapshot())):
         effects = {"planning": "record_and_stop", "evidence": "record_and_stop"}
     binder = getattr(product_patch_upstream_execution or kwargs.get("patch_change_factory"), "bind_upstream_effects", None)
     if callable(binder):
@@ -2672,6 +2778,16 @@ def _run_generate_patch_proposal(
     patch_continuation_max_model_calls: int = 1,
 ) -> ModAgentState:
     saved_patch = None
+    saved_candidate = None
+    if patch_continuation_mode is not None and patch_continuation_mode.candidate_reverification_selection is not None:
+        admitted = preflight_patch_continuation(patch_continuation_mode, artifact_store=artifact_store)
+        if (patch_change_factory is not None or patch_continuation_max_model_calls != 0
+                or patch_continuation_attempt_recorder is None
+                or admitted.saved_candidate is None or state["request_id"] != admitted.saved_candidate["request_id"]):
+            raise PatchContinuationError("SAVED_CANDIDATE_GRAPH_INPUT_INVALID", "patch_proposal", "Candidate requires a zero-model execution.")
+        from src.mod_agent.saved_candidate_reverification import execute_saved_candidate
+        # 为什么要有它：只在真实执行节点调用验收器，START准入和重复读取不能重新编译或消耗模型预算。
+        saved_candidate = execute_saved_candidate(patch_continuation_mode, admitted, patch_continuation_attempt_recorder)
     if patch_continuation_mode is not None and patch_continuation_mode.saved_patch_selection is not None:
         # Re-admit the retained output at the node boundary, after START admission.
         # No model factory or synthetic generation receipt participates here.
@@ -2752,7 +2868,9 @@ def _run_generate_patch_proposal(
     else:
         implementation = _read_artifact_data(state, artifact_store, "implementation_plan")
         evidence_pack = _read_artifact_data(state, artifact_store, "evidence_pack")
-        if saved_patch is not None:
+        if saved_candidate is not None:
+            implementation = {**implementation, "proposed_changes": copy.deepcopy(saved_candidate["changes"])}
+        elif saved_patch is not None:
             implementation = {**implementation, "proposed_changes": copy.deepcopy(saved_patch["changes"])}
         elif patch_change_factory is not None:
             generated_changes = (
@@ -2797,6 +2915,14 @@ def _run_generate_patch_proposal(
         if lineage is not None:
             proposal = replace(proposal, context_pack={**proposal.context_pack,
                 "repair_lineage": copy.deepcopy(lineage)})
+    if saved_candidate is not None:
+        lineage = {key: copy.deepcopy(saved_candidate[key]) for key in
+            ("source_attempt_ref", "response_ref", "request_id", "parent_run_id", "inherited_model_budget")}
+        lineage.update(new_model_calls=0, approval_inherited=False,
+            verification=copy.deepcopy(saved_candidate["verification"]))
+        proposal = replace(proposal, context_pack={**proposal.context_pack, "saved_candidate_lineage": lineage})
+        patch_continuation_attempt_recorder({"phase": "saved_candidate_reverified", "saved_candidate_lineage": lineage,
+            "model_call_count": 0, "proposal_admitted": False})
     if saved_patch is not None:
         saved_lineage = {
             key: copy.deepcopy(saved_patch[key])
@@ -5012,9 +5138,12 @@ def _reanchor_applied_product_repair(state, artifact_store, *, workspace_root):
             and review["data"].get("allowed_next_stage") == "dry_run_apply",
             "The original Proposal did not pass its bound Review.")
     applied = apply_envelope["data"]
+    from src.mod_agent.execution.task_delegation import has_verified_apply_authorization
+
     require(apply_envelope["status"] == "success" and applied.get("execution_mode") == "isolated_apply"
             and applied.get("actual_write_performed") is True and applied.get("real_patch_applied") is True
-            and applied.get("approved_by_user") is True and applied.get("approved_by_review") is True
+            and has_verified_apply_authorization(applied, require_human_semantic=False)
+            and applied.get("approved_by_review") is True
             and applied.get("diff_hash") and applied.get("approved_diff_hash") == applied["diff_hash"],
             "Apply lacks exact approved written bytes.")
     dry_run_ref = upstream(apply_envelope, "dry_run_result")
@@ -5851,10 +5980,22 @@ def _run_isolated_apply(
         and isinstance(human_semantic_decision, dict)
         and human_semantic_decision.get("decision") == "approve"
     )
+    delegated = False
+    if ("authorization_origin" in payload or "task_delegation_ref" in payload
+            or "task_delegation_resume_ref" in payload):
+        from src.mod_agent.execution.task_delegation import has_verified_apply_authorization
+
+        try:
+            delegated = has_verified_apply_authorization(
+                payload, run_id=state["run_id"], request_id=state["request_id"])
+        except (KeyError, OSError, TypeError, ValueError) as error:
+            status = "failed"
+            next_state["blockers"].append({"stage": "isolated_apply",
+                "code": "TASK_DELEGATION_AUTHORIZATION_INVALID", "message": str(error)})
     if (
         status == "success"
         and human_semantic_review_required
-        and not human_semantic_review_completed
+        and not (human_semantic_review_completed or delegated)
     ):
         status = "failed"
         next_state["blockers"].append(
@@ -5882,7 +6023,7 @@ def _run_isolated_apply(
         ),
         "exact_diff_approved": exact_diff_approved,
         "semantic_assurance": semantic_assurance.to_dict(),
-        "human_semantic_review_required": human_semantic_review_required,
+        "human_semantic_review_required": human_semantic_review_required and not delegated,
         "human_semantic_review_completed": human_semantic_review_completed,
         "human_semantic_review_result": payload.get(
             "human_semantic_review_result",
@@ -5911,6 +6052,7 @@ def _run_isolated_apply(
             **{key: complete_payload[key] for key in (
                 "actual_write_performed", "real_patch_applied", "changed_files",
                 "diff_hash", "approved_diff_hash", "context_hashes", "approved_by_user",
+                "authorization_origin", "task_delegation_ref", "task_delegation_resume_ref",
             ) if key in complete_payload},
             "write_completion": complete_payload.get("write_completion",
                 "complete" if complete_payload.get("real_patch_applied") is True else
@@ -6197,6 +6339,7 @@ def _request_plan_from_payload(data: dict[str, Any]) -> RequestPlan:
         requires_hook_evidence=bool(data["requires_hook_evidence"]),
         requires_runtime_evidence=bool(data["requires_runtime_evidence"]),
         hook_requirement=_hook_requirement_from_payload(data),
+        request_interpretation=dict(data.get("request_interpretation") or {}),
         uncertainties=tuple(
             Uncertainty(
                 uncertainty_id=item["uncertainty_id"],
@@ -6223,6 +6366,7 @@ def _feature_spec_from_payload(data: dict[str, Any]) -> FeatureSpec:
         evidence_requirements=tuple(data["evidence_requirements"]),
         runtime_verification_plan=tuple(data["runtime_verification_plan"]),
         hook_requirement=_hook_requirement_from_payload(data),
+        request_interpretation=dict(data.get("request_interpretation") or {}),
         blocked=bool(data["blocked"]),
         blockers=tuple(data.get("blockers", [])),
     )
@@ -6270,6 +6414,8 @@ def _node_status(state: ModAgentState, node_name: str) -> str:
     if node_name == "generate_patch_proposal" and state["runtime_summary"].get("patch_upstream_pending"):
         return "partial"
     if node_name == "retrieve_evidence":
+        if state["evidence_summary"].get("compilation_repair_candidate"):
+            return "partial"
         return "success" if state["evidence_summary"].get("can_generate_patch") else "blocked"
     if node_name == "review_proposal":
         return (
@@ -6342,6 +6488,10 @@ def _node_trace_details(state: ModAgentState, node_name: str) -> dict[str, Any]:
             "missing_evidence_count": len(missing_evidence),
             "disabled_modes": dict(state["evidence_summary"].get("disabled_modes") or {}),
             "timing": dict(state["evidence_summary"].get("timing") or {}),
+            **({"source_reassessment": copy.deepcopy(state["runtime_summary"]["evidence_reassessment"])}
+                if isinstance(state["runtime_summary"].get("evidence_reassessment"), dict)
+                    and state["runtime_summary"]["evidence_reassessment"].get("repair_plan_hash")
+                    == state["artifact_hashes"].get("repair_plan") else {}),
         }
     if node_name == "create_repair_plan" and "repair_plan" in state["artifacts"]:
         return {
@@ -6397,29 +6547,4 @@ def _copy_state_with_trace(
 
 
 def _copy_state(state: ModAgentState) -> ModAgentState:
-    return ModAgentState(
-        run_id=state["run_id"],
-        request_id=state["request_id"],
-        feature_id=state["feature_id"],
-        user_request=state["user_request"],
-        target_domain=state["target_domain"],
-        target_mod=state["target_mod"],
-        execution_path=state["execution_path"],
-        risk_level=state["risk_level"],
-        current_stage=state["current_stage"],
-        next_stage=state["next_stage"],
-        artifacts=dict(state["artifacts"]),
-        artifact_hashes=dict(state["artifact_hashes"]),
-        approvals=dict(state["approvals"]),
-        blockers=list(state["blockers"]),
-        warnings=list(state["warnings"]),
-        evidence_summary=dict(state["evidence_summary"]),
-        review_summary=dict(state["review_summary"]),
-        build_summary=dict(state["build_summary"]),
-        runtime_summary=dict(state["runtime_summary"]),
-        edit_authority_review_result=copy.deepcopy(
-            state.get("edit_authority_review_result")
-        ),
-        trace_events=list(state["trace_events"]),
-        retry_count=state["retry_count"],
-    )
+    return _copy_mod_agent_state(state)

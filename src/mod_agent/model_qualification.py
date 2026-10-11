@@ -28,6 +28,15 @@ _PROFILE_FIELDS = ("profile_version", "base_url", "model", "context_window", "ou
 _WORKER_FILES = (
     "local_entry.py", "fresh_planning_continuation.py", "proposal/patch_agent_loop.py",
     "proposal/code_generator.py", "execution/patch_apply.py", "workflow/graph.py",
+    "proposal/behavior_feedback_view.py",  # 为什么要有它：反馈投影会改变worker实际收到的事实表示，仅改helper也必须改变worker身份。
+    "proposal/observation_value_refs.py",  # 为什么要有它：内联引用的编码和还原影响实际反馈，独立修改该模块必须使旧资格身份失效。
+    "proposal/repair_diagnosis.py",  # 为什么要有它：可选诊断的输入供给影响真实修订与调用成本，需绑定执行版本。
+    "evidence/reassessment.py",  # 为什么要有它：相同证据的复用会改变worker续接与模型调用，复用实现漂移也须绑定到执行身份。
+    "request_patch_execution.py",  # 为什么要有它：多段worker历史的累计偏移决定真实续接预算，不能只改该所有者而沿用旧执行身份。
+    "build/nuget.py",  # 为什么要有它：这段原由local_entry覆盖的实现迁出后，构建代码漂移仍须改变worker身份。
+    "build/baseline_repair.py",  # 为什么要有它：源码编译失败的准入与诊断供给会改变产品行为，须绑定真实执行版本。
+    "evidence/compilation_candidate.py",  # 为什么要有它：有界候选来源与不足证据的处理影响编辑范围，须纳入执行版本。
+    "build/dependencies.py",  # 为什么要有它：依赖快照与复制迁出入口后，同样保留原有实现身份覆盖。
 )
 
 

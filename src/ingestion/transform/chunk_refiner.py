@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 from src.core.settings import Settings, resolve_path
 from src.core.types import Chunk
 from src.core.trace.trace_context import TraceContext
-from src.ingestion.transform.base_transform import BaseTransform
+from src.ingestion.transform.base_transform import BaseTransform, measured_chunk_call, measured_model_chat
 from src.libs.llm.llm_factory import LLMFactory
 from src.libs.llm.base_llm import BaseLLM, Message
 from src.observability.logger import get_logger
@@ -67,7 +67,7 @@ class ChunkRefiner(BaseTransform):
         """Lazy-load LLM instance."""
         if self.use_llm and self._llm is None:
             try:
-                self._llm = LLMFactory.create(self.settings)
+                self._llm = LLMFactory.create(self.settings, **({"base_url": self.settings.llm.base_url} if getattr(self.settings.llm, "base_url", None) else {}))
                 logger.info("LLM initialized for chunk refinement")
             except Exception as e:
                 logger.warning(f"Failed to initialize LLM: {e}. Falling back to rule-based only.")
@@ -150,7 +150,7 @@ class ChunkRefiner(BaseTransform):
         trace: Optional[TraceContext] = None
     ) -> List[Chunk]:
         """Process chunks in parallel using ThreadPoolExecutor."""
-        max_workers = min(DEFAULT_MAX_WORKERS, len(chunks))
+        max_workers = min(getattr(self.settings.ingestion, "max_workers", DEFAULT_MAX_WORKERS), len(chunks))
         refined_chunks = [None] * len(chunks)
         llm_enhanced_count = 0
         fallback_count = 0
@@ -160,7 +160,7 @@ class ChunkRefiner(BaseTransform):
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # Submit all tasks
             future_to_idx = {
-                executor.submit(self._refine_single_chunk, chunk, trace): idx
+                executor.submit(measured_chunk_call, "chunk_refinement", self._refine_single_chunk, chunk, trace): idx
                 for idx, chunk in enumerate(chunks)
             }
             
@@ -319,8 +319,9 @@ class ChunkRefiner(BaseTransform):
         # 2. Remove HTML comments
         text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)
         
-        # 3. Remove HTML tags (but preserve content)
-        text = re.sub(r'<[^>]+>', '', text)
+        # 为什么要有它：API XML 的 member name、cref 和代码泛型也是资料，不能被通用“去标签”清洗删除。
+        formatting_tags = r"(?:p|br|hr|div|span|b|i|strong|em|u|s|small|sub|sup|h[1-6]|ul|ol|li|table|thead|tbody|tr|td|th|blockquote)"
+        text = re.sub(r'</?' + formatting_tags + r'(?:\s[^<>]*?)?\s*/?>', '', text, flags=re.IGNORECASE)
         
         # 4. Normalize whitespace
         # - Collapse multiple spaces to single space
@@ -376,7 +377,7 @@ class ChunkRefiner(BaseTransform):
             
             # Call LLM with Message objects
             messages = [Message(role="user", content=prompt)]
-            response = self.llm.chat(messages, trace=trace)
+            response = measured_model_chat("chunk_refiner", self.llm, messages, trace)
             
             # Extract text from ChatResponse
             if isinstance(response, str):
@@ -386,6 +387,14 @@ class ChunkRefiner(BaseTransform):
                 refined_text = response.content
             
             if refined_text and refined_text.strip():
+                # 为什么要有它：真实模型会删除或拼错 API 属性标识，提示词不能替代返回值核对；拒绝失真改写后由既有策略保留原文或报告严格失败。
+                identifiers = re.findall(r'\b(?:name|cref)\s*=\s*[\"\']([MEPTF]:[^\"\']+)[\"\']', text)
+                if any(identifier not in refined_text for identifier in identifiers):
+                    raise ValueError("REFINEMENT_API_IDENTITY_LOSS")
+                # 为什么要有它：实际组合中占位符丢失会让 Vision 根本收不到图片，不能把改写完成计成图片理解完成。
+                marker = r'\[IMAGE:\s*[^\]]+\]'
+                if sorted(re.findall(marker, text)) != sorted(re.findall(marker, refined_text)):
+                    raise ValueError("REFINEMENT_IMAGE_REFERENCE_CHANGED")
                 return refined_text.strip()
             else:
                 logger.warning("LLM returned empty result")

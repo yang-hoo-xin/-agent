@@ -1,0 +1,84 @@
+name: rag-agent-service
+
+x-service: &service
+  image: rag-agent-service:local
+  build:
+    context: ../..
+    dockerfile: deployment/service/Dockerfile
+  read_only: true
+  tmpfs:
+    - /tmp:size=256m
+  volumes:
+    - service-data:/work
+  environment: &environment
+    SERVICE_REDIS_URL: redis://:${SERVICE_REDIS_PASSWORD:?Set SERVICE_REDIS_PASSWORD}@redis:6379/0
+    SERVICE_NAMESPACE: ${SERVICE_NAMESPACE:-agent-service}
+    SERVICE_SETTINGS: /work/corpus/settings.yaml
+    SERVICE_WORK_ROOT: /work/jobs
+    SERVICE_REQUESTS_PER_MINUTE: ${SERVICE_REQUESTS_PER_MINUTE:-120}
+    SERVICE_MAX_PENDING: ${SERVICE_MAX_PENDING:-1000}
+    SERVICE_MAX_JOB_SECONDS: ${SERVICE_MAX_JOB_SECONDS:-600}
+  networks: [backend]
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    environment:
+      REDIS_PASSWORD: ${SERVICE_REDIS_PASSWORD:?Set SERVICE_REDIS_PASSWORD}
+    ports: ["127.0.0.1:${SERVICE_REDIS_PORT:-16379}:6379"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$REDIS_PASSWORD redis-cli ping | grep -q PONG"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+    networks: [backend]
+    mem_limit: 256m
+
+  prepare:
+    <<: *service
+    command: ["python", "-B", "scripts/service_load/prepare_demo.py", "--output-root", "/work/corpus"]
+
+  api:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE_API_TOKEN: ${SERVICE_API_TOKEN:?Set SERVICE_API_TOKEN}
+    ports: ["127.0.0.1:${SERVICE_HTTP_PORT:-8080}:8000"]
+    depends_on:
+      redis: {condition: service_healthy}
+      prepare: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 768m
+
+  worker:
+    <<: *service
+    command: ["python", "-B", "-m", "src.service_layer.worker"]
+    depends_on:
+      redis: {condition: service_healthy}
+      prepare: {condition: service_completed_successfully}
+    mem_limit: 1536m
+    stop_grace_period: 15s
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.path=/prometheus", "--storage.tsdb.retention.time=3d"]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports: ["127.0.0.1:${SERVICE_PROMETHEUS_PORT:-9095}:9090"]
+    networks: [backend]
+    mem_limit: 256m
+
+volumes:
+  service-data:
+  redis-data:
+  prometheus-data:
+
+networks:
+  backend:

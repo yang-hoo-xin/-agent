@@ -1,0 +1,126 @@
+{
+  "schema_version": "transfer_public_development_provenance_v1",
+  "task_id": "private_eval_20260909_transfer_batch_001",
+  "scope": "Developer-authored public counterexamples and a test-only reference control; not independent acceptance or a product-model repair.",
+  "source_refs": {
+    "public_request": {
+      "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\09\\26\\01a0dbd6-eb58-7d82-aacc-86c6fdb8618e\\e1\\independent-benchmark-20260927\\published\\public\\tasks\\private_eval_20260909_transfer_batch_001\\request.json",
+      "sha256": "9e4ee00c594cb4a38110c64e763c4997a226af64690950217ddb28c981d5e7cb"
+    },
+    "public_observation_driver": {
+      "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\09\\26\\01a0dbd6-eb58-7d82-aacc-86c6fdb8618e\\e1\\independent-benchmark-20260927\\published\\public\\tasks\\private_eval_20260909_transfer_batch_001\\observation_driver.cs",
+      "sha256": "26cdbe114f7ff1757c9696a21becc118f213698308dfca29dc70a5c53f4f76b4"
+    },
+    "public_original_source": {
+      "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\09\\26\\01a0dbd6-eb58-7d82-aacc-86c6fdb8618e\\e1\\independent-benchmark-20260927\\published\\public\\tasks\\private_eval_20260909_transfer_batch_001\\source\\OwnedTraining\\Subject.cs",
+      "sha256": "2512f183f7a339176e7b0a247ef7a8a65dbb5132339a50ef6e6b9e46453f7226"
+    },
+    "td1_baseline_source": {
+      "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\09\\26\\01a0dbd6-eb58-7d82-aacc-86c6fdb8618e\\e1\\i2\\r\\td1\\baseline_source\\source\\OwnedTraining\\Subject.cs",
+      "sha256": "2512f183f7a339176e7b0a247ef7a8a65dbb5132339a50ef6e6b9e46453f7226"
+    },
+    "td1_observed_worker_response": {
+      "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\09\\26\\01a0dbd6-eb58-7d82-aacc-86c6fdb8618e\\e1\\i2\\r\\td1\\a\\cr\\3ae7cf46f720698d7ff6514ea240e302.response.worker-turn-002.json",
+      "sha256": "2793b981a93950d627776bd5e07c41b531fb8ff1de068438343a3f0210bce070"
+    }
+  },
+  "files": {
+    "cases.json": {
+      "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\08\\11\\019ff15f-9eac-7b13-aad5-faffde4b36b7\\rag_capability_mainline\\tests\\fixtures\\transfer_public_development_0928\\cases.json",
+      "sha256": "217f892f7802389111989b54614792253547090e21e5a321af9f2e16b34e5d77"
+    },
+    "observation_driver.cs": {
+      "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\08\\11\\019ff15f-9eac-7b13-aad5-faffde4b36b7\\rag_capability_mainline\\tests\\fixtures\\transfer_public_development_0928\\observation_driver.cs",
+      "sha256": "26cdbe114f7ff1757c9696a21becc118f213698308dfca29dc70a5c53f4f76b4"
+    },
+    "original.cs": {
+      "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\08\\11\\019ff15f-9eac-7b13-aad5-faffde4b36b7\\rag_capability_mainline\\tests\\fixtures\\transfer_public_development_0928\\original.cs",
+      "sha256": "2512f183f7a339176e7b0a247ef7a8a65dbb5132339a50ef6e6b9e46453f7226"
+    },
+    "observed_wrong.cs": {
+      "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\08\\11\\019ff15f-9eac-7b13-aad5-faffde4b36b7\\rag_capability_mainline\\tests\\fixtures\\transfer_public_development_0928\\observed_wrong.cs",
+      "sha256": "a30e175d5235a2c8822b8cd931c59bb4e7582eed4ee6214a847b0297e795c9fc"
+    },
+    "reference_control.cs": {
+      "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\08\\11\\019ff15f-9eac-7b13-aad5-faffde4b36b7\\rag_capability_mainline\\tests\\fixtures\\transfer_public_development_0928\\reference_control.cs",
+      "sha256": "8e0dbb3e3c6d70e88279ed01bb53938f5b9c315f256c1ff04a8f99804c59fe8a"
+    }
+  },
+  "copy_bindings": {
+    "observation_driver.cs": {
+      "source_ref_key": "public_observation_driver",
+      "copy": "byte-for-byte"
+    },
+    "original.cs": {
+      "source_ref_key": "public_original_source",
+      "copy": "byte-for-byte",
+      "also_equals_source_ref_key": "td1_baseline_source"
+    },
+    "observed_wrong.cs": {
+      "source_ref_key": "td1_observed_worker_response",
+      "extraction": "JSON-decode response.content, then changes[0].after_text; exact UTF-8 text, no edits",
+      "observed_role": "proposed but not applied worker candidate; td1 generated_mods retained the original source"
+    },
+    "reference_control.cs": {
+      "origin": "Codex developer-authored from public request and API only",
+      "role": "test-only positive control, never evidence of model success"
+    }
+  },
+  "case_origins": [
+    {
+      "case_id": "public_chained_credit",
+      "public_request_clause": "Later transfers may use earlier credits",
+      "independently_authored_values": "A=7, B=0, C=0; A to B 7 then B to C 7; version 4 becomes 5",
+      "为什么要有它": "对本批起始余额的统一预校验会拒绝合法的后续转账。"
+    },
+    {
+      "case_id": "public_cumulative_debit_rollback",
+      "public_request_clause": "combined debits may never overdraw",
+      "independently_authored_values": "A=8; A to B 5 then A to C 5; invalid batch leaves all state unchanged",
+      "为什么要有它": "每笔单看原余额都足够，只有按序暂存才能识别累计透支且避免部分提交。"
+    },
+    {
+      "case_id": "public_balance_overflow_rollback",
+      "public_request_clause": "checked arithmetic/version overflow must leave the entire ledger unchanged",
+      "independently_authored_values": "A=1, B=long.MaxValue; transfer 1 to B",
+      "为什么要有它": "收款余额溢出前已扣款的实现必须被反例检出。"
+    },
+    {
+      "case_id": "public_version_overflow_rollback",
+      "public_request_clause": "checked arithmetic/version overflow must leave the entire ledger unchanged",
+      "independently_authored_values": "A=1, B=0, Version=long.MaxValue; otherwise-valid transfer 1",
+      "为什么要有它": "转账后才检查版本会留下余额及日志副作用。"
+    }
+  ],
+  "shared_preservation_observations": {
+    "existing_journal_entries": 1,
+    "unrelated_account": "U=19",
+    "observed_container_identities": [
+      "balances_identity",
+      "journal_identity",
+      "first_entry_identity"
+    ],
+    "public_request_clause": "Preserve existing dictionary/list object identities, original journal entries, ordinal account names, unrelated accounts, public APIs and exact empty-batch no-op behavior."
+  },
+  "reference_control_design": {
+    "scope": "TransferBatch.Apply test reference only",
+    "details": "Copy balances with Ordinal comparison; validate and stage each transfer in order; stage journal entries; calculate checked nextVersion before commit; update original containers in place. The original empty-batch early return is preserved.",
+    "为什么要有它": "所有指定校验和算术失败在外部状态变更前发生，成功路径保留对象身份和既有日志。"
+  },
+  "uncovered_by_this_minimal_four_case_bundle": [
+    "null/missing endpoints",
+    "nonpositive amount",
+    "self-transfer",
+    "ordinal case-sensitive account distinction",
+    "empty batch"
+  ],
+  "execution": {
+    "model_calls": 0,
+    "build_or_compiler_calls": 0,
+    "evaluator_or_pytest_calls": 0,
+    "private_case_or_reference_reads": false,
+    "private_judge_calls": 0,
+    "execution_results": "not_run; parent owns evaluator/pytest execution"
+  },
+  "accessed_scope": "Only named public task request/driver/source and td1 public receipt source/worker artifacts; no published/private, i2/p or hidden cases/reference."
+}

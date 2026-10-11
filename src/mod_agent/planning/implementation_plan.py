@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.mod_agent.evidence.compilation_candidate import compilation_candidate_scope
 from src.mod_agent.evidence.identity import feature_spec_payload_sha256
 from src.mod_agent.evidence.models import (
     DETERMINISTIC_EVIDENCE_AUTHORITY,
@@ -22,6 +23,14 @@ HOOK_TARGET_SOURCE_TYPE = "decompiled_api"
 HOOK_TARGET_USAGE = "hook_target"
 AUTHORITATIVE_EVIDENCE_PACK = EVIDENCE_PACK_AUTHORITY
 AUTHORITATIVE_ITEM_AUTHORITY = DETERMINISTIC_EVIDENCE_AUTHORITY
+PLATFORM_SIDE_EFFECT_BOUNDARIES = (
+    "Do not perform unrelated refactors.",
+    # 为什么要有它：实现阶段仍需遵守任务范围，无需把平台政策当成待证明的业务事实。
+    "Do not modify files outside evidence-supported scope.",
+    # 为什么要有它：Patch仍须遵守现有绑定和审批范围，文本政策本身不授予写权限。
+    "Do not claim runtime success without runtime evidence.",
+    # 为什么要有它：执行结果报告仍须有对应证据，前置语义记账不承担这一真实性校验。
+)
 EVIDENCE_ITEM_PROVENANCE_FIELDS = frozenset(
     {"chunk_id", "document_id", "source_ref", "source_hash", "file_hash", "doc_hash"}
 )
@@ -47,9 +56,16 @@ class ImplementationPlanner:
                 open_questions=("Feature spec is blocked.",),
             )
 
-        if evidence_pack.get("readiness") != "sufficient" or not evidence_pack.get(
-            "can_generate_patch"
-        ):
+        try:
+            compilation_scope = compilation_candidate_scope(
+                evidence_pack, feature_spec.to_artifact_payload())
+        except ValueError as exc:
+            return self._blocked(feature_id=feature_spec.feature_id,
+                blockers=({"code": "COMPILATION_CANDIDATE_SCOPE_INVALID", "message": str(exc)},),
+                open_questions=("Revalidate the source-bound compilation candidate.",))
+        # 为什么要有它：编译错误限定的候选可在语义问题未决时进入只读Plan，Evidence的原始不足判断和源码权限仍须保留。
+        if compilation_scope is None and (evidence_pack.get("readiness") != "sufficient"
+                or not evidence_pack.get("can_generate_patch")):
             blockers = tuple(evidence_pack.get("blockers") or ())
             open_questions = tuple(
                 str(gap) for gap in evidence_pack.get("gaps", ["Evidence is not sufficient."])
@@ -82,7 +98,8 @@ class ImplementationPlanner:
 
         if (
             evidence_pack.get("authority") != AUTHORITATIVE_EVIDENCE_PACK
-            or evidence_pack.get("authoritative_for_patch") is not True
+            or (compilation_scope is None
+                and evidence_pack.get("authoritative_for_patch") is not True)
         ):
             return self._blocked(
                 feature_id=feature_spec.feature_id,
@@ -254,12 +271,13 @@ class ImplementationPlanner:
             preservation_boundaries = (
                 coverage_view.preservation_requirement_texts
             )
-            if formal_requirement_coverage_required:
+            if formal_requirement_coverage_required or compilation_scope is not None:
                 selection, selection_blocker = self._formal_target_selection(
                     raw_selection=planning_target_evidence_ids,
                     planning_items=planning_items,
                     change_support_evidence_ids=(
-                        coverage_view.change_support_evidence_ids
+                        frozenset(compilation_scope["evidence_ids"]) if compilation_scope is not None
+                        else coverage_view.change_support_evidence_ids
                     ),
                 )
                 if selection_blocker is not None:
@@ -392,7 +410,8 @@ class ImplementationPlanner:
             evidence_refs=evidence_refs,
             proposed_changes=proposed_changes,
             side_effect_boundaries=tuple(
-                dict.fromkeys((*feature_spec.non_goals, *preservation_boundaries))
+                dict.fromkeys((*PLATFORM_SIDE_EFFECT_BOUNDARIES,
+                               *feature_spec.non_goals, *preservation_boundaries))
             ),
             test_plan=feature_spec.runtime_verification_plan,
             rollback_plan=tuple(
@@ -400,6 +419,8 @@ class ImplementationPlanner:
                 for change in proposed_changes
             ),
             open_questions=(),
+            verification_questions=tuple(compilation_scope["verification_questions"])
+                if compilation_scope is not None else (),
             blocking=False,
             evidence_source_paths=evidence_source_paths,
             binding_registry=binding_registry,

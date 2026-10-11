@@ -173,6 +173,12 @@ evaluation:
 # =============================================================================
 # Observability Configuration
 # =============================================================================
+task_memory:
+  # 为什么要有它：本轮默认选入了不同任务的执行日志，关闭可避免它们占用规划上下文；记忆仍可按需配置。
+  enabled: false
+  store_root: "C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/tm"
+  max_context_chars: 3000
+
 observability:
   log_level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
   trace_enabled: true
@@ -230,7 +236,8 @@ ingestion:
   
   # Chunk Refiner Configuration (C5)
   chunk_refiner:
-    use_llm: true  # Set to true to enable LLM-based refinement (requires LLM config)
+    # 为什么要有它：真实 API 文档组合试验中生成式改写删除或改坏 member/cref；默认保留确定性清洗，LLM 改写仅按任务显式选择。
+    use_llm: false
     # When use_llm is false or LLM call fails, falls back to rule-based refinement
   
   # Metadata Enricher Configuration (C6)

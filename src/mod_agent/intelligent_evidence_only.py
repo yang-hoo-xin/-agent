@@ -35,6 +35,7 @@ from .evidence import (
     evidence_discovery_source_from_definition,
 )
 from .evidence.discovery_contract import EVIDENCE_DISCOVERY_TOOLS
+from .evidence.source_view import run_small_file_max_bytes
 from .knowledge import SourceDefinition
 from .planning.models import stable_feature_id
 from .workflow import build_graph, create_initial_state
@@ -208,6 +209,7 @@ def make_fresh_api_source_augmentation_factory(
     live_source_provider = RgLiveEvidenceProvider(
         workspace_root,
         rg_executable=rg_executable,
+        small_file_max_bytes=run_small_file_max_bytes(workspace_root),
     )
 
     def source_evidence_retriever(

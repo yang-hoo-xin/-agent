@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Callable, Iterator, Mapping
 from uuid import uuid4
 
 
@@ -75,6 +75,7 @@ def temporarily_deploy_verified_plugin(
     allow_game_directory_write: bool,
     expected_destination_existed: bool | None = None,
     expected_destination_sha256: str | None = None,
+    restore_guard: Callable[[], bool] | None = None,
 ) -> Iterator[RuntimePluginDeploymentRecord]:
     """Deploy verified bytes for one Runtime call and restore in ``finally``."""
 
@@ -170,6 +171,11 @@ def temporarily_deploy_verified_plugin(
         try:
             _unlink_with_retry(deployment_temp)
             try:
+                # 为什么要有它：只有调用者确认运行进程已退出才恢复插件；拒绝或异常时保留部署和备份供安全续接。
+                if restore_guard is not None and restore_guard() is not True:
+                    raise RuntimePluginDeploymentError(
+                        "Runtime plugin restoration deferred: restore guard did not confirm safety."
+                    )
                 if destination_existed:
                     if backup_path is None or not backup_path.is_file():
                         raise RuntimePluginDeploymentError(

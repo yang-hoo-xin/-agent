@@ -28,6 +28,7 @@ _FIELDS = (
 _EXPAND = ("artifact_refs", "consumed_tool_results", "tool_call_id_sha256s", "consumed_materials",
            "produced_materials", "selected_evidence_id_sha256s", "relationship_counts", "decision_summary", "local_detail_refs",
            "terminal_record_ref", "symbol_declaration_checks")
+_EXPAND += ("requirement_findings_attempt_audit", "supplemental_findings_replay", "terminal_model_call_budget")
 _FACTS = (
     "turn_index", "evaluation_index", "workflow_status", "terminal_stage", "failure_code",
     "verification_status", "failure_owner", "execution_origin", "callback_invoked",
@@ -63,6 +64,7 @@ _FACTS = (
     "output_member_access_facts_sha256", "produced_member_access_facts_sha256",
     "symbol_check_status", "symbol_lookup_method", "symbol_check_sha256", "symbol_check_basis",
     "symbol_declaration_count", "symbol_materialized_count", "symbol_check_projection_complete", "symbol_check_summary",
+    "requirement_findings_attempt_audit_sha256", "timing_basis", "source_journal_sha256", "source_run_id_sha256",
 )
 
 _MATERIAL_KEYS = ("evidence_id_sha256", "excerpt_sha256")
@@ -119,7 +121,11 @@ def _upstream_evidence(rows, generations):
                 diagnostics.append({"observation_id": generation["id"], "fact": "input_material_binding_unknown",
                                     "meaning": "没有与本次请求payload哈希匹配的材料记录。"})
             continue
-        attempted = (meta.get("transport_started") is True and meta.get("historical_import") is False
+        original_timing = (meta.get("historical_import") is False or (
+            meta.get("timing_basis") == "recorded_original_execution"
+            and isinstance(meta.get("source_journal_sha256"), str)
+            and _DIGEST.fullmatch(meta["source_journal_sha256"]) is not None))
+        attempted = (meta.get("transport_started") is True and original_timing
                      and isinstance(payload, str) and _DIGEST.fullmatch(payload) is not None)
         http_status = meta.get("http_status")
         responded = (attempted and meta.get("response_received") is True
@@ -442,6 +448,13 @@ def join_local_journal(result, journal_path, journal_sha256, *, artifact_roots=(
             joins.append(entry)
             continue
         entry["binding"] = "verified_journal_and_observation_mapping"
+        if mapped.get("requirement_findings_attempt_audit_sha256"):
+            pointer_id = str(local["id"]).replace("~", "~0").replace("/", "~1")
+            entry["findings_attempt_audit_ref"] = {
+                "path": str(path),
+                "json_pointer": "/execution_observations/" + pointer_id + "/attributes/requirement_findings_attempt_audit",
+                "value_sha256": mapped["requirement_findings_attempt_audit_sha256"],
+                "hash_scope": "canonical_json_value"}
         if mapped.get("symbol_check_sha256") and isinstance(attrs.get("symbol_check"), dict):
             pointer_id = str(local["id"]).replace("~", "~0").replace("/", "~1")
             entry["symbol_check_ref"] = {"path": str(path),

@@ -44,7 +44,7 @@ if sys.platform == "win32":
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.core.settings import load_settings, Settings
+from src.core.settings import load_settings, Settings, resolve_path
 from src.core.trace import TraceContext, TraceCollector
 from src.ingestion.pipeline import IngestionPipeline, PipelineResult
 from src.observability.logger import get_logger
@@ -211,7 +211,7 @@ def main() -> int:
     
     # Discover files
     try:
-        files = discover_files(args.path)
+        files = discover_files(args.path, extensions=settings.ingestion.extensions if settings.ingestion else None)
         print(f"[INFO] Found {len(files)} file(s) to process")
         
         if len(files) == 0:
@@ -252,7 +252,7 @@ def main() -> int:
     print(f"\n[INFO] Processing files...")
     results: List[PipelineResult] = []
     
-    collector = TraceCollector()
+    collector = TraceCollector(resolve_path(settings.observability.trace_file))
 
     for i, file_path in enumerate(files, 1):
         print(f"\n[{i}/{len(files)}] Processing: {file_path}")

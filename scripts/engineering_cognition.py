@@ -1499,10 +1499,11 @@ def build_projection(
     selected_root = (root or repository_root()).resolve()
     execution_filters = (artifact_store_root, feature_id, run_id, attempt_locator, run_root)
     product_query = view == "verification-claims" and query == "product-execution"
+    investigation_query = view == "verification-claims" and query == "patch-investigation"
     execution_query = view == "patch-execution" or (
-        view == "verification-claims" and query == "patch-execution"
+        view == "verification-claims" and query in ("patch-execution", "patch-investigation")
     )
-    if query is not None and not (product_query or execution_query and query == "patch-execution"):
+    if query is not None and not (product_query or investigation_query or execution_query and query == "patch-execution"):
         raise EngineeringCognitionError("Execution subqueries require --view verification-claims.")
     if any(value is not None for value in execution_filters) and not (execution_query or product_query):
         raise EngineeringCognitionError("Execution filters require an execution subquery.")
@@ -1527,6 +1528,7 @@ def build_projection(
             data = project_patch_executions(
                 artifact_store_root, feature_id=feature_id, run_id=run_id,
                 attempt_locator=attempt_locator,
+                **({"include_investigation": True} if investigation_query else {}),
             )
         except (OSError, ValueError) as exc:
             raise EngineeringCognitionError(str(exc)) from exc
@@ -1566,7 +1568,7 @@ def build_projection(
         "repository_root": str(selected_root),
         "schema_version": SCHEMA_VERSION,
         "view": selected_view,
-        **({"view_family": "verification-claims", "subquery": "product-execution" if product_query else "patch-execution"}
+        **({"view_family": "verification-claims", "subquery": "product-execution" if product_query else "patch-investigation" if investigation_query else "patch-execution"}
            if execution_query or product_query else {}),
     }
 
@@ -1579,7 +1581,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--kind", choices=ENTITY_KINDS)
     parser.add_argument("--name", help="Exact entity identifier; no fuzzy or case matching.")
     parser.add_argument("--pretty", action="store_true")
-    parser.add_argument("--query", choices=("patch-execution", "product-execution"),
+    parser.add_argument("--query", choices=("patch-execution", "patch-investigation", "product-execution"),
                         help="Bounded subquery within verification-claims.")
     parser.add_argument("--artifact-store-root", type=Path, help="Read-only Patch journal store.")
     parser.add_argument("--run-root", type=Path, help="Explicit product run root containing its original run_manifest.json.")

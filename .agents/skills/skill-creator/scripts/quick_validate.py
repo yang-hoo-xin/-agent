@@ -9,21 +9,9 @@ import re
 try:
     import yaml
 except ImportError:
-    # Fallback: minimal YAML parsing if PyYAML not installed
     yaml = None
 
 from pathlib import Path
-
-
-def _parse_frontmatter_fallback(text):
-    """Minimal frontmatter parser when PyYAML is not available."""
-    result = {}
-    for line in text.strip().splitlines():
-        line = line.strip()
-        if ':' in line:
-            key, _, value = line.partition(':')
-            result[key.strip()] = value.strip().strip('"').strip("'")
-    return result
 
 
 def validate_skill(skill_path):
@@ -48,11 +36,10 @@ def validate_skill(skill_path):
     frontmatter_text = match.group(1)
 
     # Parse YAML frontmatter
+    if yaml is None:
+        return False, "PyYAML is required to validate nested or multiline frontmatter"
     try:
-        if yaml:
-            frontmatter = yaml.safe_load(frontmatter_text)
-        else:
-            frontmatter = _parse_frontmatter_fallback(frontmatter_text)
+        frontmatter = yaml.safe_load(frontmatter_text)
         if not isinstance(frontmatter, dict):
             return False, "Frontmatter must be a YAML dictionary"
     except Exception as e:
@@ -80,28 +67,30 @@ def validate_skill(skill_path):
     if not isinstance(name, str):
         return False, f"Name must be a string, got {type(name).__name__}"
     name = name.strip()
-    if name:
-        # Check naming convention (kebab-case: lowercase with hyphens)
-        if not re.match(r'^[a-z0-9-]+$', name):
-            return False, f"Name '{name}' should be kebab-case (lowercase letters, digits, and hyphens only)"
-        if name.startswith('-') or name.endswith('-') or '--' in name:
-            return False, f"Name '{name}' cannot start/end with hyphen or contain consecutive hyphens"
-        # Check name length (max 64 characters per spec)
-        if len(name) > 64:
-            return False, f"Name is too long ({len(name)} characters). Maximum is 64 characters."
+    if not name:
+        return False, "Name must be non-empty"
+    # Check naming convention (kebab-case: lowercase with hyphens)
+    if not re.match(r'^[a-z0-9-]+$', name):
+        return False, f"Name '{name}' should be kebab-case (lowercase letters, digits, and hyphens only)"
+    if name.startswith('-') or name.endswith('-') or '--' in name:
+        return False, f"Name '{name}' cannot start/end with hyphen or contain consecutive hyphens"
+    # Check name length (max 64 characters per spec)
+    if len(name) > 64:
+        return False, f"Name is too long ({len(name)} characters). Maximum is 64 characters."
 
     # Extract and validate description
     description = frontmatter.get('description', '')
     if not isinstance(description, str):
         return False, f"Description must be a string, got {type(description).__name__}"
     description = description.strip()
-    if description:
-        # Check for angle brackets
-        if '<' in description or '>' in description:
-            return False, "Description cannot contain angle brackets (< or >)"
-        # Check description length (max 1024 characters per spec)
-        if len(description) > 1024:
-            return False, f"Description is too long ({len(description)} characters). Maximum is 1024 characters."
+    if not description:
+        return False, "Description must be non-empty"
+    # Check for angle brackets
+    if '<' in description or '>' in description:
+        return False, "Description cannot contain angle brackets (< or >)"
+    # Check description length (max 1024 characters per spec)
+    if len(description) > 1024:
+        return False, f"Description is too long ({len(description)} characters). Maximum is 1024 characters."
 
     # Validate compatibility field if present (optional)
     compatibility = frontmatter.get('compatibility', '')

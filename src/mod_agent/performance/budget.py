@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from src.core.settings import PerformanceOperationSettings, PerformanceSettings
+
+
+def _require_finite(value, field_name):
+    # 为什么要有它：NaN 可绕过范围比较；只检查浮点有限性以保留合法的大整数和 None。
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"{field_name} must be finite")
 
 
 @dataclass(frozen=True)
@@ -34,8 +41,10 @@ class BudgetLimit:
             "max_duration_ms",
         ):
             value = getattr(self, field_name)
+            _require_finite(value, field_name)
             if value is not None and value < 0:
                 raise ValueError(f"{field_name} must be non-negative")
+        _require_finite(self.max_concurrency, "max_concurrency")
         if self.max_concurrency is not None and self.max_concurrency <= 0:
             raise ValueError("max_concurrency must be greater than zero")
 
@@ -95,8 +104,10 @@ class OperationUsage:
             "cache_misses",
         ):
             value = getattr(self, field_name)
+            _require_finite(value, field_name)
             if value < 0:
                 raise ValueError(f"{field_name} must be non-negative")
+        _require_finite(self.concurrency, "concurrency")
         if self.concurrency <= 0:
             raise ValueError("concurrency must be greater than zero")
 

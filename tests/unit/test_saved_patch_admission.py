@@ -104,7 +104,7 @@ def saved_case(tmp_path, *, product_layout=False):
         adapter, _ = _local_patch_adapter(inputs)  # A scripted test provider, never HTTP.
         completed = run_fresh_patch_continuation(request, patch_change_factory=adapter,
             dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace))
-        j = json.loads(Path(completed.attempt_receipt["path"]).read_text())
+        j = json.loads(Path(completed.attempt_receipt["path"]).read_text(encoding="utf-8"))
         f = j["factory_receipt"]
         original = inputs.store.semantic_read_immutable(ArtifactRef(**completed.patch_proposal_artifact))["data"]
     # Recover native parser output independently from the adapter's final Plan metadata.

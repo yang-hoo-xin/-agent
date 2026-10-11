@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
+from src.mod_agent.build.dependencies import RunLocalGameFolderBindingV1
 from src.mod_agent.entry_admission import (
     EntryAdmissionDependenciesV1,
     EntryAdmissionRequestV1,
@@ -21,7 +22,6 @@ from src.mod_agent.entry_admission import (
 )
 from src.mod_agent.local_entry import (
     CompiledArtifactInspectionProfile,
-    RunLocalGameFolderBindingV1,
     run_local_request,
 )
 from src.mod_agent.model_admission import (
@@ -35,7 +35,6 @@ from src.mod_agent.preflight_preparation import (
     _read_json_object,
     _verify_preflight_receipt,
 )
-
 
 ACTUAL_PACKET_FILENAME = "packet.json"
 ACTUAL_SEAL_FILENAME = "ACTUAL_SEAL.json"

@@ -1,5 +1,9 @@
 # Workflow Patterns
 
+These examples are not required repository workflows. Use one only when the
+selected task actually has that control flow. 为什么要有它：a generic sequence
+must not replace the user's requested process.
+
 ## Sequential Workflows
 
 For complex tasks, break operations into clear, sequential steps. It is often helpful to give the agent an overview of the process towards the beginning of SKILL.md:

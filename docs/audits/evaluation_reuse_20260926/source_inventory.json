@@ -1,0 +1,3327 @@
+{
+  "scope": "static_source_inventory_not_runtime_reachability",
+  "head": "3381143790b52b0be7fa8ba32b59f5d10fa6a89a",
+  "python_files_parsed": 588,
+  "parse_errors": [],
+  "selected_source_files": [
+    {
+      "path": "artifacts/rag_expansion_20260922/bounded_http_runner.py",
+      "sha256": "2f46b725256faaae562799daab94b6460ac3a3f8c8caf828d7c4d41255a79738",
+      "lines": 136,
+      "definitions": [
+        {
+          "name": "_utc",
+          "line": 19
+        },
+        {
+          "name": "_json_body",
+          "line": 23
+        },
+        {
+          "name": "main",
+          "line": 30
+        }
+      ]
+    },
+    {
+      "path": "artifacts/rag_expansion_20260922/selective_router_v1.py",
+      "sha256": "df4e97aa7f0ee72a0adf765ac43424346757e09add823c6f9c0da303d4a61aac",
+      "lines": 55,
+      "definitions": [
+        {
+          "name": "route",
+          "line": 29
+        }
+      ]
+    },
+    {
+      "path": "scripts/compare_patch_trials.py",
+      "sha256": "d6243bb9de6a0f512645d6694f94f06286a5f7ce80b89c49da44524d3717b3ef",
+      "lines": 38,
+      "definitions": [
+        {
+          "name": "main",
+          "line": 14
+        }
+      ]
+    },
+    {
+      "path": "scripts/dsh_deliver_run.py",
+      "sha256": "8e6ac715cb53da6fc4e6627648f941be376f4ec157e11e8b02197254d5517119",
+      "lines": 503,
+      "definitions": [
+        {
+          "name": "_hash",
+          "line": 44
+        },
+        {
+          "name": "_file_ref",
+          "line": 49
+        },
+        {
+          "name": "_base",
+          "line": 53
+        },
+        {
+          "name": "_paths",
+          "line": 60
+        },
+        {
+          "name": "_inputs",
+          "line": 86
+        },
+        {
+          "name": "_build_inputs",
+          "line": 119
+        },
+        {
+          "name": "_recorded_review",
+          "line": 150
+        },
+        {
+          "name": "_preview",
+          "line": 194
+        },
+        {
+          "name": "_write_receipt",
+          "line": 241
+        },
+        {
+          "name": "_read_receipt",
+          "line": 259
+        },
+        {
+          "name": "_receipt_view",
+          "line": 307
+        },
+        {
+          "name": "_effect_view",
+          "line": 313
+        },
+        {
+          "name": "_resume_payload",
+          "line": 321
+        },
+        {
+          "name": "_build_factory",
+          "line": 329
+        },
+        {
+          "name": "_copy_verified",
+          "line": 360
+        },
+        {
+          "name": "_retain",
+          "line": 367
+        },
+        {
+          "name": "deliver_run",
+          "line": 409
+        },
+        {
+          "name": "main",
+          "line": 477
+        }
+      ]
+    },
+    {
+      "path": "scripts/dsh_run_request.py",
+      "sha256": "4068fc6a412441607cba272731394087ac0e654a10abcd6fb7997370a1cd6f69",
+      "lines": 586,
+      "definitions": [
+        {
+          "name": "_configuration_arguments",
+          "line": 57
+        },
+        {
+          "name": "prepare_new_task",
+          "line": 92
+        },
+        {
+          "name": "_file_ref",
+          "line": 192
+        },
+        {
+          "name": "_bind_project_compilation_feedback",
+          "line": 196
+        },
+        {
+          "name": "_verify_ref",
+          "line": 230
+        },
+        {
+          "name": "_verify_project_configuration",
+          "line": 243
+        },
+        {
+          "name": "preview_new_project",
+          "line": 285
+        },
+        {
+          "name": "task_execution_config",
+          "line": 301
+        },
+        {
+          "name": "build_product_argv",
+          "line": 325
+        },
+        {
+          "name": "_contained_record_path",
+          "line": 382
+        },
+        {
+          "name": "_read_run_record",
+          "line": 398
+        },
+        {
+          "name": "inspect_run",
+          "line": 416
+        },
+        {
+          "name": "list_runs",
+          "line": 448
+        },
+        {
+          "name": "advance_task",
+          "line": 467
+        },
+        {
+          "name": "main",
+          "line": 493
+        }
+      ]
+    },
+    {
+      "path": "scripts/evaluate.py",
+      "sha256": "825c008396891b462c202c584b68434ea02364512c1ce836fdace58eee7305b6",
+      "lines": 276,
+      "definitions": [
+        {
+          "name": "parse_args",
+          "line": 46
+        },
+        {
+          "name": "main",
+          "line": 93
+        },
+        {
+          "name": "_create_hybrid_search",
+          "line": 181
+        },
+        {
+          "name": "_print_report",
+          "line": 219
+        }
+      ]
+    },
+    {
+      "path": "scripts/prepare_independent_release.py",
+      "sha256": "ae25dad0ebef6f9ea80e865b85df03933260936a56605c3e67cd614c1337b365",
+      "lines": 32,
+      "definitions": [
+        {
+          "name": "main",
+          "line": 15
+        }
+      ]
+    },
+    {
+      "path": "scripts/prepare_memory_comparison.py",
+      "sha256": "523d8d99955051532cceb153c835b9662a952e6371bee46d5c78c4465ddbd2b7",
+      "lines": 41,
+      "definitions": [
+        {
+          "name": "main",
+          "line": 18
+        }
+      ]
+    },
+    {
+      "path": "scripts/prepare_patch_eval_suite.py",
+      "sha256": "c979cee08e38b53752593e31a2efa6703ea2a12d8b53f56f170ffbd28379a5f0",
+      "lines": 72,
+      "definitions": [
+        {
+          "name": "main",
+          "line": 20
+        }
+      ]
+    },
+    {
+      "path": "scripts/product_trace.py",
+      "sha256": "1aee606f494f770e699653409603c51b034f31a926b9027400d1ed953899c37b",
+      "lines": 68,
+      "definitions": [
+        {
+          "name": "parse_args",
+          "line": 16
+        },
+        {
+          "name": "main",
+          "line": 34
+        }
+      ]
+    },
+    {
+      "path": "scripts/publish_independent_task_materials.py",
+      "sha256": "fee32e5204ee8aa7089d3cfdc5758fbfa124fa9480dd790ab6988da0ae163ddd",
+      "lines": 405,
+      "definitions": [
+        {
+          "name": "PublisherError",
+          "line": 47
+        },
+        {
+          "name": "_fail",
+          "line": 54
+        },
+        {
+          "name": "_save",
+          "line": 58
+        },
+        {
+          "name": "_find_exact",
+          "line": 62
+        },
+        {
+          "name": "_authority_hashes",
+          "line": 82
+        },
+        {
+          "name": "_source",
+          "line": 91
+        },
+        {
+          "name": "_response",
+          "line": 101
+        },
+        {
+          "name": "_judge_request",
+          "line": 117
+        },
+        {
+          "name": "_compile_b0",
+          "line": 141
+        },
+        {
+          "name": "_archive_private_tree",
+          "line": 160
+        },
+        {
+          "name": "_admit_inputs",
+          "line": 172
+        },
+        {
+          "name": "preflight_publish",
+          "line": 214
+        },
+        {
+          "name": "publish",
+          "line": 229
+        },
+        {
+          "name": "main",
+          "line": 374
+        }
+      ]
+    },
+    {
+      "path": "scripts/run_arm_a_baseline.py",
+      "sha256": "33b201b3deb50ab54329674b174471c7697c8ef1654bd0ff9c153f0c228e8168",
+      "lines": 171,
+      "definitions": [
+        {
+          "name": "parse_args",
+          "line": 30
+        },
+        {
+          "name": "main",
+          "line": 43
+        },
+        {
+          "name": "_write_run_ledger",
+          "line": 113
+        },
+        {
+          "name": "_load_object",
+          "line": 149
+        }
+      ]
+    },
+    {
+      "path": "scripts/run_independent_calibration.py",
+      "sha256": "4c151d64d71cc56bbe917c387313b7c99107b98075a72dc8593c5c437c855c6b",
+      "lines": 62,
+      "definitions": [
+        {
+          "name": "main",
+          "line": 22
+        }
+      ]
+    },
+    {
+      "path": "scripts/run_lease_scope_trusted_cases.py",
+      "sha256": "280f534fe77ab3dc209e9ab99f1da32584d883524b594b126cbbaac2e34ac598",
+      "lines": 96,
+      "definitions": [
+        {
+          "name": "_select",
+          "line": 18
+        },
+        {
+          "name": "run",
+          "line": 29
+        },
+        {
+          "name": "main",
+          "line": 75
+        }
+      ]
+    },
+    {
+      "path": "scripts/run_patch_sft_eval.py",
+      "sha256": "51c1a148573bb27fa31068bf4067927ca50e7fb39df91b09d46ddf313c342207",
+      "lines": 411,
+      "definitions": [
+        {
+          "name": "_request",
+          "line": 53
+        },
+        {
+          "name": "_case",
+          "line": 62
+        },
+        {
+          "name": "_contract",
+          "line": 70
+        },
+        {
+          "name": "_observation_input",
+          "line": 85
+        },
+        {
+          "name": "_check_definition_signature",
+          "line": 93
+        },
+        {
+          "name": "_teacher_parent",
+          "line": 105
+        },
+        {
+          "name": "OwnedSftOracle",
+          "line": 169
+        },
+        {
+          "name": "make_evaluator",
+          "line": 234
+        },
+        {
+          "name": "_profile",
+          "line": 238
+        },
+        {
+          "name": "prepare_eval",
+          "line": 250
+        },
+        {
+          "name": "execute_prepared",
+          "line": 303
+        },
+        {
+          "name": "main",
+          "line": 359
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/cli.py",
+      "sha256": "a24d211eac1c7f73266bd65315de0b992628bc56642c646f1056aad320430782",
+      "lines": 3034,
+      "definitions": [
+        {
+          "name": "PlanRequestResult",
+          "line": 107
+        },
+        {
+          "name": "_apply_failure_cli_details",
+          "line": 120
+        },
+        {
+          "name": "_execution_trace_configuration",
+          "line": 128
+        },
+        {
+          "name": "_add_execution_trace_arguments",
+          "line": 140
+        },
+        {
+          "name": "_load_reviewed_build_resume",
+          "line": 147
+        },
+        {
+          "name": "_load_reviewed_build_profile",
+          "line": 161
+        },
+        {
+          "name": "_continue_reviewed_build_from_cli",
+          "line": 195
+        },
+        {
+          "name": "_strict_cli_bool",
+          "line": 227
+        },
+        {
+          "name": "_read_exact_diff_approval_from_stdin",
+          "line": 235
+        },
+        {
+          "name": "_read_typed_json_object_file",
+          "line": 292
+        },
+        {
+          "name": "_read_patch_repair_inputs",
+          "line": 302
+        },
+        {
+          "name": "_reassemble_saved_patch_from_cli",
+          "line": 319
+        },
+        {
+          "name": "plan_request",
+          "line": 380
+        },
+        {
+          "name": "_add_stagger_edit_authority_arguments",
+          "line": 405
+        },
+        {
+          "name": "_stagger_edit_authority_arguments",
+          "line": 427
+        },
+        {
+          "name": "_add_stagger_existing_binding_reauthorization_arguments",
+          "line": 451
+        },
+        {
+          "name": "_stagger_existing_binding_reauthorization_arguments",
+          "line": 494
+        },
+        {
+          "name": "_add_stagger_observation_authority_arguments",
+          "line": 533
+        },
+        {
+          "name": "_stagger_observation_authority_arguments",
+          "line": 566
+        },
+        {
+          "name": "_add_stagger_diagnostic_diff_arguments",
+          "line": 609
+        },
+        {
+          "name": "build_parser",
+          "line": 624
+        },
+        {
+          "name": "_verification_operation_exit_code",
+          "line": 1462
+        },
+        {
+          "name": "_verification_preflight_exit_code",
+          "line": 1476
+        },
+        {
+          "name": "_legacy_advisory_preflight_exit_code",
+          "line": 1487
+        },
+        {
+          "name": "_edit_authority_review_exit_code",
+          "line": 1500
+        },
+        {
+          "name": "_run_preflight_runtime_command",
+          "line": 1533
+        },
+        {
+          "name": "_run_resume_runtime_command",
+          "line": 1574
+        },
+        {
+          "name": "_explicit_preflight_request_from_args",
+          "line": 1611
+        },
+        {
+          "name": "_write_fresh_coverage_progress",
+          "line": 1684
+        },
+        {
+          "name": "main",
+          "line": 1692
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/domain/accurate_crosshair_eval.py",
+      "sha256": "8307bd2fceea50f1626e17c7d153264621905cda35d8d6db3f46a3c967a12d4f",
+      "lines": 430,
+      "definitions": [
+        {
+          "name": "_reference",
+          "line": 149
+        },
+        {
+          "name": "_save",
+          "line": 154
+        },
+        {
+          "name": "_response_scope",
+          "line": 162
+        },
+        {
+          "name": "_dotnet_identity",
+          "line": 169
+        },
+        {
+          "name": "AccurateCrosshairTaskOracle",
+          "line": 184
+        },
+        {
+          "name": "make_behavior_evaluator",
+          "line": 294
+        },
+        {
+          "name": "CurrentPlanTaskOracle",
+          "line": 305
+        },
+        {
+          "name": "BoundExistingMatrixOracle",
+          "line": 369
+        },
+        {
+          "name": "make_existing_matrix_evaluator",
+          "line": 429
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/evaluation/__init__.py",
+      "sha256": "f85c104cbdf8d66ae034200a8c587fa193b6c53becebfb57aa62c25a00ea02e9",
+      "lines": 82,
+      "definitions": []
+    },
+    {
+      "path": "src/mod_agent/evaluation/agent_quality.py",
+      "sha256": "f50400c0789dfcd1464d8ea2c0faed509493a5568095775ef76ae9264ccf5f11",
+      "lines": 731,
+      "definitions": [
+        {
+          "name": "AgentQualityCase",
+          "line": 54
+        },
+        {
+          "name": "RankedRetrievalResult",
+          "line": 135
+        },
+        {
+          "name": "RetrievalObservation",
+          "line": 161
+        },
+        {
+          "name": "AgentDecisionObservation",
+          "line": 199
+        },
+        {
+          "name": "CaseObservation",
+          "line": 235
+        },
+        {
+          "name": "RunManifest",
+          "line": 241
+        },
+        {
+          "name": "AgentQualityReport",
+          "line": 271
+        },
+        {
+          "name": "AgentQualityEvaluator",
+          "line": 352
+        },
+        {
+          "name": "_evaluate_case",
+          "line": 473
+        },
+        {
+          "name": "_aggregate",
+          "line": 554
+        },
+        {
+          "name": "_raw_observation",
+          "line": 598
+        },
+        {
+          "name": "_cost_summary",
+          "line": 608
+        },
+        {
+          "name": "_nearest_rank",
+          "line": 624
+        },
+        {
+          "name": "_require_non_empty",
+          "line": 632
+        },
+        {
+          "name": "_require_unique_strings",
+          "line": 637
+        },
+        {
+          "name": "_require_canonical_paths",
+          "line": 646
+        },
+        {
+          "name": "_require_non_negative_finite",
+          "line": 653
+        },
+        {
+          "name": "_require_non_negative_int",
+          "line": 658
+        },
+        {
+          "name": "_required_string",
+          "line": 663
+        },
+        {
+          "name": "_optional_string",
+          "line": 669
+        },
+        {
+          "name": "_required_bool",
+          "line": 676
+        },
+        {
+          "name": "_string_tuple",
+          "line": 683
+        },
+        {
+          "name": "_ranked_results",
+          "line": 691
+        },
+        {
+          "name": "_number",
+          "line": 713
+        },
+        {
+          "name": "_integer",
+          "line": 718
+        },
+        {
+          "name": "_sha256",
+          "line": 723
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/evaluation/arm_a.py",
+      "sha256": "016820e7fcbd8f90eae084cfe4ee39bf1e8d2a20d9dc9e2aca12b5533bc4d86a",
+      "lines": 747,
+      "definitions": [
+        {
+          "name": "CorpusFileEntry",
+          "line": 60
+        },
+        {
+          "name": "CanonicalCorpusSnapshot",
+          "line": 70
+        },
+        {
+          "name": "RgExecutableIdentity",
+          "line": 84
+        },
+        {
+          "name": "RgCommandTrace",
+          "line": 94
+        },
+        {
+          "name": "OfficialArmAExecutionAttestation",
+          "line": 108
+        },
+        {
+          "name": "RunBindingSnapshot",
+          "line": 133
+        },
+        {
+          "name": "CollectedRunManifest",
+          "line": 152
+        },
+        {
+          "name": "ArmARunResult",
+          "line": 166
+        },
+        {
+          "name": "RunManifestCollector",
+          "line": 190
+        },
+        {
+          "name": "RgLiveReadProvider",
+          "line": 333
+        },
+        {
+          "name": "ArmATestHarness",
+          "line": 483
+        },
+        {
+          "name": "OfficialArmARunner",
+          "line": 532
+        },
+        {
+          "name": "_evaluate_report",
+          "line": 638
+        },
+        {
+          "name": "_validate_search_protocol",
+          "line": 685
+        },
+        {
+          "name": "_file_sha256",
+          "line": 706
+        },
+        {
+          "name": "_sha256_text",
+          "line": 710
+        },
+        {
+          "name": "_verify_returned_file_hashes",
+          "line": 714
+        },
+        {
+          "name": "_utc_now",
+          "line": 732
+        },
+        {
+          "name": "_sha256",
+          "line": 736
+        },
+        {
+          "name": "_require_within",
+          "line": 743
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/evaluation/context_chain.py",
+      "sha256": "a97cd7468e3aa187730d11cbc13481c483a4362d6fa4f6b210fb9bc0b7d0535d",
+      "lines": 460,
+      "definitions": [
+        {
+          "name": "_unknown",
+          "line": 30
+        },
+        {
+          "name": "_json_equal",
+          "line": 34
+        },
+        {
+          "name": "_bound_record",
+          "line": 41
+        },
+        {
+          "name": "_details",
+          "line": 48
+        },
+        {
+          "name": "_payloads",
+          "line": 71
+        },
+        {
+          "name": "_shape",
+          "line": 89
+        },
+        {
+          "name": "_response_summary",
+          "line": 95
+        },
+        {
+          "name": "_ancestor_checks",
+          "line": 110
+        },
+        {
+          "name": "_material_links",
+          "line": 125
+        },
+        {
+          "name": "_timestamp",
+          "line": 153
+        },
+        {
+          "name": "_query_links",
+          "line": 161
+        },
+        {
+          "name": "_model_record",
+          "line": 193
+        },
+        {
+          "name": "_prepared_record",
+          "line": 246
+        },
+        {
+          "name": "_observation_record",
+          "line": 262
+        },
+        {
+          "name": "_number",
+          "line": 306
+        },
+        {
+          "name": "_cost",
+          "line": 310
+        },
+        {
+          "name": "_selected_parent_sources",
+          "line": 326
+        },
+        {
+          "name": "inspect_context_chain",
+          "line": 341
+        },
+        {
+          "name": "render_context_chain",
+          "line": 415
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/evaluation/gate.py",
+      "sha256": "628de1e10ec06a08d02795ea1a34daabf61e3ec74f1c08411ae03a78f7526434",
+      "lines": 651,
+      "definitions": [
+        {
+          "name": "build_transition_eval_gate_report",
+          "line": 13
+        },
+        {
+          "name": "_verification_only_continuation_case",
+          "line": 86
+        },
+        {
+          "name": "_claim_boundary_case",
+          "line": 110
+        },
+        {
+          "name": "_false_block_case",
+          "line": 128
+        },
+        {
+          "name": "_false_continue_case",
+          "line": 146
+        },
+        {
+          "name": "_review_correctness_case",
+          "line": 172
+        },
+        {
+          "name": "_dry_run_safety_case",
+          "line": 192
+        },
+        {
+          "name": "_build_claim_boundary_case",
+          "line": 228
+        },
+        {
+          "name": "_runtime_claim_boundary_case",
+          "line": 262
+        },
+        {
+          "name": "_insufficient_baseline_case",
+          "line": 310
+        },
+        {
+          "name": "_stale_evidence_case",
+          "line": 324
+        },
+        {
+          "name": "_missing_required_metric_case",
+          "line": 338
+        },
+        {
+          "name": "_required_evaluation_contract_cases",
+          "line": 356
+        },
+        {
+          "name": "_passed",
+          "line": 464
+        },
+        {
+          "name": "_failed",
+          "line": 473
+        },
+        {
+          "name": "_blocker_code",
+          "line": 482
+        },
+        {
+          "name": "_string_tuple",
+          "line": 486
+        },
+        {
+          "name": "_missing_runtime_success_binding",
+          "line": 492
+        },
+        {
+          "name": "_valid_build_artifact_ref",
+          "line": 525
+        },
+        {
+          "name": "_acceptance_criteria",
+          "line": 534
+        },
+        {
+          "name": "_has_observed_acceptance_plugin_markers",
+          "line": 541
+        },
+        {
+          "name": "_configured_acceptance_marker_criteria",
+          "line": 558
+        },
+        {
+          "name": "_observed_acceptance_marker_criteria",
+          "line": 574
+        },
+        {
+          "name": "_add_observed_acceptance_marker",
+          "line": 588
+        },
+        {
+          "name": "_non_goal_preservation_failure",
+          "line": 597
+        },
+        {
+          "name": "_requires_runtime_trust_binding",
+          "line": 616
+        },
+        {
+          "name": "_has_trusted_runtime_binding",
+          "line": 620
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/evaluation/hidden_golden.py",
+      "sha256": "d2bc564dcca1776c65664e39b12982992547fee365643c39d0b2e59a03c70bcc",
+      "lines": 817,
+      "definitions": [
+        {
+          "name": "evaluate_committed_hidden_golden",
+          "line": 54
+        },
+        {
+          "name": "_calibration_reliability_gate",
+          "line": 162
+        },
+        {
+          "name": "_score_structured_relations",
+          "line": 391
+        },
+        {
+          "name": "_aggregate_calibration_verdicts",
+          "line": 568
+        },
+        {
+          "name": "_validate_actual_manifest_binding",
+          "line": 623
+        },
+        {
+          "name": "_validated_expected",
+          "line": 644
+        },
+        {
+          "name": "_validate_structured_relation_rubric",
+          "line": 683
+        },
+        {
+          "name": "_actual_decision",
+          "line": 729
+        },
+        {
+          "name": "_actual_hook_identities",
+          "line": 739
+        },
+        {
+          "name": "_expected_identities",
+          "line": 771
+        },
+        {
+          "name": "_identity_key",
+          "line": 791
+        },
+        {
+          "name": "_load_object",
+          "line": 795
+        },
+        {
+          "name": "_canonical_sha256",
+          "line": 805
+        },
+        {
+          "name": "_sha256",
+          "line": 816
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/evaluation/independent_calibration_judge.py",
+      "sha256": "0065e14f591453edb4f027c10182d083296e2d47e40dd43e9589330e5ed15750",
+      "lines": 124,
+      "definitions": [
+        {
+          "name": "UnsupportedProgramError",
+          "line": 20
+        },
+        {
+          "name": "_parse",
+          "line": 24
+        },
+        {
+          "name": "_expr",
+          "line": 51
+        },
+        {
+          "name": "_body",
+          "line": 75
+        },
+        {
+          "name": "judge",
+          "line": 88
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/evaluation/independent_preparation.py",
+      "sha256": "6457d4829bb8435047c394732bc74ae96e212bfd970adc3b816a88d1b7e550f1",
+      "lines": 360,
+      "definitions": [
+        {
+          "name": "digest",
+          "line": 42
+        },
+        {
+          "name": "file_ref",
+          "line": 47
+        },
+        {
+          "name": "write_once",
+          "line": 52
+        },
+        {
+          "name": "public_inventory",
+          "line": 60
+        },
+        {
+          "name": "validate_config",
+          "line": 96
+        },
+        {
+          "name": "environment_identity",
+          "line": 135
+        },
+        {
+          "name": "_submission_format",
+          "line": 147
+        },
+        {
+          "name": "worker",
+          "line": 154
+        },
+        {
+          "name": "evaluate_submission",
+          "line": 218
+        },
+        {
+          "name": "summarize",
+          "line": 246
+        },
+        {
+          "name": "run_calibration",
+          "line": 264
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/evaluation/independent_product_adapter.py",
+      "sha256": "2b06a90c878e7018961700dff0077ad92b9bfeddafee0a08fdfaecf22c821454",
+      "lines": 172,
+      "definitions": [
+        {
+          "name": "project_owned_judge_result",
+          "line": 18
+        },
+        {
+          "name": "product_arguments",
+          "line": 63
+        },
+        {
+          "name": "run_public_product_pair",
+          "line": 83
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/evaluation/independent_release.py",
+      "sha256": "96c9dd3e2fbbbf9db9abf07fce6523f2063c40df8a5aaedafcbc61116e3793b2",
+      "lines": 210,
+      "definitions": [
+        {
+          "name": "_require",
+          "line": 32
+        },
+        {
+          "name": "_local_path",
+          "line": 37
+        },
+        {
+          "name": "_source_files",
+          "line": 45
+        },
+        {
+          "name": "_request",
+          "line": 69
+        },
+        {
+          "name": "_toolchain",
+          "line": 86
+        },
+        {
+          "name": "admit_task_release",
+          "line": 101
+        },
+        {
+          "name": "prepare_released_pair",
+          "line": 142
+        },
+        {
+          "name": "_validate_endpoint",
+          "line": 164
+        },
+        {
+          "name": "validate_protected_judge_result",
+          "line": 174
+        },
+        {
+          "name": "invoke_protected_judge",
+          "line": 199
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/evaluation/memory_comparison.py",
+      "sha256": "1226f1aafdba76881aac2b88838f2cbc9a9d2cc6cab01294e678cbd7e91a2b86",
+      "lines": 182,
+      "definitions": [
+        {
+          "name": "snapshot_files",
+          "line": 27
+        },
+        {
+          "name": "_evidence_state",
+          "line": 41
+        },
+        {
+          "name": "_memory_dependencies",
+          "line": 54
+        },
+        {
+          "name": "prepare_memory_pair",
+          "line": 71
+        },
+        {
+          "name": "verify_memory_pair",
+          "line": 124
+        },
+        {
+          "name": "summarize_memory_outcomes",
+          "line": 148
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/evaluation/patch_task_suite.py",
+      "sha256": "3c57d5548c4d4d440e9195a50373d1db8705a0714f55f2c0f2c7a7cc1d72410f",
+      "lines": 334,
+      "definitions": [
+        {
+          "name": "reference",
+          "line": 62
+        },
+        {
+          "name": "save_once",
+          "line": 67
+        },
+        {
+          "name": "_request_from_document",
+          "line": 75
+        },
+        {
+          "name": "_checked_profile",
+          "line": 84
+        },
+        {
+          "name": "_checked_suite",
+          "line": 93
+        },
+        {
+          "name": "select_patch_task",
+          "line": 106
+        },
+        {
+          "name": "preflight_patch_suite",
+          "line": 147
+        },
+        {
+          "name": "task_cli_arguments",
+          "line": 166
+        },
+        {
+          "name": "prepare_source_task",
+          "line": 187
+        },
+        {
+          "name": "prepare_accurate_crosshair_suite",
+          "line": 262
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/evaluation/patch_trial_comparison.py",
+      "sha256": "095324286ab388a5a4db80420220401d53fac6d38420215974cfc6e73c7ca91a",
+      "lines": 264,
+      "definitions": [
+        {
+          "name": "_require",
+          "line": 27
+        },
+        {
+          "name": "_bytes",
+          "line": 32
+        },
+        {
+          "name": "_list_ref",
+          "line": 41
+        },
+        {
+          "name": "_artifact",
+          "line": 47
+        },
+        {
+          "name": "_task_context",
+          "line": 52
+        },
+        {
+          "name": "_evaluation",
+          "line": 81
+        },
+        {
+          "name": "_successful_artifacts",
+          "line": 130
+        },
+        {
+          "name": "_trial",
+          "line": 157
+        },
+        {
+          "name": "compare_patch_trials",
+          "line": 214
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/evaluation/quality_policy.py",
+      "sha256": "43ea5d7a95b65844d37c595a2128fc80d983a0af8e6d9d34eab7d6ab4c2d4eea",
+      "lines": 113,
+      "definitions": [
+        {
+          "name": "QualityGatePolicy",
+          "line": 14
+        },
+        {
+          "name": "evaluate_quality_policy",
+          "line": 77
+        },
+        {
+          "name": "_required_string",
+          "line": 103
+        },
+        {
+          "name": "_required_metric_name",
+          "line": 110
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/evaluation/retrieval_regression.py",
+      "sha256": "f831ca2abb1fe59d8e29b7b1ffcaa5678ef61ef65a80b971da90ca2fe4f851bc",
+      "lines": 366,
+      "definitions": [
+        {
+          "name": "VersionedAgentQualityCases",
+          "line": 29
+        },
+        {
+          "name": "VersionedObservations",
+          "line": 43
+        },
+        {
+          "name": "load_agent_quality_cases",
+          "line": 51
+        },
+        {
+          "name": "load_observations",
+          "line": 107
+        },
+        {
+          "name": "RetrievalRegressionRunner",
+          "line": 141
+        },
+        {
+          "name": "compare_reports",
+          "line": 230
+        },
+        {
+          "name": "_load_object",
+          "line": 333
+        },
+        {
+          "name": "_reject_duplicate_keys",
+          "line": 348
+        },
+        {
+          "name": "_sha256",
+          "line": 357
+        },
+        {
+          "name": "_required_string",
+          "line": 362
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/local_entry.py",
+      "sha256": "9b3fce8afc74910b651bfb7ee561f64d3802227d3a7b2bb2d6a1b48dbccb3bbd",
+      "lines": 14625,
+      "definitions": [
+        {
+          "name": "EditAuthorityPresentationError",
+          "line": 251
+        },
+        {
+          "name": "VerificationOperationExecutionError",
+          "line": 268
+        },
+        {
+          "name": "VerificationOperationPresentationError",
+          "line": 280
+        },
+        {
+          "name": "_verification_blockers",
+          "line": 295
+        },
+        {
+          "name": "_artifact_ref_from_projection",
+          "line": 323
+        },
+        {
+          "name": "_verification_store_receipts",
+          "line": 342
+        },
+        {
+          "name": "_verification_preflight_result",
+          "line": 366
+        },
+        {
+          "name": "_rejected_verification_result",
+          "line": 393
+        },
+        {
+          "name": "_rejected_execution_result_from_preflight",
+          "line": 414
+        },
+        {
+          "name": "LocalOllamaInitialPatchProfileV1",
+          "line": 452
+        },
+        {
+          "name": "_PatchResponseCapturingLLM",
+          "line": 506
+        },
+        {
+          "name": "_local_patch_response_sidecar_path",
+          "line": 521
+        },
+        {
+          "name": "_write_local_patch_response_sidecar",
+          "line": 532
+        },
+        {
+          "name": "_patch_agent_loop_usage",
+          "line": 571
+        },
+        {
+          "name": "_patch_agent_loop_generation_ref",
+          "line": 587
+        },
+        {
+          "name": "_bounded_utf8_prefix",
+          "line": 666
+        },
+        {
+          "name": "_patch_agent_context_json",
+          "line": 682
+        },
+        {
+          "name": "_patch_agent_member_table",
+          "line": 688
+        },
+        {
+          "name": "_restore_patch_agent_context",
+          "line": 730
+        },
+        {
+          "name": "_compact_patch_agent_context",
+          "line": 787
+        },
+        {
+          "name": "_patch_agent_initial_messages",
+          "line": 875
+        },
+        {
+          "name": "LocalOllamaInitialPatchAdapter",
+          "line": 949
+        },
+        {
+          "name": "_local_patch_failure_receipt",
+          "line": 2736
+        },
+        {
+          "name": "make_exact_no_write_dry_run_factory",
+          "line": 2762
+        },
+        {
+          "name": "_build_local_patch_frozen_resume_identity",
+          "line": 2817
+        },
+        {
+          "name": "_atomic_write_frozen_patch_attempt",
+          "line": 2978
+        },
+        {
+          "name": "_strict_frozen_patch_attempt_json",
+          "line": 3020
+        },
+        {
+          "name": "_read_frozen_patch_attempt",
+          "line": 3039
+        },
+        {
+          "name": "_prepare_local_frozen_patch_attempt",
+          "line": 3052
+        },
+        {
+          "name": "_claim_local_frozen_patch_resume",
+          "line": 3076
+        },
+        {
+          "name": "_resume_local_frozen_patch_attempt",
+          "line": 3107
+        },
+        {
+          "name": "_patch_generation_calls_remaining",
+          "line": 3141
+        },
+        {
+          "name": "_local_patch_generation_correction_allowed",
+          "line": 3162
+        },
+        {
+          "name": "_EditAuthorityReviewAdmission",
+          "line": 3176
+        },
+        {
+          "name": "_validate_edit_authority_public_exact_inputs",
+          "line": 3186
+        },
+        {
+          "name": "_admit_stagger_edit_authority_review",
+          "line": 3262
+        },
+        {
+          "name": "_expected_edit_authority_checkpoint_refs",
+          "line": 3360
+        },
+        {
+          "name": "_invoke_stagger_edit_authority_interrupt",
+          "line": 3383
+        },
+        {
+          "name": "preflight_stagger_edit_authority_review",
+          "line": 3450
+        },
+        {
+          "name": "resume_stagger_edit_authority_review",
+          "line": 3559
+        },
+        {
+          "name": "_RuntimeContinuationHandoff",
+          "line": 3721
+        },
+        {
+          "name": "_RuntimeTerminalHandoff",
+          "line": 3746
+        },
+        {
+          "name": "_RuntimeEvidenceConsolidationHandoff",
+          "line": 3758
+        },
+        {
+          "name": "RunLocalGameFolderBindingV1",
+          "line": 3774
+        },
+        {
+          "name": "_RunLocalGameFolderSourceIdentity",
+          "line": 3806
+        },
+        {
+          "name": "_binary_tree_snapshot",
+          "line": 3813
+        },
+        {
+          "name": "_binary_tree_snapshot_sha256",
+          "line": 3901
+        },
+        {
+          "name": "_windows_extended_length_path",
+          "line": 3912
+        },
+        {
+          "name": "_directory_copy_path_argument",
+          "line": 3932
+        },
+        {
+          "name": "_copy_validated_directory_tree",
+          "line": 3942
+        },
+        {
+          "name": "_validate_game_folder_build_binding",
+          "line": 3953
+        },
+        {
+          "name": "_materialize_game_folder_build_dependency",
+          "line": 3995
+        },
+        {
+          "name": "NuGetIsolatedBuildProfile",
+          "line": 4035
+        },
+        {
+          "name": "NuGetIsolatedBuildExecution",
+          "line": 4100
+        },
+        {
+          "name": "CompiledArtifactInspectionProfile",
+          "line": 4144
+        },
+        {
+          "name": "_create_nuget_isolated_build_profile",
+          "line": 4165
+        },
+        {
+          "name": "_run_nuget_isolated_build",
+          "line": 4258
+        },
+        {
+          "name": "_run_nuget_isolated_verification_command",
+          "line": 4315
+        },
+        {
+          "name": "_bind_objective_failure_to_single_changed_file",
+          "line": 4339
+        },
+        {
+          "name": "_canonicalize_run_local_build_diagnostic_paths",
+          "line": 4365
+        },
+        {
+          "name": "_repair_history_fact_constraints",
+          "line": 4406
+        },
+        {
+          "name": "_unique_repair_diagnostics",
+          "line": 4458
+        },
+        {
+          "name": "_repair_provider_constraints",
+          "line": 4479
+        },
+        {
+          "name": "_patch_generation_obligation_projection",
+          "line": 4506
+        },
+        {
+          "name": "_validated_plan_change_identity_and_validation",
+          "line": 4599
+        },
+        {
+          "name": "_overlay_generated_patch_changes_on_plan",
+          "line": 4637
+        },
+        {
+          "name": "_RuntimeRepairSpan",
+          "line": 4703
+        },
+        {
+          "name": "_runtime_source_diagnostic_lines",
+          "line": 4723
+        },
+        {
+          "name": "_runtime_repair_spans",
+          "line": 4761
+        },
+        {
+          "name": "_objective_verification_source_views",
+          "line": 4839
+        },
+        {
+          "name": "_repair_span_response_schema",
+          "line": 4883
+        },
+        {
+          "name": "_materialize_repair_span_change",
+          "line": 4901
+        },
+        {
+          "name": "_implementation_with_runtime_repair_bindings",
+          "line": 4969
+        },
+        {
+          "name": "_repair_review_context",
+          "line": 5025
+        },
+        {
+          "name": "_read_utf8_source_snapshot",
+          "line": 5086
+        },
+        {
+          "name": "_require_run_local_build_path",
+          "line": 5096
+        },
+        {
+          "name": "_create_run_local_member_access_resolver",
+          "line": 5105
+        },
+        {
+          "name": "_join_build_phase_output",
+          "line": 5135
+        },
+        {
+          "name": "_verification_only_build_admission",
+          "line": 5140
+        },
+        {
+          "name": "_verification_build_legacy_inputs",
+          "line": 5188
+        },
+        {
+          "name": "_legacy_verification_build_spec",
+          "line": 5217
+        },
+        {
+          "name": "preflight_verification_only_build_continuation",
+          "line": 5264
+        },
+        {
+          "name": "_verification_only_build_terminal_result",
+          "line": 5434
+        },
+        {
+          "name": "_build_verification_machine_result",
+          "line": 5482
+        },
+        {
+          "name": "_finalize_build_public_result",
+          "line": 5568
+        },
+        {
+          "name": "execute_verification_only_build_continuation",
+          "line": 5584
+        },
+        {
+          "name": "_remove_generated_build_directory",
+          "line": 5957
+        },
+        {
+          "name": "_build_run_local_il_inspector",
+          "line": 6004
+        },
+        {
+          "name": "_persist_pre_graph_failure",
+          "line": 6159
+        },
+        {
+          "name": "_run_pre_graph_step",
+          "line": 6229
+        },
+        {
+          "name": "_observed_product_write_status",
+          "line": 6260
+        },
+        {
+          "name": "_persist_graph_terminal_result",
+          "line": 6273
+        },
+        {
+          "name": "_sort_graph_terminal_json_objects",
+          "line": 6322
+        },
+        {
+          "name": "_persist_graph_terminal_failure",
+          "line": 6337
+        },
+        {
+          "name": "_read_exact_diff_approval",
+          "line": 6402
+        },
+        {
+          "name": "_verify_final_compiled_artifact_if_built",
+          "line": 6449
+        },
+        {
+          "name": "_runtime_resume_admission_snapshot",
+          "line": 6466
+        },
+        {
+          "name": "_runtime_verification_chain",
+          "line": 6498
+        },
+        {
+          "name": "_verified_build_artifact_sha256",
+          "line": 6526
+        },
+        {
+          "name": "_make_deploying_runtime_evidence_factory",
+          "line": 6554
+        },
+        {
+          "name": "_request_model_output_budget",
+          "line": 6675
+        },
+        {
+          "name": "_gap_investigation_targets",
+          "line": 6687
+        },
+        {
+          "name": "_query_tool_capabilities",
+          "line": 6692
+        },
+        {
+          "name": "_query_source_observation_view",
+          "line": 6712
+        },
+        {
+          "name": "_build_request_upstream_query_contract",
+          "line": 6720
+        },
+        {
+          "name": "_make_request_upstream_evidence_factory",
+          "line": 6837
+        },
+        {
+          "name": "_request_model_budget_stage",
+          "line": 6888
+        },
+        {
+          "name": "_preflight_request_model_calls",
+          "line": 6902
+        },
+        {
+          "name": "preflight_initial_findings_model_calls",
+          "line": 6956
+        },
+        {
+          "name": "make_run_dependency_api_reassessment_augmentation",
+          "line": 6970
+        },
+        {
+          "name": "_reserve_request_model_call",
+          "line": 7033
+        },
+        {
+          "name": "run_local_request",
+          "line": 7054
+        },
+        {
+          "name": "_load_runtime_continuation_handoff",
+          "line": 8761
+        },
+        {
+          "name": "_stagger_repair_attempt_projection",
+          "line": 9035
+        },
+        {
+          "name": "_stagger_runtime_attempt_namespace",
+          "line": 9219
+        },
+        {
+          "name": "_runtime_continuation_backup_report",
+          "line": 9243
+        },
+        {
+          "name": "_runtime_observation_retry_output_report",
+          "line": 9341
+        },
+        {
+          "name": "_verification_only_runtime_execution_identity",
+          "line": 9496
+        },
+        {
+          "name": "_artifact_logical_identity",
+          "line": 9536
+        },
+        {
+          "name": "_artifact_ref_projection",
+          "line": 9544
+        },
+        {
+          "name": "_verification_only_runtime_terminal_identity",
+          "line": 9548
+        },
+        {
+          "name": "_exact_runtime_terminal_revision_ref",
+          "line": 9600
+        },
+        {
+          "name": "_load_runtime_terminal_handoff",
+          "line": 9634
+        },
+        {
+          "name": "_preflight_runtime_terminal_continuation",
+          "line": 9713
+        },
+        {
+          "name": "_load_runtime_evidence_consolidation_handoff",
+          "line": 9800
+        },
+        {
+          "name": "_preflight_runtime_evidence_consolidation",
+          "line": 9936
+        },
+        {
+          "name": "_verification_only_runtime_resume_payload",
+          "line": 10032
+        },
+        {
+          "name": "_runtime_output_admission_binding",
+          "line": 10057
+        },
+        {
+          "name": "_accepted_runtime_output_binding",
+          "line": 10076
+        },
+        {
+          "name": "_runtime_observation_retry_restoration_report",
+          "line": 10098
+        },
+        {
+          "name": "_preflight_runtime_operation_compatibility",
+          "line": 10153
+        },
+        {
+          "name": "_runtime_operation_checkpoint_identity",
+          "line": 10682
+        },
+        {
+          "name": "_resolve_legacy_runtime_attempt_policy",
+          "line": 10703
+        },
+        {
+          "name": "_typed_runtime_preflight",
+          "line": 10787
+        },
+        {
+          "name": "_legacy_runtime_evidence_only_spec",
+          "line": 11000
+        },
+        {
+          "name": "_legacy_runtime_terminalization_spec",
+          "line": 11039
+        },
+        {
+          "name": "preflight_local_runtime",
+          "line": 11084
+        },
+        {
+          "name": "_runtime_profile_preflight_record",
+          "line": 11309
+        },
+        {
+          "name": "_runtime_evidence_only_terminal_result",
+          "line": 11526
+        },
+        {
+          "name": "_validate_runtime_handoff_build_output",
+          "line": 11595
+        },
+        {
+          "name": "_execute_runtime_evidence_only_continuation",
+          "line": 11625
+        },
+        {
+          "name": "_runtime_evidence_consolidation_public_result",
+          "line": 11955
+        },
+        {
+          "name": "_execute_runtime_evidence_consolidation",
+          "line": 12012
+        },
+        {
+          "name": "_runtime_terminal_artifact_projection",
+          "line": 12172
+        },
+        {
+          "name": "_runtime_terminal_public_result",
+          "line": 12198
+        },
+        {
+          "name": "_execute_runtime_terminal_continuation",
+          "line": 12273
+        },
+        {
+          "name": "_normalize_legacy_runtime_workflow_operation",
+          "line": 12467
+        },
+        {
+          "name": "_execute_runtime_workflow_operation",
+          "line": 12606
+        },
+        {
+          "name": "_operation_result_refs_from_artifacts",
+          "line": 13256
+        },
+        {
+          "name": "_exact_verification_platform_status",
+          "line": 13278
+        },
+        {
+          "name": "_runtime_execution_machine_result",
+          "line": 13289
+        },
+        {
+          "name": "_terminalization_machine_result",
+          "line": 13401
+        },
+        {
+          "name": "_consolidation_machine_result",
+          "line": 13469
+        },
+        {
+          "name": "_runtime_machine_result",
+          "line": 13573
+        },
+        {
+          "name": "_finalize_runtime_public_result",
+          "line": 13597
+        },
+        {
+          "name": "_present_legacy_runtime_workflow_result",
+          "line": 13613
+        },
+        {
+          "name": "resume_local_runtime",
+          "line": 13662
+        },
+        {
+          "name": "_source_snapshot",
+          "line": 14199
+        },
+        {
+          "name": "_source_snapshot_sha256",
+          "line": 14203
+        },
+        {
+          "name": "_sha256_json",
+          "line": 14207
+        },
+        {
+          "name": "_external_evidence_items",
+          "line": 14217
+        },
+        {
+          "name": "_assert_no_absolute_local_paths",
+          "line": 14231
+        },
+        {
+          "name": "_verify_exact_snapshot_change",
+          "line": 14251
+        },
+        {
+          "name": "_verify_bepin_plugin_identity",
+          "line": 14283
+        },
+        {
+          "name": "_persist_local_failure_diagnostics",
+          "line": 14358
+        },
+        {
+          "name": "_read_ollama_model_identity",
+          "line": 14418
+        },
+        {
+          "name": "_read_ollama_server_version",
+          "line": 14425
+        },
+        {
+          "name": "_select_ollama_model_identity",
+          "line": 14432
+        },
+        {
+          "name": "_validate_ollama_model_identity",
+          "line": 14448
+        },
+        {
+          "name": "_validate_ollama_context_window",
+          "line": 14464
+        },
+        {
+          "name": "_assert_ollama_model_identity_stable",
+          "line": 14478
+        },
+        {
+          "name": "_verify_planning_task_memory_disclosure",
+          "line": 14492
+        },
+        {
+          "name": "_verify_source_disclosure",
+          "line": 14505
+        },
+        {
+          "name": "_patch_model_input_disclosure_data_classes",
+          "line": 14523
+        },
+        {
+          "name": "_verify_patch_model_input_disclosure",
+          "line": 14539
+        },
+        {
+          "name": "_resolve_project_path_property",
+          "line": 14562
+        },
+        {
+          "name": "_optional_project_text_property",
+          "line": 14571
+        },
+        {
+          "name": "_project_text_property",
+          "line": 14589
+        },
+        {
+          "name": "_project_text_property_values",
+          "line": 14603
+        },
+        {
+          "name": "_working_directory",
+          "line": 14619
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/model_qualification.py",
+      "sha256": "abe3fa8d97853c45cb601621aed75a382b47458ff4347ec636b373bda1511bd6",
+      "lines": 373,
+      "definitions": [
+        {
+          "name": "ModelQualificationError",
+          "line": 34
+        },
+        {
+          "name": "_require",
+          "line": 40
+        },
+        {
+          "name": "canonical_hash",
+          "line": 48
+        },
+        {
+          "name": "_unique",
+          "line": 53
+        },
+        {
+          "name": "_object",
+          "line": 62
+        },
+        {
+          "name": "read_bound_json",
+          "line": 70
+        },
+        {
+          "name": "worker_implementation_identity",
+          "line": 85
+        },
+        {
+          "name": "patch_execution_qualification_identity",
+          "line": 94
+        },
+        {
+          "name": "_read_artifact",
+          "line": 99
+        },
+        {
+          "name": "_verify_materialized_response",
+          "line": 108
+        },
+        {
+          "name": "_trial_outcome",
+          "line": 157
+        },
+        {
+          "name": "QualifiedProfileSelection",
+          "line": 279
+        },
+        {
+          "name": "resolve_qualified_patch_profile",
+          "line": 303
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/patch_execution_trace.py",
+      "sha256": "cccd2c1c3c6759cf89133d5afc8598b48abca7c38fb21fdce40315bef897773d",
+      "lines": 229,
+      "definitions": [
+        {
+          "name": "PatchExecutionTraceConfiguration",
+          "line": 15
+        },
+        {
+          "name": "product_trace_identity",
+          "line": 63
+        },
+        {
+          "name": "product_execution_trace",
+          "line": 89
+        },
+        {
+          "name": "attach_product_trace_manifest",
+          "line": 204
+        },
+        {
+          "name": "exception_execution_trace_projection",
+          "line": 211
+        },
+        {
+          "name": "preserve_product_trace_projection",
+          "line": 220
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/patch_worker_configuration.py",
+      "sha256": "286d2a5673c5f19912ff97cc8abec1b7dbd8a7476f22e6196419aacf43f34206",
+      "lines": 274,
+      "definitions": [
+        {
+          "name": "PatchWorkerConfigurationError",
+          "line": 31
+        },
+        {
+          "name": "_error",
+          "line": 39
+        },
+        {
+          "name": "_unique_object",
+          "line": 43
+        },
+        {
+          "name": "_reject_constant",
+          "line": 52
+        },
+        {
+          "name": "_canonical_bytes",
+          "line": 56
+        },
+        {
+          "name": "_parse_object",
+          "line": 62
+        },
+        {
+          "name": "_read_bytes",
+          "line": 77
+        },
+        {
+          "name": "read_json_object",
+          "line": 84
+        },
+        {
+          "name": "_file_reference",
+          "line": 93
+        },
+        {
+          "name": "_verified_factory_bytes",
+          "line": 97
+        },
+        {
+          "name": "_LazyBehaviorEvaluator",
+          "line": 104
+        },
+        {
+          "name": "PatchWorkerConfiguration",
+          "line": 198
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/request_patch_execution.py",
+      "sha256": "56f506053ae40ef74ba8ea755e62cb887ae9b5a923a7e8324f846aa24345b70b",
+      "lines": 638,
+      "definitions": [
+        {
+          "name": "_validate_applied_source_chain",
+          "line": 28
+        },
+        {
+          "name": "admit_product_repair_context",
+          "line": 58
+        },
+        {
+          "name": "RequestPatchExecution",
+          "line": 233
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/reviewed_patch_continuation.py",
+      "sha256": "dc4ff7fba0c0627f59f75035505452eeacde89af8079646a826e7a93c6780269",
+      "lines": 838,
+      "definitions": [
+        {
+          "name": "_ref",
+          "line": 33
+        },
+        {
+          "name": "_read_retained_journal",
+          "line": 43
+        },
+        {
+          "name": "_verified_terminal",
+          "line": 57
+        },
+        {
+          "name": "_terminal_ref",
+          "line": 66
+        },
+        {
+          "name": "_recorded_behavior_summaries",
+          "line": 74
+        },
+        {
+          "name": "_has_upstream",
+          "line": 81
+        },
+        {
+          "name": "_source_comparison",
+          "line": 87
+        },
+        {
+          "name": "review_run",
+          "line": 120
+        },
+        {
+          "name": "_copy_source_snapshot",
+          "line": 195
+        },
+        {
+          "name": "_apply_inputs",
+          "line": 222
+        },
+        {
+          "name": "prepare_reviewed_patch_apply",
+          "line": 284
+        },
+        {
+          "name": "apply_reviewed_patch",
+          "line": 325
+        },
+        {
+          "name": "_retained_trace_request_id",
+          "line": 372
+        },
+        {
+          "name": "_apply_run_id",
+          "line": 390
+        },
+        {
+          "name": "_apply_reviewed_patch_once",
+          "line": 394
+        },
+        {
+          "name": "_artifact_reference",
+          "line": 500
+        },
+        {
+          "name": "_persist_applied_checkpoint",
+          "line": 504
+        },
+        {
+          "name": "_applied_source_snapshot",
+          "line": 522
+        },
+        {
+          "name": "_reviewed_build_inputs",
+          "line": 527
+        },
+        {
+          "name": "_verify_reviewed_build_result",
+          "line": 582
+        },
+        {
+          "name": "continue_reviewed_patch",
+          "line": 615
+        },
+        {
+          "name": "resume_deferred_approval",
+          "line": 722
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/upstream_model_trace.py",
+      "sha256": "ad581d39db1ad74f9fe343be7b0bf45c7ad845245e69b3560c0c85666c492cbb",
+      "lines": 156,
+      "definitions": [
+        {
+          "name": "_json",
+          "line": 25
+        },
+        {
+          "name": "_local_body",
+          "line": 29
+        },
+        {
+          "name": "_usage",
+          "line": 39
+        },
+        {
+          "name": "trace_upstream_model_call",
+          "line": 59
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/workflow/checkpointing.py",
+      "sha256": "47451483947946158b8238f8a80fb1be6bc622712f184b2df24196384da78ae4",
+      "lines": 2282,
+      "definitions": [
+        {
+          "name": "CheckpointPolicy",
+          "line": 59
+        },
+        {
+          "name": "WorkflowCheckpoint",
+          "line": 88
+        },
+        {
+          "name": "ResumeReport",
+          "line": 129
+        },
+        {
+          "name": "resumed_state_from_decision",
+          "line": 171
+        },
+        {
+          "name": "WorkflowCheckpointStore",
+          "line": 214
+        }
+      ]
+    },
+    {
+      "path": "src/mod_agent/workflow/graph.py",
+      "sha256": "65c04ea8c7f126d9dfab5d5f027eee5b42d0f33a299dd305e71ec480c78494b8",
+      "lines": 6409,
+      "definitions": [
+        {
+          "name": "_RuntimeEvidenceExecutionBoundaryError",
+          "line": 183
+        },
+        {
+          "name": "_verification_build_continuation",
+          "line": 253
+        },
+        {
+          "name": "_verification_runtime_checkpoint_id",
+          "line": 271
+        },
+        {
+          "name": "_verification_runtime_terminal_input",
+          "line": 288
+        },
+        {
+          "name": "_verification_operation_writes",
+          "line": 311
+        },
+        {
+          "name": "_VerificationGraphControls",
+          "line": 319
+        },
+        {
+          "name": "_verification_graph_controls",
+          "line": 328
+        },
+        {
+          "name": "_route_after_typed_runtime_evidence",
+          "line": 364
+        },
+        {
+          "name": "_validate_product_graph_start",
+          "line": 379
+        },
+        {
+          "name": "_validate_planning_continuation_graph_start",
+          "line": 407
+        },
+        {
+          "name": "_validate_patch_continuation_graph_start",
+          "line": 450
+        },
+        {
+          "name": "build_graph",
+          "line": 513
+        },
+        {
+          "name": "_route_input_summary",
+          "line": 1634
+        },
+        {
+          "name": "_add_traced_conditional_edges",
+          "line": 1685
+        },
+        {
+          "name": "_review_route_map",
+          "line": 1724
+        },
+        {
+          "name": "_make_real_graph_node",
+          "line": 1735
+        },
+        {
+          "name": "_make_stub_graph_node",
+          "line": 1788
+        },
+        {
+          "name": "_run_terminal_node_with_boundary",
+          "line": 1833
+        },
+        {
+          "name": "_run_plan_request",
+          "line": 1865
+        },
+        {
+          "name": "_run_draft_feature_spec",
+          "line": 1904
+        },
+        {
+          "name": "_run_retrieve_evidence",
+          "line": 1950
+        },
+        {
+          "name": "_finish_replanned_selection",
+          "line": 2056
+        },
+        {
+          "name": "_run_create_implementation_plan",
+          "line": 2068
+        },
+        {
+          "name": "_patch_factory_attempt_receipt",
+          "line": 2229
+        },
+        {
+          "name": "_patch_continuation_current_snapshot_sha256",
+          "line": 2258
+        },
+        {
+          "name": "_valid_patch_read_accounting",
+          "line": 2284
+        },
+        {
+          "name": "_valid_patch_agent_loop_receipt",
+          "line": 2306
+        },
+        {
+          "name": "_run_patch_continuation_factory",
+          "line": 2429
+        },
+        {
+          "name": "_run_generate_patch_with_upstream",
+          "line": 2615
+        },
+        {
+          "name": "_run_generate_patch_proposal",
+          "line": 2668
+        },
+        {
+          "name": "_default_proposal_git_binding_factory",
+          "line": 2884
+        },
+        {
+          "name": "_project_git_repository",
+          "line": 2903
+        },
+        {
+          "name": "_run_review_proposal",
+          "line": 2918
+        },
+        {
+          "name": "_domain_review_policy_from_state",
+          "line": 3071
+        },
+        {
+          "name": "_run_dynamic_human_review_gate",
+          "line": 3094
+        },
+        {
+          "name": "_validate_graph_edit_authority_exact_inputs",
+          "line": 3135
+        },
+        {
+          "name": "_finish_stagger_edit_authority_gate",
+          "line": 3205
+        },
+        {
+          "name": "_run_stagger_edit_authority_gate",
+          "line": 3271
+        },
+        {
+          "name": "_materialize_feature_spec_revision",
+          "line": 3563
+        },
+        {
+          "name": "_validate_feature_spec_revision_semantics",
+          "line": 3733
+        },
+        {
+          "name": "_latest_feature_artifact_ref",
+          "line": 3769
+        },
+        {
+          "name": "_canonical_sha256",
+          "line": 3787
+        },
+        {
+          "name": "_run_stagger_repair_planning_gate",
+          "line": 3797
+        },
+        {
+          "name": "_dynamic_review_interrupt_request",
+          "line": 3965
+        },
+        {
+          "name": "_dynamic_review_resume_binding",
+          "line": 3988
+        },
+        {
+          "name": "_resume_payload_from_dynamic_value",
+          "line": 4010
+        },
+        {
+          "name": "_default_domain_adapter_registry",
+          "line": 4031
+        },
+        {
+          "name": "_runtime_evidence_factory_from_settings",
+          "line": 4037
+        },
+        {
+          "name": "_run_dry_run_apply",
+          "line": 4054
+        },
+        {
+          "name": "_run_build",
+          "line": 4149
+        },
+        {
+          "name": "_run_verification_only_admission",
+          "line": 4495
+        },
+        {
+          "name": "_route_runtime_continuation_entry",
+          "line": 4580
+        },
+        {
+          "name": "_route_runtime_terminal_continuation_entry",
+          "line": 4657
+        },
+        {
+          "name": "_route_runtime_evidence_consolidation_entry",
+          "line": 4706
+        },
+        {
+          "name": "_route_after_terminal_evaluate",
+          "line": 4754
+        },
+        {
+          "name": "_run_create_repair_plan",
+          "line": 4765
+        },
+        {
+          "name": "_reanchor_applied_product_repair",
+          "line": 4960
+        },
+        {
+          "name": "_run_resolve_runtime_binding",
+          "line": 5172
+        },
+        {
+          "name": "_run_runtime_evidence",
+          "line": 5248
+        },
+        {
+          "name": "_runtime_summary_from_payload",
+          "line": 5482
+        },
+        {
+          "name": "_validate_runtime_evidence_result_identity",
+          "line": 5510
+        },
+        {
+          "name": "_run_fake_evaluate",
+          "line": 5566
+        },
+        {
+          "name": "_run_isolated_apply",
+          "line": 5769
+        },
+        {
+          "name": "_semantic_assurance_for_execution",
+          "line": 5934
+        },
+        {
+          "name": "_run_workflow_summary",
+          "line": 5975
+        },
+        {
+          "name": "_run_planning_brief",
+          "line": 6105
+        },
+        {
+          "name": "_v1_acceptance_boundary",
+          "line": 6130
+        },
+        {
+          "name": "_runtime_trust_binding_status",
+          "line": 6190
+        },
+        {
+          "name": "_request_plan_from_payload",
+          "line": 6197
+        },
+        {
+          "name": "_feature_spec_from_payload",
+          "line": 6222
+        },
+        {
+          "name": "_hook_requirement_from_payload",
+          "line": 6240
+        },
+        {
+          "name": "_read_artifact_data",
+          "line": 6250
+        },
+        {
+          "name": "_artifact_ref_from_state",
+          "line": 6260
+        },
+        {
+          "name": "_record_artifact",
+          "line": 6269
+        },
+        {
+          "name": "_node_status",
+          "line": 6278
+        },
+        {
+          "name": "_node_artifact_refs",
+          "line": 6304
+        },
+        {
+          "name": "_node_trace_details",
+          "line": 6330
+        },
+        {
+          "name": "_trace_event",
+          "line": 6373
+        },
+        {
+          "name": "_copy_state_with_trace",
+          "line": 6399
+        },
+        {
+          "name": "_copy_state",
+          "line": 6408
+        }
+      ]
+    },
+    {
+      "path": "src/observability/dashboard/services/trace_service.py",
+      "sha256": "22b3bf06c24ac8de5870c93cb4431098296a8444e1efb25718042ea0cc45869f",
+      "lines": 935,
+      "definitions": [
+        {
+          "name": "TraceService",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "path": "src/observability/evaluation/__init__.py",
+      "sha256": "b60281d253b85e1e42182699a0e5b2089e802a8348d75b12706762bcccb09f22",
+      "lines": 7,
+      "definitions": []
+    },
+    {
+      "path": "src/observability/evaluation/answer_generation.py",
+      "sha256": "36675eb2b35b8fd3a73666a2f29c1716a40af51a9e0bfe71122e449656f963de",
+      "lines": 115,
+      "definitions": [
+        {
+          "name": "LLMAnswerGenerator",
+          "line": 16
+        },
+        {
+          "name": "load_answer_overrides",
+          "line": 65
+        },
+        {
+          "name": "evaluation_run_metadata",
+          "line": 75
+        }
+      ]
+    },
+    {
+      "path": "src/observability/evaluation/composite_evaluator.py",
+      "sha256": "13b8de6a17b232be5dd7319cb4eb7db5f9179b5bb39b01dea18044f3524ca7e3",
+      "lines": 230,
+      "definitions": [
+        {
+          "name": "CompositeEvaluator",
+          "line": 23
+        }
+      ]
+    },
+    {
+      "path": "src/observability/evaluation/eval_runner.py",
+      "sha256": "074a02afb6e17ccda54fceafab73ddc78d21abc2e0bc88359061dee65c9d6366",
+      "lines": 1188,
+      "definitions": [
+        {
+          "name": "MeasurementState",
+          "line": 60
+        },
+        {
+          "name": "GoldenTestCase",
+          "line": 91
+        },
+        {
+          "name": "QueryResult",
+          "line": 134
+        },
+        {
+          "name": "EvalReport",
+          "line": 180
+        },
+        {
+          "name": "load_test_set",
+          "line": 264
+        },
+        {
+          "name": "load_test_set_metadata",
+          "line": 292
+        },
+        {
+          "name": "EvalRunner",
+          "line": 303
+        }
+      ]
+    },
+    {
+      "path": "src/observability/evaluation/langfuse_report.py",
+      "sha256": "395d876521ccfd3ec62143188975c543689e0e3adf78c530435e8228398661ee",
+      "lines": 312,
+      "definitions": [
+        {
+          "name": "_hash",
+          "line": 22
+        },
+        {
+          "name": "_time",
+          "line": 27
+        },
+        {
+          "name": "_nanos",
+          "line": 34
+        },
+        {
+          "name": "_iso_nanos",
+          "line": 39
+        },
+        {
+          "name": "_state",
+          "line": 44
+        },
+        {
+          "name": "prepare_export",
+          "line": 48
+        },
+        {
+          "name": "readback",
+          "line": 198
+        },
+        {
+          "name": "main",
+          "line": 258
+        }
+      ]
+    },
+    {
+      "path": "src/observability/evaluation/patch_model_experiment.py",
+      "sha256": "95907bb69824d9d364d6acb83cff92a149ee36e4b58d82c15c0c363e6dc387d5",
+      "lines": 208,
+      "definitions": [
+        {
+          "name": "_preparation_identity",
+          "line": 39
+        },
+        {
+          "name": "_require",
+          "line": 45
+        },
+        {
+          "name": "_partitions",
+          "line": 50
+        },
+        {
+          "name": "_profiles",
+          "line": 61
+        },
+        {
+          "name": "_case_snapshot",
+          "line": 85
+        },
+        {
+          "name": "_cells",
+          "line": 100
+        },
+        {
+          "name": "prepare_patch_model_experiment",
+          "line": 118
+        },
+        {
+          "name": "select_patch_experiment_cell",
+          "line": 173
+        }
+      ]
+    },
+    {
+      "path": "src/observability/evaluation/ragas_evaluator.py",
+      "sha256": "37199cb4b6b0a7f033ab0a678b4b687002605e2a07903be015d849de837f1d38",
+      "lines": 345,
+      "definitions": [
+        {
+          "name": "_import_ragas",
+          "line": 34
+        },
+        {
+          "name": "RagasEvaluator",
+          "line": 45
+        }
+      ]
+    },
+    {
+      "path": "src/observability/patch_execution_index.py",
+      "sha256": "fdaffb5010e80ad183bb657779239f25327f2dd36f809de687d01e760ba6120d",
+      "lines": 994,
+      "definitions": [
+        {
+          "name": "_object",
+          "line": 29
+        },
+        {
+          "name": "_rows",
+          "line": 33
+        },
+        {
+          "name": "_fields",
+          "line": 37
+        },
+        {
+          "name": "_strings",
+          "line": 43
+        },
+        {
+          "name": "_digest",
+          "line": 47
+        },
+        {
+          "name": "_journal_checks",
+          "line": 54
+        },
+        {
+          "name": "_local_path",
+          "line": 75
+        },
+        {
+          "name": "_read_bytes",
+          "line": 85
+        },
+        {
+          "name": "_json",
+          "line": 93
+        },
+        {
+          "name": "_References",
+          "line": 100
+        },
+        {
+          "name": "_phases",
+          "line": 149
+        },
+        {
+          "name": "_turns",
+          "line": 164
+        },
+        {
+          "name": "_message_object",
+          "line": 236
+        },
+        {
+          "name": "_tool_request_links",
+          "line": 248
+        },
+        {
+          "name": "_feedback_core",
+          "line": 283
+        },
+        {
+          "name": "_failure_feedback_links",
+          "line": 295
+        },
+        {
+          "name": "_failure_summary",
+          "line": 331
+        },
+        {
+          "name": "_tools",
+          "line": 382
+        },
+        {
+          "name": "_submissions",
+          "line": 417
+        },
+        {
+          "name": "_evaluations",
+          "line": 449
+        },
+        {
+          "name": "_factory_execution",
+          "line": 518
+        },
+        {
+          "name": "_count",
+          "line": 557
+        },
+        {
+          "name": "_upstream_provider_turns",
+          "line": 561
+        },
+        {
+          "name": "_chain_execution",
+          "line": 595
+        },
+        {
+          "name": "_attempt",
+          "line": 650
+        },
+        {
+          "name": "project_patch_executions",
+          "line": 784
+        },
+        {
+          "name": "_product_record_json",
+          "line": 847
+        },
+        {
+          "name": "_product_bound_path",
+          "line": 862
+        },
+        {
+          "name": "_product_artifact",
+          "line": 871
+        },
+        {
+          "name": "project_product_execution",
+          "line": 889
+        }
+      ]
+    }
+  ],
+  "named_call_sites": {
+    "compare_patch_trials": [
+      {
+        "path": "scripts/compare_patch_trials.py",
+        "line": 24
+      },
+      {
+        "path": "tests/unit/test_patch_trial_comparison.py",
+        "line": 109
+      },
+      {
+        "path": "tests/unit/test_patch_trial_comparison.py",
+        "line": 127
+      },
+      {
+        "path": "tests/unit/test_patch_trial_comparison.py",
+        "line": 137
+      }
+    ],
+    "execute_prepared": [
+      {
+        "path": "scripts/run_patch_sft_eval.py",
+        "line": 398
+      },
+      {
+        "path": "tests/unit/test_patch_sft_eval.py",
+        "line": 128
+      },
+      {
+        "path": "tests/unit/test_patch_sft_eval.py",
+        "line": 182
+      },
+      {
+        "path": "tests/unit/test_patch_sft_eval.py",
+        "line": 317
+      },
+      {
+        "path": "tests/unit/test_patch_sft_eval.py",
+        "line": 352
+      },
+      {
+        "path": "tests/unit/test_patch_sft_eval.py",
+        "line": 350
+      }
+    ],
+    "summarize_memory_outcomes": [
+      {
+        "path": "tests/unit/test_memory_comparison.py",
+        "line": 123
+      },
+      {
+        "path": "tests/unit/test_memory_comparison.py",
+        "line": 133
+      }
+    ],
+    "prepare_patch_model_experiment": [
+      {
+        "path": "scripts/prepare_patch_eval_suite.py",
+        "line": 42
+      },
+      {
+        "path": "tests/unit/test_patch_model_experiment.py",
+        "line": 88
+      },
+      {
+        "path": "tests/unit/test_patch_model_experiment.py",
+        "line": 128
+      },
+      {
+        "path": "tests/unit/test_patch_model_experiment.py",
+        "line": 160
+      },
+      {
+        "path": "tests/unit/test_patch_model_experiment.py",
+        "line": 176
+      },
+      {
+        "path": "tests/unit/test_patch_model_experiment.py",
+        "line": 122
+      }
+    ],
+    "CurrentPlanTaskOracle": [
+      {
+        "path": "src/mod_agent/domain/complete_crosshair_verification.py",
+        "line": 159
+      },
+      {
+        "path": "tests/unit/test_accurate_crosshair_eval.py",
+        "line": 89
+      },
+      {
+        "path": "tests/unit/test_accurate_crosshair_eval.py",
+        "line": 128
+      }
+    ],
+    "invoke_protected_judge": [
+      {
+        "path": "tests/unit/test_independent_release.py",
+        "line": 130
+      },
+      {
+        "path": "tests/unit/test_independent_release.py",
+        "line": 151
+      },
+      {
+        "path": "tests/unit/test_independent_release.py",
+        "line": 177
+      }
+    ],
+    "inspect_context_chain": [
+      {
+        "path": "tests/unit/test_context_chain.py",
+        "line": 21
+      }
+    ],
+    "run_public_product_pair": [
+      {
+        "path": "tests/unit/test_independent_product_adapter.py",
+        "line": 50
+      }
+    ],
+    "build_transition_eval_gate_report": [
+      {
+        "path": "src/mod_agent/workflow/graph.py",
+        "line": 5610
+      },
+      {
+        "path": "tests/unit/test_agent_quality_eval.py",
+        "line": 75
+      },
+      {
+        "path": "tests/unit/test_agent_quality_eval.py",
+        "line": 264
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 10
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 27
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 49
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 78
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 93
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 129
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 163
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 179
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 193
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 209
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 228
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 250
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 275
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 297
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 323
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 351
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 385
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 435
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 469
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 492
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 509
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 524
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 539
+      },
+      {
+        "path": "tests/unit/test_transition_eval_gate.py",
+        "line": 66
+      }
+    ],
+    "resolve_qualified_patch_profile": [
+      {
+        "path": "src/mod_agent/cli.py",
+        "line": 1939
+      },
+      {
+        "path": "src/mod_agent/fresh_planning_continuation.py",
+        "line": 1325
+      },
+      {
+        "path": "src/mod_agent/model_qualification.py",
+        "line": 294
+      },
+      {
+        "path": "tests/unit/test_model_qualification.py",
+        "line": 115
+      }
+    ]
+  },
+  "limitations": [
+    "Name-only AST lookup may miss dynamic imports, callback injection and aliases.",
+    "Existing tests were inspected but not executed.",
+    "File hashes describe inspected bytes, not a runnable frozen environment."
+  ]
+}

@@ -30,8 +30,10 @@ def mock_settings_llm_enabled():
     settings = Mock(spec=Settings)
     settings.ingestion = Mock()
     settings.ingestion.metadata_enricher = {'use_llm': True}
+    settings.ingestion.max_workers = 5
     settings.llm = Mock()
     settings.llm.provider = 'openai'
+    settings.llm.base_url = None
     return settings
 
 

@@ -12,14 +12,18 @@ Design Principles:
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import math
 import time
+from copy import deepcopy
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from src.core.trace.trace_context import TraceContext
 from src.libs.evaluator.base_evaluator import BaseEvaluator
 
 logger = logging.getLogger(__name__)
@@ -39,6 +43,17 @@ _RAGAS_ANSWER_METRICS = {
     "answer_relevancy",
     "context_precision",
 }
+_RAGAS_CONTEXT_METRICS = {"faithfulness", "context_precision"}
+_TEST_SET_METADATA_FIELDS = (
+    "description",
+    "tier",
+    "purpose",
+    "source",
+    "authoring_origin",
+    "human_verified",
+    "answer_policy",
+    "citation_policy",
+)
 
 
 @dataclass(frozen=True)
@@ -87,6 +102,10 @@ class GoldenTestCase:
     expected_chunk_ids: List[str] = field(default_factory=list)
     expected_sources: List[str] = field(default_factory=list)
     reference_answer: Optional[str] = None
+    source_sections: list[str] = field(default_factory=list)
+    source_pages: list[int] = field(default_factory=list)
+    diagnostic_types: list[str] = field(default_factory=list)
+    expected_behavior: str | None = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> GoldenTestCase:
@@ -95,7 +114,20 @@ class GoldenTestCase:
             expected_chunk_ids=data.get("expected_chunk_ids", []),
             expected_sources=data.get("expected_sources", []),
             reference_answer=data.get("reference_answer"),
+            source_sections=data.get("source_sections", []),
+            source_pages=data.get("source_pages", []),
+            diagnostic_types=data.get("diagnostic_types", []),
+            expected_behavior=data.get("expected_behavior"),
         )
+
+    def metadata(self) -> dict[str, Any]:
+        """Return suite-author facts that are not answer-generation inputs."""
+        return {
+            "source_sections": list(self.source_sections),
+            "source_pages": list(self.source_pages),
+            "diagnostic_types": list(self.diagnostic_types),
+            "expected_behavior": self.expected_behavior,
+        }
 
 
 @dataclass
@@ -106,6 +138,7 @@ class QueryResult:
         case_index: Zero-based position in the loaded golden test set.
         query: The test query.
         retrieved_chunk_ids: IDs of chunks actually retrieved.
+        retrieved_contexts: Snapshot of the final retrieved inputs, in input order.
         generated_answer: The generated answer (if applicable).
         metrics: Evaluation metrics for this query.
         metric_measurements: Per-metric measurement status.
@@ -113,6 +146,8 @@ class QueryResult:
         answer_measurement: Answer stage measurement state and provenance.
         evaluator_measurement: Evaluator stage measurement state.
         elapsed_ms: Time taken for retrieval + evaluation.
+        started_at: Actual case invocation start in UTC, or None if unattempted.
+        finished_at: Actual case invocation end in UTC, or None if unattempted.
     """
 
     query: str
@@ -131,6 +166,18 @@ class QueryResult:
     evaluator_measurement: MeasurementState = field(
         default_factory=lambda: MeasurementState(status=NOT_APPLICABLE)
     )
+    citation_measurement: MeasurementState = field(
+        default_factory=lambda: MeasurementState(status=NOT_APPLICABLE)
+    )
+    reference_answer: str | None = None
+    case_metadata: dict[str, Any] = field(default_factory=dict)
+    retrieved_contexts: list[dict[str, Any]] = field(default_factory=list)
+    answer_observation: dict[str, Any] | None = None
+    query_observation: dict[str, Any] | None = None
+    # Recorded provider calls only; an empty list carries no completeness claim.
+    embedding_observations: list[dict[str, Any]] = field(default_factory=list)
+    started_at: str | None = None
+    finished_at: str | None = None
 
 
 @dataclass
@@ -145,6 +192,7 @@ class EvalReport:
         total_elapsed_ms: Total time for the entire evaluation.
         evaluator_name: Name of the evaluator used.
         test_set_path: Path to the golden test set file.
+        run_metadata: Caller-selected JSON-compatible provenance; never settings.
     """
 
     query_results: List[QueryResult] = field(default_factory=list)
@@ -154,12 +202,35 @@ class EvalReport:
     test_set_path: str = ""
     metric_measurements: Dict[str, Dict[str, int]] = field(default_factory=dict)
     expected_metrics: List[str] = field(default_factory=list)
+    run_metadata: dict[str, Any] = field(default_factory=dict)
+    test_set_metadata: dict[str, Any] = field(default_factory=dict)
+    comparison_arm: str = "rag_on"
+
+    @property
+    def measurement_status(self) -> str:
+        """Completeness of measurement, independent of the scores themselves."""
+        counts = list(self.metric_measurements.values())
+        if not counts or not any(row["observed"] for row in counts):
+            return "unmeasured"
+        stages_failed = any(
+            stage.status == FAILED_TO_MEASURE
+            for result in self.query_results
+            for stage in (result.retrieval_measurement, result.answer_measurement,
+                          result.evaluator_measurement, result.citation_measurement)
+        )
+        if stages_failed or any(row["failed_to_measure"] for row in counts):
+            return "partial"
+        return "complete"
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialise report to dictionary."""
         return {
             "evaluator_name": self.evaluator_name,
+            "measurement_status": self.measurement_status,
             "test_set_path": self.test_set_path,
+            "run_metadata": deepcopy(self.run_metadata),
+            "test_set_metadata": deepcopy(self.test_set_metadata),
+            "comparison_arm": self.comparison_arm,
             "total_elapsed_ms": round(self.total_elapsed_ms, 1),
             "aggregate_metrics": {
                 k: round(v, 4) for k, v in self.aggregate_metrics.items()
@@ -175,13 +246,22 @@ class EvalReport:
                     "case_index": qr.case_index,
                     "query": qr.query,
                     "retrieved_chunk_ids": qr.retrieved_chunk_ids,
+                    "retrieved_contexts": deepcopy(qr.retrieved_contexts),
                     "generated_answer": qr.generated_answer,
+                    "reference_answer": qr.reference_answer,
+                    "case_metadata": deepcopy(qr.case_metadata),
                     "metrics": {k: round(v, 4) for k, v in qr.metrics.items()},
                     "metric_measurements": dict(qr.metric_measurements),
                     "retrieval_measurement": qr.retrieval_measurement.to_dict(),
                     "answer_measurement": qr.answer_measurement.to_dict(),
+                    "answer_observation": deepcopy(qr.answer_observation),
+                    "query_observation": deepcopy(qr.query_observation),
+                    "embedding_observations": deepcopy(qr.embedding_observations),
                     "evaluator_measurement": qr.evaluator_measurement.to_dict(),
+                    "citation_measurement": qr.citation_measurement.to_dict(),
                     "elapsed_ms": round(qr.elapsed_ms, 1),
+                    "started_at": qr.started_at,
+                    "finished_at": qr.finished_at,
                 }
                 for qr in self.query_results
             ],
@@ -216,6 +296,17 @@ def load_test_set(path: str | Path) -> List[GoldenTestCase]:
     return [GoldenTestCase.from_dict(tc) for tc in data["test_cases"]]
 
 
+def load_test_set_metadata(path: str | Path) -> dict[str, Any]:
+    """Load explicit suite provenance without treating it as generation input."""
+    file_path = Path(path)
+    if not file_path.exists():
+        raise FileNotFoundError(f"Golden test set not found: {file_path}")
+    data = json.loads(file_path.read_text(encoding="utf-8"))
+    if "human_verified" in data and type(data["human_verified"]) is not bool:
+        raise ValueError("human_verified must be an exact boolean when provided.")
+    return {key: deepcopy(data[key]) for key in _TEST_SET_METADATA_FIELDS if key in data}
+
+
 class EvalRunner:
     """Runs batch evaluation against a golden test set.
 
@@ -246,6 +337,8 @@ class EvalRunner:
         answer_overrides: Optional[Dict[int, Any]] = None,
         reranker: Any = None,
         expected_metrics: Optional[Sequence[str]] = None,
+        synthetic_fallback: bool = True,
+        query_service: Any = None,
     ) -> None:
         """Initialize EvalRunner.
 
@@ -263,20 +356,29 @@ class EvalRunner:
             reranker: Optional CoreReranker instance for reranking results.
             expected_metrics: Optional exact metric names expected from a
                 BaseEvaluator whose abstract interface does not declare them.
+            synthetic_fallback: Preserve the explicitly synthetic library
+                preview when no generator is configured. Public evaluation
+                entries disable this so absent answers remain absent.
         """
         self.settings = settings
         self.hybrid_search = hybrid_search
         self.evaluator = evaluator
         self.answer_generator = answer_generator
+        self.query_service = query_service
         self.answer_overrides = answer_overrides or {}
         self.reranker = reranker
         self.expected_metrics = self._validated_metric_names(expected_metrics or [])
+        self.synthetic_fallback = synthetic_fallback
 
     def run(
         self,
         test_set_path: str | Path,
         top_k: int = 10,
         collection: Optional[str] = None,
+        *,
+        run_metadata: dict[str, Any] | None = None,
+        stop_on_failure: bool = False,
+        comparison_arm: str = "rag_on",
     ) -> EvalReport:
         """Run evaluation on the golden test set.
 
@@ -284,6 +386,12 @@ class EvalRunner:
             test_set_path: Path to golden_test_set.json.
             top_k: Number of chunks to retrieve per query.
             collection: Optional collection name filter.
+            run_metadata: Explicit JSON-compatible model/index/run identities.
+                Only caller-provided values are included; Settings are not read.
+            stop_on_failure: Stop actual calls after the first case with a failed
+                stage, retaining unattempted cases in the report and denominator.
+            comparison_arm: ``rag_on`` when generation sees retrieved contexts,
+                or ``rag_off`` when no retrieval is configured.
 
         Returns:
             EvalReport with per-query and aggregate metrics.
@@ -294,10 +402,18 @@ class EvalRunner:
         """
         if self.evaluator is None:
             raise ValueError("EvalRunner requires an evaluator.")
+        if comparison_arm not in {"rag_on", "rag_off"}:
+            raise ValueError("comparison_arm must be 'rag_on' or 'rag_off'.")
 
         test_cases = load_test_set(test_set_path)
         if not test_cases:
             raise ValueError("Golden test set is empty.")
+
+        metadata = {} if run_metadata is None else deepcopy(run_metadata)
+        if not isinstance(metadata, dict):
+            raise TypeError("run_metadata must be a JSON-compatible dictionary.")
+        # Fail before retrieval or model calls if provenance cannot be exported.
+        json.dumps(metadata, allow_nan=False)
 
         logger.info(
             "Starting evaluation: %d test cases, evaluator=%s",
@@ -308,25 +424,60 @@ class EvalRunner:
         report = EvalReport(
             evaluator_name=type(self.evaluator).__name__,
             test_set_path=str(test_set_path),
+            run_metadata=metadata,
+            test_set_metadata=load_test_set_metadata(test_set_path),
+            comparison_arm=comparison_arm,
         )
         declared_metrics = self._declared_metric_names()
 
         t0 = time.monotonic()
+        stopped_by_case: int | None = None
 
         for idx, tc in enumerate(test_cases):
+            if stopped_by_case is not None:
+                stopped = MeasurementState(
+                    status=FAILED_TO_MEASURE,
+                    mode="run_stopped",
+                    error_category="PreviousCaseFailed",
+                    error_message=(
+                        f"Case {idx} was not attempted because case {stopped_by_case} "
+                        "failed to measure."
+                    ),
+                )
+                report.query_results.append(QueryResult(
+                    query=tc.query,
+                    case_index=idx,
+                    reference_answer=tc.reference_answer,
+                    case_metadata=tc.metadata(),
+                    retrieval_measurement=stopped,
+                    answer_measurement=stopped,
+                    evaluator_measurement=stopped,
+                ))
+                continue
             logger.info("Evaluating [%d/%d]: %s", idx + 1, len(test_cases), tc.query[:60])
             # Use user-provided answer override if available for this index
             answer_override = self.answer_overrides.get(
                 idx,
                 _ANSWER_OVERRIDE_MISSING,
             )
+            started_at = datetime.now(timezone.utc).isoformat()
             qr = self._evaluate_single(
                 tc, top_k=top_k, collection=collection,
                 answer_override=answer_override,
                 case_index=idx,
                 expected_metrics=declared_metrics,
+                require_context_citations=bool(report.test_set_metadata.get("citation_policy")),
             )
+            qr.finished_at = datetime.now(timezone.utc).isoformat()
+            qr.started_at = started_at
             report.query_results.append(qr)
+            if stop_on_failure and any(
+                stage.status == FAILED_TO_MEASURE
+                for stage in (
+                    qr.retrieval_measurement, qr.answer_measurement, qr.evaluator_measurement,
+                )
+            ):
+                stopped_by_case = idx
 
         elapsed_ms = (time.monotonic() - t0) * 1000.0
         query_elapsed_ms = sum(qr.elapsed_ms for qr in report.query_results)
@@ -359,6 +510,7 @@ class EvalRunner:
         answer_override: Any = _ANSWER_OVERRIDE_MISSING,
         case_index: Optional[int] = None,
         expected_metrics: Optional[Sequence[str]] = None,
+        require_context_citations: bool = False,
     ) -> QueryResult:
         """Evaluate a single test case.
 
@@ -370,22 +522,49 @@ class EvalRunner:
                 be an exact, non-empty str and is never silently replaced.
             case_index: Zero-based identity in the loaded golden test set.
             expected_metrics: Exact metric names expected for this run.
+            require_context_citations: Enforce the suite's explicit citation policy.
 
         Returns:
             QueryResult with metrics for this test case.
         """
         t0 = time.monotonic()
-        qr = QueryResult(query=test_case.query, case_index=case_index)
+        qr = QueryResult(query=test_case.query, case_index=case_index,
+                         reference_answer=test_case.reference_answer,
+                         case_metadata=test_case.metadata())
         expected = self._validated_metric_names(expected_metrics or [])
 
         # Step 1: Retrieve chunks
-        retrieved_chunks, qr.retrieval_measurement = self._retrieve(
-            test_case.query,
-            top_k,
-            collection,
-        )
+        retrieval_trace = TraceContext(trace_type="query")
+        query_result = None
+        if self.query_service is not None:
+            from src.core.query_engine.query_service import QueryRequest
+            query_response = self.query_service.query(QueryRequest(query=test_case.query,
+                collection=collection or self.query_service.collection, top_k=top_k,
+                answer=self.answer_generator is not None and answer_override is _ANSWER_OVERRIDE_MISSING,
+                require_citations=require_context_citations))
+            query_result = query_response.to_dict()
+            qr.query_observation = deepcopy(query_result)
+            retrieved_chunks = query_result["results"]
+            if query_result["execution_state"].get("retrieval_completed"):
+                qr.retrieval_measurement = MeasurementState(status=OBSERVED, mode="empty" if not retrieved_chunks else "results")
+            else:
+                qr.retrieval_measurement = MeasurementState(status=FAILED_TO_MEASURE, mode="retrieval",
+                    error_category=(query_result["error"] or {}).get("type", "QueryIncomplete"),
+                    error_message=(query_result["error"] or {}).get("code", query_result["status"]))
+            retrieval_trace.stages = query_result["trace"].get("stages", [])
+        else:
+            retrieved_chunks, qr.retrieval_measurement = self._retrieve(
+                test_case.query, top_k, collection, trace=retrieval_trace,
+            )
+        retrieval_trace.finish()
+        # 为什么要有它：按查询传递既有TraceContext，避免并发检索用共享last_observation串错成本。
+        qr.embedding_observations = [deepcopy(stage["data"]) for stage in retrieval_trace.stages
+            if stage["stage"] == "embedding"]
         qr.retrieved_chunk_ids = [
             self._get_chunk_id(c) for c in retrieved_chunks
+        ]
+        qr.retrieved_contexts = [
+            self._snapshot_context(c) for c in retrieved_chunks
         ]
 
         # Step 2: Generate answer — prefer user override, then generator, then fallback
@@ -400,12 +579,28 @@ class EvalRunner:
                 answer_override,
                 mode="answer_override",
             )
+        elif query_result is not None and self.answer_generator is not None:
+            answer = query_result["answer"]
+            qr.answer_observation = deepcopy(query_response.evidence.get("answer_observation", query_result["answer_observation"]))
+            if answer is not None and (query_result["status"] == "completed" or query_result["citation_validation"]["status"] == "failed"):
+                answer, qr.answer_measurement = self._measure_answer_value(answer, mode="answer_generator")
+            else:
+                qr.answer_measurement = MeasurementState(status=FAILED_TO_MEASURE, mode="answer_generator",
+                    error_category=(query_result["error"] or {}).get("type", "QueryIncomplete"),
+                    error_message=(query_result["error"] or {}).get("code", query_result["status"]))
         else:
             answer, qr.answer_measurement = self._generate_answer(
                 test_case.query,
                 retrieved_chunks,
+                require_context_citations=require_context_citations,
             )
+            # 为什么要有它：生成器复用于多题，当前调用观测必须复制并与该题绑定，失败成本仍保留。
+            observation = getattr(self.answer_generator, "last_observation", None)
+            if isinstance(observation, dict):
+                qr.answer_observation = deepcopy(observation)
         qr.generated_answer = answer
+        if require_context_citations and qr.answer_measurement.status == OBSERVED:
+            qr.citation_measurement = self._measure_context_citations(answer, retrieved_chunks)
 
         # Step 3: Build ground truth
         ground_truth = (
@@ -562,6 +757,8 @@ class EvalRunner:
         query: str,
         top_k: int,
         collection: Optional[str],
+        *,
+        trace: TraceContext | None = None,
     ) -> tuple[List[Any], MeasurementState]:
         """Retrieve chunks using HybridSearch + optional Reranking.
 
@@ -580,9 +777,20 @@ class EvalRunner:
             has_reranker = self.reranker is not None and getattr(self.reranker, 'is_enabled', False)
             initial_top_k = top_k * 2 if has_reranker else top_k
 
+            trace_kwargs = {}
+            if trace is not None:
+                # 为什么要有它：观测是可选能力；先看签名，避免TypeError后重试造成双重检索。
+                try:
+                    parameters = inspect.signature(self.hybrid_search.search).parameters
+                    if "trace" in parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD
+                                                     for p in parameters.values()):
+                        trace_kwargs["trace"] = trace
+                except (TypeError, ValueError):
+                    pass
             results = self.hybrid_search.search(
                 query=query,
                 top_k=initial_top_k,
+                **trace_kwargs,
             )
             results = results if isinstance(results, list) else results.results
 
@@ -603,6 +811,8 @@ class EvalRunner:
         self,
         query: str,
         chunks: List[Any],
+        *,
+        require_context_citations: bool = False,
     ) -> tuple[Optional[str], MeasurementState]:
         """Generate an answer from retrieved chunks.
 
@@ -612,10 +822,11 @@ class EvalRunner:
         """
         if self.answer_generator is not None:
             try:
-                return self._measure_answer_value(
+                answer, measurement = self._measure_answer_value(
                     self.answer_generator(query, chunks),
                     mode="answer_generator",
                 )
+                return answer, measurement
             except Exception as exc:
                 logger.warning("Answer generation failed: %s", exc)
                 return None, MeasurementState.from_exception(
@@ -623,7 +834,10 @@ class EvalRunner:
                     mode="answer_generator",
                 )
 
-        # Fallback: concatenate chunk texts
+        if not self.synthetic_fallback:
+            return None, MeasurementState(status=NOT_APPLICABLE, mode="not_configured")
+
+        # Fallback: concatenate chunk texts for explicit library previews only.
         texts = []
         for c in chunks:
             if isinstance(c, str):
@@ -639,6 +853,24 @@ class EvalRunner:
             status=NOT_APPLICABLE,
             mode="synthetic_fallback",
         )
+
+    @staticmethod
+    def _measure_context_citations(
+        answer: Optional[str],
+        chunks: List[Any],
+    ) -> MeasurementState:
+        """Record explicit citation-policy status without erasing model output."""
+        assert answer is not None
+        from src.core.query_engine.citations import citation_error
+        failure = citation_error(answer, len(chunks))
+        if failure:
+            return MeasurementState(
+                status=FAILED_TO_MEASURE,
+                mode="citation_policy",
+                error_category=failure[0],
+                error_message=failure[1],
+            )
+        return MeasurementState(status=OBSERVED, mode="citation_policy")
 
     @staticmethod
     def _measure_answer_value(
@@ -836,13 +1068,16 @@ class EvalRunner:
         if result.retrieval_measurement.status == FAILED_TO_MEASURE:
             return FAILED_TO_MEASURE
         if result.retrieval_measurement.status == NOT_APPLICABLE:
-            return NOT_APPLICABLE
+            if metric in _RAGAS_CONTEXT_METRICS or metric in _CUSTOM_RETRIEVAL_METRICS:
+                return NOT_APPLICABLE
+            if metric != "answer_relevancy":
+                return NOT_APPLICABLE
         if metric in _CUSTOM_RETRIEVAL_METRICS and not test_case.expected_chunk_ids:
             return NOT_APPLICABLE
         if metric in _RAGAS_ANSWER_METRICS:
             if result.answer_measurement.status == FAILED_TO_MEASURE:
                 return FAILED_TO_MEASURE
-            if result.answer_measurement.mode == "synthetic_fallback":
+            if result.answer_measurement.status == NOT_APPLICABLE:
                 return NOT_APPLICABLE
         return None
 
@@ -880,7 +1115,7 @@ class EvalRunner:
                         status = FAILED_TO_MEASURE
                     elif (
                         metric in _RAGAS_ANSWER_METRICS
-                        and result.answer_measurement.mode == "synthetic_fallback"
+                        and result.answer_measurement.status == NOT_APPLICABLE
                     ):
                         status = NOT_APPLICABLE
                     elif result.evaluator_measurement.status == NOT_APPLICABLE:
@@ -921,6 +1156,31 @@ class EvalRunner:
                 "not_applicable": not_applicable,
             }
         return details
+
+    def _snapshot_context(self, chunk: Any) -> dict[str, Any]:
+        """Copy the exact retrieval fields before generation/evaluation consumes them.
+
+        HybridSearch returns RetrievalResult (chunk_id, text, score, metadata).
+        The library also accepts text strings and dictionaries. Missing fields
+        in those representations stay absent values; no content is reconstructed
+        from a chunk ID, reference answer, or Settings.
+        """
+        if isinstance(chunk, str):
+            text, score, metadata = chunk, None, {}
+        elif isinstance(chunk, dict):
+            text = chunk.get("text")
+            score = chunk.get("score")
+            metadata = chunk.get("metadata", {})
+        else:
+            text = getattr(chunk, "text", None)
+            score = getattr(chunk, "score", None)
+            metadata = getattr(chunk, "metadata", {})
+        return deepcopy({
+            "chunk_id": self._get_chunk_id(chunk),
+            "text": text,
+            "score": score,
+            "metadata": metadata,
+        })
 
     def _get_chunk_id(self, chunk: Any) -> str:
         """Extract chunk ID from various representations."""

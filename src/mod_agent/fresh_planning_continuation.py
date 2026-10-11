@@ -7,6 +7,7 @@ import json
 import os
 import time
 from collections.abc import Callable, Mapping
+from copy import deepcopy
 from dataclasses import asdict, dataclass, fields, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
@@ -22,6 +23,7 @@ from src.mod_agent.artifacts import (
 )
 from src.mod_agent.bindings import BindingResolver
 from src.mod_agent.evidence import EvidencePack
+from src.mod_agent.evidence.compilation_candidate import compilation_candidate_scope
 from src.mod_agent.evidence.identity import feature_spec_payload_sha256
 from src.mod_agent.fresh_coverage import (
     FRESH_COVERAGE_MODEL_CALL_BUDGET,
@@ -134,8 +136,28 @@ class PatchContinuationInputV1:
     qualified_model_routing_ref: Mapping[str, str] | None = None
     patch_upstream_configuration_ref: Mapping[str, str] | None = None
     saved_patch_selection: Mapping[str, Any] | None = None
+    candidate_reverification_selection: Mapping[str, Any] | None = None
+
+    @property
+    def reuses_model_output(self) -> bool:
+        return self.saved_patch_selection is not None or self.candidate_reverification_selection is not None
 
     def __post_init__(self) -> None:
+        if self.candidate_reverification_selection is not None:
+            # 为什么要有它：未通过验收的候选与历史已通过补丁分开准入，精确来源和当前检查器不能被模型修订或隐式重选。
+            selected = self.candidate_reverification_selection
+            if (self.saved_patch_selection is not None or self.repair_parent_proposal_ref is not None
+                    or self.patch_upstream_configuration_ref is not None or not self.attempt_id
+                    or not isinstance(selected, Mapping)
+                    or set(selected) != {"source_attempt_ref", "parent_manifest_ref", "parent_result_ref"}
+                    or self.worker_configuration_ref is None):
+                raise PatchContinuationError("SAVED_CANDIDATE_SELECTION_INVALID", "request", "Exact retained candidate and new verifier selection required.")
+            for reference in selected.values():
+                if (not isinstance(reference, Mapping) or set(reference) != {"path", "sha256"}
+                        or not isinstance(reference["path"], str) or not Path(reference["path"]).is_absolute()
+                        or not _is_sha256(reference["sha256"])):
+                    raise PatchContinuationError("SAVED_CANDIDATE_SELECTION_INVALID", "request", "Exact candidate reference required.")
+            object.__setattr__(self, "candidate_reverification_selection", deepcopy(dict(selected)))
         if self.contract_version != PATCH_CONTINUATION_CONTRACT_VERSION:
             raise PatchContinuationError(
                 "PATCH_CONTINUATION_VERSION_INVALID",
@@ -401,6 +423,7 @@ class _AdmittedPatchInputs:
     latest_observations: dict[str, dict[str, Any]]
     repair_context: dict[str, Any] | None = None
     saved_patch: dict[str, Any] | None = None
+    saved_candidate: dict[str, Any] | None = None
 
 
 PatchContinuationFactory = Callable[
@@ -480,6 +503,26 @@ def _validate_worker_configuration_identity(
                 "PATCH_WORKER_CONFIGURATION_IDENTITY_INVALID", "configuration_admission",
                 "Worker configuration file bytes differ from the selected SHA-256.",
             )
+
+
+def _admit_compilation_candidate(
+    evidence_pack: dict[str, Any],
+    feature_spec: dict[str, Any],
+    *,
+    worker_configuration_ref: Mapping[str, str] | None = None,
+    require_selected_worker: bool = False,
+) -> dict[str, Any] | None:
+    """Recheck the candidate's exact worker configuration without invoking it.
+
+    为什么要有它：源码绑定的候选准入依赖原检查器，续接不能换成另一配置或把未配置检查器的任务当作可验证候选。
+    """
+    scope = compilation_candidate_scope(evidence_pack, feature_spec)
+    if scope is None:
+        return None
+    reference = scope["worker_configuration_ref"]
+    if require_selected_worker and worker_configuration_ref != reference:
+        raise ValueError("COMPILATION_CANDIDATE_WORKER_MISMATCH")
+    return scope
 
 
 def _same_path(left: Path, right: Path) -> bool:
@@ -992,7 +1035,8 @@ def preflight_planning_continuation(
     store = artifact_store or ArtifactStore(artifact_root)
     feature_envelope = _read_exact_revision(store, request.feature_spec_ref)
     evidence_envelope = _read_exact_revision(store, request.evidence_pack_ref)
-    if feature_envelope.get("status") != "success" or evidence_envelope.get("status") != "success":
+    if (feature_envelope.get("status") != "success"
+            or evidence_envelope.get("status") not in {"success", "blocked"}):
         raise PlanningContinuationError(
             "PLANNING_CONTINUATION_ARTIFACT_STATUS_INVALID",
             "artifact_admission",
@@ -1002,6 +1046,7 @@ def preflight_planning_continuation(
     try:
         feature_spec = strict_feature_spec_payload(feature_envelope["data"])
         pack = EvidencePack.from_artifact_payload(evidence_envelope["data"])
+        candidate_scope = _admit_compilation_candidate(pack.to_artifact_payload(), feature_spec)
     except (KeyError, TypeError, ValueError) as exc:
         raise PlanningContinuationError(
             "PLANNING_CONTINUATION_PAYLOAD_INVALID",
@@ -1009,13 +1054,17 @@ def preflight_planning_continuation(
             "Fresh input payload failed strict semantic round-trip.",
         ) from exc
     evidence_pack = pack.to_artifact_payload()
-    _validate_fresh_origin(evidence_pack)
+    if evidence_envelope.get("status") != "success" and candidate_scope is None:
+        raise PlanningContinuationError("PLANNING_CONTINUATION_ARTIFACT_STATUS_INVALID", "artifact_admission",
+            "Blocked Evidence requires a current compilation candidate scope.")
+    if candidate_scope is None:
+        _validate_fresh_origin(evidence_pack)
     if (
         feature_spec["feature_id"] != request.feature_spec_ref.feature_id
         or evidence_pack["query"] != feature_spec["user_request"]
-        or evidence_pack["readiness"] != "sufficient"
-        or evidence_pack["can_generate_patch"] is not True
-        or evidence_pack["authoritative_for_patch"] is not True
+        or (candidate_scope is None and (evidence_pack["readiness"] != "sufficient"
+            or evidence_pack["can_generate_patch"] is not True
+            or evidence_pack["authoritative_for_patch"] is not True))
     ):
         raise PlanningContinuationError(
             "PLANNING_CONTINUATION_SEMANTIC_ADMISSION_FAILED",
@@ -1246,7 +1295,7 @@ def preflight_patch_continuation(
         _read_hashed_repair_file(request.patch_upstream_configuration_ref)
     try:
         artifact_root, workspace_root = _resolve_roots(
-            request, allow_product_store_subdir=request.saved_patch_selection is not None,
+            request, allow_product_store_subdir=request.reuses_model_output,
         )  # type: ignore[arg-type]
     except PlanningContinuationError as exc:
         raise PatchContinuationError(
@@ -1279,10 +1328,8 @@ def preflight_patch_continuation(
         request.implementation_plan_ref,
         consumer_stage=PATCH_CONSUMER_STAGE,
     )
-    if any(
-        envelope.get("status") != "success"
-        for envelope in (feature_envelope, evidence_envelope, plan_envelope)
-    ):
+    if (any(envelope.get("status") != "success" for envelope in (feature_envelope, plan_envelope))
+            or evidence_envelope.get("status") not in {"success", "blocked"}):
         raise PatchContinuationError(
             "PATCH_CONTINUATION_ARTIFACT_STATUS_INVALID",
             "artifact_admission",
@@ -1299,12 +1346,17 @@ def preflight_patch_continuation(
             evidence_envelope["data"]
         ).to_artifact_payload()
         implementation_plan = dict(plan_envelope["data"])
+        candidate_scope = _admit_compilation_candidate(evidence_pack, feature_spec,
+            worker_configuration_ref=request.worker_configuration_ref, require_selected_worker=True)
     except (KeyError, TypeError, ValueError) as exc:
         raise PatchContinuationError(
             "PATCH_CONTINUATION_PAYLOAD_INVALID",
             "artifact_admission",
             "Selected Artifact payload failed strict semantic admission.",
         ) from exc
+    if evidence_envelope.get("status") != "success" and candidate_scope is None:
+        raise PatchContinuationError("PATCH_CONTINUATION_ARTIFACT_STATUS_INVALID", "artifact_admission",
+            "Blocked Evidence requires a current compilation candidate scope.")
     if (
         feature_spec["feature_id"] != request.feature_spec_ref.feature_id
         or evidence_pack["query"] != feature_spec["user_request"]
@@ -1349,7 +1401,7 @@ def preflight_patch_continuation(
         request.evidence_pack_ref,
         request.implementation_plan_ref,
     )
-    source_tree_snapshot = _csharp_source_snapshot(workspace_root)
+    source_tree_snapshot = _patch_request_source_snapshot(request)
     repair_context = _admit_patch_repair_context(
         request=request, store=store, feature_spec=feature_spec,
         evidence_pack=evidence_pack, implementation_plan=implementation_plan,
@@ -1382,6 +1434,9 @@ def preflight_patch_continuation(
         except (KeyError, TypeError, ValueError, OSError) as exc:
             raise PatchContinuationError("PATCH_SAVED_ADMISSION_REJECTED", "saved_patch_admission",
                 "Saved source, verification or budget records failed exact admission.") from exc
+    if request.candidate_reverification_selection is not None:
+        from src.mod_agent.saved_candidate_reverification import admit_saved_candidate
+        admitted = replace(admitted, saved_candidate=admit_saved_candidate(request, admitted))
     return admitted
 
 
@@ -1404,6 +1459,18 @@ def _repair_json(ref: Mapping[str, str] | None) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("A bound repair document must be a JSON object.")
     return value
+
+
+def _patch_request_source_snapshot(request):
+    root = Path(request.workspace_root).resolve()
+    if getattr(request, "candidate_reverification_selection", None) is not None:
+        manifest = _repair_json(request.candidate_reverification_selection["parent_manifest_ref"])
+        target = Path(manifest["nuget_isolated_build_profile"]["working_directory"]).resolve()
+        if target == root or not target.is_relative_to(root) or target.is_relative_to(Path(request.artifact_store_root).resolve()):
+            raise PatchContinuationError("SAVED_CANDIDATE_SOURCE_SCOPE_INVALID", "source_validation", "Retained target must be inside the original workspace.")
+        # 为什么要有它：验收会创建新的编译副本，源码漂移比较应覆盖原目标工程，而不是把验收产物当成产品修改。
+        root = target
+    return _csharp_source_snapshot(root)
 
 
 def _formal_repair_selection(source: Mapping[str, Any], source_ref: Mapping[str, str]) -> dict[str, Any]:
@@ -1879,6 +1946,7 @@ class PatchContinuationAttemptJournal:
         implementation_plan_ref: ArtifactRef,
         workspace_root: str | Path,
         max_model_calls: int,
+        model_call_budget_policy: str = "stage_and_total",
         worker_configuration_ref: Mapping[str, str] | None = None,
         worker_profile_sha256: str | None = None,
     ) -> PatchContinuationAttemptJournal:
@@ -1893,10 +1961,12 @@ class PatchContinuationAttemptJournal:
                 "PATCH_PRODUCT_JOURNAL_IDENTITY_INVALID", "patch_attempt_receipt",
                 "A worker segment requires explicit request and distinct parent/run identities.",
             )
-        if type(max_model_calls) is not int or not 1 <= max_model_calls <= 5:
+        if (model_call_budget_policy not in {"stage_and_total", "task_total_only"}
+                or type(max_model_calls) is not int or max_model_calls < 1
+                or model_call_budget_policy == "stage_and_total" and max_model_calls > 5):
             raise PatchContinuationError(
                 "PATCH_CONTINUATION_MODEL_CALL_BUDGET_INVALID", "request",
-                "The worker segment model-call budget must be between one and five.",
+                "The worker segment requires a positive task allowance; legacy segments retain their five-call bound.",
             )
         selected_refs = (feature_spec_ref, evidence_pack_ref, implementation_plan_ref)
         try:
@@ -1925,7 +1995,8 @@ class PatchContinuationAttemptJournal:
             envelopes = tuple(_read_selected_exact_revision(
                 store, ref, consumer_stage=None if index == 0 else PATCH_CONSUMER_STAGE,
             ) for index, ref in enumerate(selected_refs))
-            if any(envelope.get("status") != "success" for envelope in envelopes):
+            if (any(envelope.get("status") != "success" for envelope in (envelopes[0], envelopes[2]))
+                    or envelopes[1].get("status") not in {"success", "blocked"}):
                 raise PatchContinuationError(
                     "PATCH_CONTINUATION_ARTIFACT_STATUS_INVALID", "artifact_admission",
                     "A Product Graph worker requires successful selected Artifacts.",
@@ -1935,6 +2006,11 @@ class PatchContinuationAttemptJournal:
             feature = strict_feature_spec_payload(envelopes[0]["data"])
             evidence = EvidencePack.from_artifact_payload(envelopes[1]["data"]).to_artifact_payload()
             plan = dict(envelopes[2]["data"])
+            candidate_scope = _admit_compilation_candidate(evidence, feature,
+                worker_configuration_ref=worker_configuration_ref, require_selected_worker=True)
+            if envelopes[1].get("status") != "success" and candidate_scope is None:
+                raise PatchContinuationError("PATCH_CONTINUATION_ARTIFACT_STATUS_INVALID", "artifact_admission",
+                    "Blocked Evidence requires a current compilation candidate scope.")
             if feature["feature_id"] != feature_spec_ref.feature_id or evidence["query"] != feature["user_request"]:
                 raise PatchContinuationError(
                     "PATCH_CONTINUATION_SEMANTIC_IDENTITY_MISMATCH", "artifact_admission",
@@ -1975,6 +2051,7 @@ class PatchContinuationAttemptJournal:
             "artifact_store_root": str(root), "workspace_root": str(workspace),
             "selected_artifacts": selection, "source_snapshot_sha256": snapshot_hash,
             "max_model_calls": max_model_calls,
+            **({"model_call_budget_policy": model_call_budget_policy} if model_call_budget_policy == "task_total_only" else {}),
             "worker_configuration_ref": (dict(worker_configuration_ref)
                                          if worker_configuration_ref is not None else None),
             "worker_profile_sha256": worker_profile_sha256,
@@ -2073,6 +2150,12 @@ class PatchContinuationAttemptJournal:
                     "historical_verification": saved["historical_verification"],
                 },
             )
+        if admitted.saved_candidate is not None:
+            saved = admitted.saved_candidate
+            self._document.update(continuation_selection="saved_candidate_reverification",
+                generation_origin="retained_live_response", parent_run_id=saved["parent_run_id"],
+                inherited_model_budget=saved["inherited_model_budget"], new_provider_sends=0,
+                saved_candidate={key: deepcopy(saved[key]) for key in ("source_attempt_ref", "response_ref")})
         self._write(exclusive=True)
 
     def record(self, event: Mapping[str, Any]) -> None:
@@ -2386,6 +2469,7 @@ def _continuation_state(
 
     feature_spec = admitted.feature_spec
     evidence_pack = admitted.evidence_pack
+    candidate_scope = compilation_candidate_scope(evidence_pack, feature_spec)
     state = create_initial_state(
         run_id=run_id,
         request_id=request_id,
@@ -2413,6 +2497,7 @@ def _continuation_state(
         "missing_evidence": list(evidence_pack["missing_evidence"]),
         "disabled_modes": dict(evidence_pack["disabled_modes"]),
         "timing": dict(evidence_pack["timing"]),
+        **({"compilation_repair_candidate": candidate_scope} if candidate_scope is not None else {}),
     }
     return state
 
@@ -2423,7 +2508,7 @@ def _source_tree_changed_since(
 ) -> bool | None:
     try:
         _, workspace_root = _resolve_roots(request)
-        return _csharp_source_snapshot(workspace_root) != before
+        return _patch_request_source_snapshot(request) != before
     except PlanningContinuationError:
         return None
 
@@ -2946,6 +3031,8 @@ def _patch_attempt_identity(request: PatchContinuationInputV1, max_model_calls: 
     identity_request = asdict(request)
     if request.saved_patch_selection is None:
         identity_request.pop("saved_patch_selection")
+    if request.candidate_reverification_selection is None:
+        identity_request.pop("candidate_reverification_selection")
     if request.patch_upstream_configuration_ref is None:
         identity_request.pop("patch_upstream_configuration_ref")
     if request.qualified_model_routing_ref is None:
@@ -2974,6 +3061,9 @@ def _attempt_receipt_projection(path: Path, document: Mapping[str, Any]) -> dict
             "generation_origin", "saved_patch", "inherited_model_budget", "logical_budget",
             "new_provider_sends", "new_compilations", "parent_run_id")}
            if "saved_patch" in document else {}),
+        **({key: document[key] for key in (
+            "generation_origin", "saved_candidate", "inherited_model_budget", "new_provider_sends", "parent_run_id")}
+           if "saved_candidate" in document else {}),
     }
 
 
@@ -3052,7 +3142,8 @@ class _PatchUpstreamExecution:
                 or assessment.get("repair_plan_hash") != state["artifact_hashes"].get("repair_plan")):
             raise PatchContinuationError("PATCH_UPSTREAM_RETAIN_PLAN_IDENTITY_CHANGED", "upstream_admission",
                 "Retaining the Plan requires the exact assessed Feature, Evidence and Plan references.")
-        retained_request = self.factory.retained_worker_request() if retain_plan else None
+        retained_request = self.factory.retained_worker_request(complete_upstream=True) if retain_plan else None
+        retained_calibration = self.factory.retained_context_calibration() if retain_plan else None
         retained_input_projection = self.factory._repair_input_projection if retain_plan else None
         previous_patch_calls = self.factory.patch_attempt_receipt()["model_call_count"]
         self.request = prepare_replanned_patch_input(prior_request=previous_request, state=state,
@@ -3084,7 +3175,8 @@ class _PatchUpstreamExecution:
                 max_tool_rounds=old_policy.max_tool_rounds, max_observation_bytes=old_policy.max_observation_bytes)
             self.factory.bind_retained_worker_request(retained_request,
                 consumed_model_turns=previous_patch_calls, consumed_tool_rounds=consumed_reads,
-                consumed_observation_bytes=consumed_observation_bytes, planning_rationale=assessment["rationale"])
+                consumed_observation_bytes=consumed_observation_bytes, planning_rationale=assessment["rationale"],
+                context_calibration=retained_calibration)
             # Keep the same checked wire view and charged history while the
             # existing same-Plan owner retains the original logical request.
             self.factory._repair_input_projection = retained_input_projection
@@ -3098,8 +3190,12 @@ class _PatchUpstreamExecution:
             "feedback_bytes": consumed_observation_bytes - consumed_source_bytes,
             "remaining_bytes": remaining_bytes}
         if not retain_plan:
+            upstream = previous.artifact_store.semantic_read_immutable(ArtifactRef(**repair_ref))["data"][
+                "repair_context"]["upstream_request"]
             self.factory._upstream_continuation_context = {
                 "failure_context_role": "diagnostic_history_not_current_plan_authority",
+                "upstream_request": {key: deepcopy(upstream[key]) for key in
+                    ("origin", "required_owner", "reason", "source_refs")},
                 "prior_plan": _artifact_ref_dict(previous_request.implementation_plan_ref),
                 "repair_plan": repair_ref,
                 "previous_response": context["previous_response"],
@@ -3143,7 +3239,7 @@ def run_fresh_patch_continuation(
     An interrupted attempt with no terminal result is stopped for recovery review:
     absence of a recorded response is not proof that the provider did not run.
     """
-    saved_mode = request.saved_patch_selection is not None
+    saved_mode = request.reuses_model_output
     if saved_mode and (patch_change_factory is not None or max_model_calls != 0
                        or isinstance(max_model_calls, bool) or upstream_configuration is not None):
         return blocked_patch_continuation_result(
@@ -3236,7 +3332,7 @@ def _run_fresh_patch_continuation_once(
     if (
         isinstance(max_model_calls, bool)
         or not isinstance(max_model_calls, int)
-        or (max_model_calls != 0 if request.saved_patch_selection is not None
+        or (max_model_calls != 0 if request.reuses_model_output
             else not 1 <= max_model_calls <= 5)
     ):
         return blocked_patch_continuation_result(
@@ -3267,6 +3363,8 @@ def _run_fresh_patch_continuation_once(
 
     if admitted.saved_patch is not None:
         request_id = admitted.saved_patch["request_id"]
+    if admitted.saved_candidate is not None:
+        request_id = admitted.saved_candidate["request_id"]
     journal = PatchContinuationAttemptJournal(
         artifact_root=admitted.artifact_store.root,
         run_id=run_id,
@@ -3280,7 +3378,8 @@ def _run_fresh_patch_continuation_once(
     configuration = execution_trace_configuration or PatchExecutionTraceConfiguration()
     trace = configuration.make_trace(run_id=run_id, feature_id=feature_id,
         artifact_store_root=request.artifact_store_root, recorder=journal.record_observation,
-        **({"request_id": admitted.saved_patch["request_id"]} if admitted.saved_patch is not None else {}))
+        **({"request_id": admitted.saved_patch["request_id"]} if admitted.saved_patch is not None else
+           {"request_id": admitted.saved_candidate["request_id"]} if admitted.saved_candidate is not None else {}))
     try:
         with trace.activate():
             trace.update(artifact_refs=[{"artifact_type": kind, "artifact_hash": ref.artifact_hash}
@@ -3371,7 +3470,7 @@ def _run_admitted_patch_continuation(request, *, patch_change_factory, dry_run_f
             getattr(exc, "stage", None) or failed_node or "workflow"
         )
         current_snapshot = _source_tree_snapshot_sha256(
-            _csharp_source_snapshot(Path(request.workspace_root).resolve())
+            _patch_request_source_snapshot(request)
         )
         failure_code = str(getattr(exc, "code", type(exc).__name__))
         failure_message = str(exc)[:4096] or failure_code
@@ -3477,7 +3576,7 @@ def _run_admitted_patch_continuation(request, *, patch_change_factory, dry_run_f
         )
     except PatchContinuationError as exc:
         current_snapshot = _source_tree_snapshot_sha256(
-            _csharp_source_snapshot(Path(request.workspace_root).resolve())
+            _patch_request_source_snapshot(request)
         )
         journal.record(
             {

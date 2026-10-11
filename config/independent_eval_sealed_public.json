@@ -1,0 +1,111 @@
+{
+  "verified_count": 3,
+  "basis": "public_metadata_only",
+  "protocol_ref": {
+    "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\09\\05\\01a07014-bccb-7420-bbcd-38defc72fecb\\scratch\\repair_actual_7faf_001\\independent_eval\\protocol.json",
+    "sha256": "ba3b65ce5326c7b8be81ed25518a4e759dd13abb2abde730704a86bee1cbeb77"
+  },
+  "metadata_ref": {
+    "path": "C:\\Users\\10160\\.codex\\visualizations\\2026\\09\\05\\01a07014-bccb-7420-bbcd-38defc72fecb\\scratch\\repair_actual_7faf_001\\independent_eval\\metadata.json",
+    "sha256": "5122ddac6c956750e9093d1b72585c10638aba2a14b3e9566d3a4c6e19d1e099"
+  },
+  "baseline_commit": "7faf3a32c44606b166549638d94b35758d7e6b90",
+  "status": "prepared_not_authorized_for_execution",
+  "tasks": [
+    {
+      "task_id": "private_eval_20260909_lease_scope_001",
+      "root_cause_family": "exceptional_resource_scope",
+      "split": "final",
+      "model_result": "not_run",
+      "historical_preparation_declaration": {
+        "baseline_compilation_available": true,
+        "faulty_variant_rejected": true,
+        "reference_variant_accepted": true,
+        "baseline_preservation_checks_pass": true,
+        "original_platform_input_admitted": true
+      },
+      "input_sha256": "1586ff556a7b54b8bf61d17df66c35a9b0cc801b46866bd6d2772a53e7a7d797",
+      "requirements_sha256": "0c42ff4df7133e727ac872548c5d37526c8cc2dbc81b589c3814bc428ed39f8c",
+      "verifier_source_sha256": "e47e37ac19823213460e6466e4221d12edf8043b94902876099014ca21557995",
+      "current_execution_status": "not_verified"
+    },
+    {
+      "task_id": "private_eval_20260909_catalog_epoch_001",
+      "root_cause_family": "versioned_cache_invalidation",
+      "split": "final",
+      "model_result": "not_run",
+      "historical_preparation_declaration": {
+        "baseline_compilation_available": true,
+        "faulty_variant_rejected": true,
+        "reference_variant_accepted": true,
+        "baseline_preservation_checks_pass": true,
+        "original_platform_input_admitted": true
+      },
+      "input_sha256": "7ad9d4138e3f9ea8f6226bcab95a9157df59c4563cea0dc17c14776ff72c8160",
+      "requirements_sha256": "080a4ddf97bbfaec091a024641aa7d8e53bbec3f8d116313bbefdbccbb1b5978",
+      "verifier_source_sha256": "78e1e1271c5b189158b1e00923e099f3f4983e826cea6da7c645db0f623249ff",
+      "current_execution_status": "not_verified"
+    },
+    {
+      "task_id": "private_eval_20260909_transfer_batch_001",
+      "root_cause_family": "atomic_ordered_batch_preservation",
+      "split": "final",
+      "model_result": "not_run",
+      "historical_preparation_declaration": {
+        "baseline_compilation_available": true,
+        "faulty_variant_rejected": true,
+        "reference_variant_accepted": true,
+        "baseline_preservation_checks_pass": true,
+        "original_platform_input_admitted": true
+      },
+      "input_sha256": "2512f183f7a339176e7b0a247ef7a8a65dbb5132339a50ef6e6b9e46453f7226",
+      "requirements_sha256": "c0e8d526daa572e56cb7ce49710da7d8e43062111611c9be6e919d174b5b54a3",
+      "verifier_source_sha256": "20dd21b78143fb5af26bbb59511d58ea9c71c431077669c1fd8e2a427742673e",
+      "current_execution_status": "not_verified"
+    }
+  ],
+  "available_modes": [
+    "initial_patch",
+    "fixed_failure"
+  ],
+  "selected_primary_mode": "initial_patch",
+  "prepared_worker_limits": {
+    "max_total_model_turns": 5,
+    "max_tool_rounds": 6,
+    "max_observation_bytes": 32768
+  },
+  "model": {
+    "name": "qwen3-coder:30b",
+    "fine_tuning_for_this_evaluation": false,
+    "installed_digest_recheck": "required_before_any_future_send",
+    "profile_sha256": "64cf14124d773863e902166226c3087aa416ca5c2fd1ff543f37e9d6fade5576"
+  },
+  "entry_reuse": [
+    "scripts.prepare_patch_sft_data.prepare_contract",
+    "scripts.prepare_patch_sft_data.structured_output",
+    "scripts.prepare_patch_sft_data.execute_version",
+    "scripts.run_patch_sft_eval.prepare_eval",
+    "scripts.run_patch_sft_eval.OwnedSftOracle"
+  ],
+  "exposure_policy": {
+    "project_prior_use": "Newly authored after the frozen baseline; not copied or renamed from prior project tasks.",
+    "source_and_reference_readers": [
+      "independent preparer"
+    ],
+    "implementation_owner_active_outputs_read": false,
+    "evaluation_model_has_received_material": false,
+    "training_or_prompt_tuning_export_allowed": false,
+    "withdrawal_rule": "If any task content or failure is used to change framework code, prompts, thresholds, routing or model training, remove that task from the independent set before subsequent evaluation.",
+    "global_pretraining_nonoverlap_claim": "not_demonstrated",
+    "known_limit": "Independent authorship and local exposure records cannot prove absence from all foundation-model pretraining."
+  },
+  "toolchain_metadata_sha256": "28a689170a0a958d6b66f67e34f6b9e496d41172f8ae4af65675b8f1b06314ce",
+  "partition_rule": "All three sealed families reserved for final; public calibration alone serves development/validation",
+  "execution_gap": [
+    "No answer-free source publication or verifier endpoint in public metadata",
+    "Exact compiler/runtime dependency versions remain sealed; only hash is public",
+    "Current code/profile admission and complete Graph versus simple strategy adapter unverified"
+  ],
+  "model_calls": 0,
+  "sealed_files_opened": 0
+}

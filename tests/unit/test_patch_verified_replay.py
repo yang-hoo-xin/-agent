@@ -259,7 +259,16 @@ def test_replay_retains_original_file_and_consumes_shared_budget(tmp_path):
     assert receipt["replayed_model_turns"] == 2 and receipt["live_response_count"] == 0
     assert [turn["response_ref"] for turn in receipt["worker_turns"]] == case.response_refs
     assert all(turn["response_origin"] == "verified_prior_response" for turn in receipt["worker_turns"])
-    assert not list(case.store.root.rglob("*.json"))
+    # Replay keeps its effective application inputs, but invents no new wire or response.
+    # 为什么要有它：业务请求sidecar早已存在，目录无JSON的宽断言会误报，同时仍须禁止伪造发送证据。
+    replay_turns = receipt["worker_turns"]
+    assert {path.resolve() for path in case.store.root.rglob("*.json")} == {
+        Path(turn["request_ref"]["path"]).resolve() for turn in replay_turns}
+    for turn in replay_turns:
+        assert turn["request_ref_scope"] == "effective_agent_turn_request_not_provider_wire_or_send_proof"
+        assert _ref(Path(turn["request_ref"]["path"])) == turn["request_ref"]
+        assert json.loads(Path(turn["request_ref"]["path"]).read_text(encoding="utf-8")) == json.loads(json.dumps(asdict(_request())))
+        assert "provider_request_ref" not in turn
     for path, original in original_bytes.items():
         assert Path(path).read_bytes() == original
     for _ in range(2):

@@ -63,7 +63,10 @@ def test_human_finding_runs_repair_then_model_planning_in_the_existing_graph(tmp
     assert _source_hashes(inputs.workspace) == before and state["approvals"] == {}
     started = [item["node_name"] for item in state["trace_events"] if item["event_type"] == "node_started"]
     assert started == ["create_repair_plan", "create_implementation_plan"]
-    assert _selection()["reason"] in client.calls[0].messages[1].content["semantic_feedback"]
+    feedback = [json.loads(value) for value in client.calls[0].messages[1].content["semantic_feedback"]
+        if value.startswith("{") and "recommendation_is_not_observation" in value]
+    assert feedback[0]["recommendation"]["reason"] == _selection()["reason"]
+    assert feedback[0]["recommendation"]["origin"] == "human"
     ready = prepare_replanned_patch_input(prior_request=request, state=state, attempt_id="next-replanned-patch")
     assert ready.implementation_plan_ref.artifact_hash == state["artifact_hashes"]["implementation_plan"]
     assert ready.repair_parent_proposal_ref is None
@@ -126,7 +129,8 @@ def test_evidence_return_recomputes_complete_coverage_before_model_planning(tmp_
     assert findings.calls[0]["semantic_feedback"]["observed_failure"]
     feedback = findings.calls[0]["semantic_feedback"]
     repair = _artifact(inputs, state, "repair_plan")["data"]
-    assert query_feedback == [feedback]
+    assert len(query_feedback) == 1
+    assert all(feedback[key] == value for key, value in query_feedback[0].items())
     assert feedback["recommendation"]["failure_report_ref"] == {
         "sha256": repair["repair_context"]["upstream_request"]["failure_report_ref"]["sha256"]}
     assert repair["repair_context"]["upstream_request"]["failure_report_ref"]["path"]
@@ -300,7 +304,8 @@ def test_original_plan_semantic_clarification_survives_without_operator_feedback
     selector = _selector(inputs, client)
     state = run_patch_upstream_replanning(request=request, selection=_selection(), planning_target_selection_factory=selector)
     assert len(calls) == 2
-    assert clarification in client.calls[0].messages[1].content["semantic_feedback"]
+    assert clarification in client.calls[0].messages[1].content["upstream_assessment"][
+        "current_plan"]["side_effect_boundaries"]
     assert clarification in _artifact(inputs, state, "implementation_plan")["data"]["side_effect_boundaries"]
     assert selector.semantic_feedback == ()
 

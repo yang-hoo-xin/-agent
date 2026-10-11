@@ -4,7 +4,6 @@ import hashlib
 import importlib.util
 import io
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -15,7 +14,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HOOK_PATH = REPO_ROOT / ".codex" / "hooks" / "context_snapshot.py"
-HOOKS_CONFIG_PATH = REPO_ROOT / ".codex" / "hooks.json"
 
 
 def _load_hook_module() -> ModuleType:
@@ -218,6 +216,56 @@ def test_session_start_returns_bounded_official_additional_context(
     assert "transcript_path" not in _all_keys(restored)
     assert snapshot_path.read_bytes() == snapshot_bytes
     json.dumps(result)
+
+
+@pytest.mark.parametrize("change", ["deleted", "changed", "retired", "invalid_json", "invalid_utf8"])
+def test_session_start_omits_stale_packet_without_rewriting_snapshot(tmp_path: Path, change: str) -> None:
+    repo = _make_repo(tmp_path)
+    packet_path = repo / ".codex" / "task-packet.json"
+    packet_path.parent.mkdir(parents=True)
+    packet_path.write_text(json.dumps({
+        "task_id": "OLD", "write_allowlist": ["old_owner.py"], "stop_when": ["Old task must stop."]
+    }), encoding="utf-8")
+    snapshot = _write_snapshot(repo)
+    saved = _snapshot_path(repo).read_bytes()
+    if change == "deleted":
+        packet_path.unlink()
+    elif change == "changed":
+        packet_path.write_text(json.dumps({"task_id": "NEW", "write_allowlist": ["new_owner.py"]}), encoding="utf-8")
+    elif change == "retired":
+        packet_path.write_text('{"retired": true}', encoding="utf-8")
+    elif change == "invalid_json":
+        packet_path.write_bytes(b"{invalid json")
+    else:
+        packet_path.write_bytes(b"\xff\xfe")
+    current_packet = packet_path.read_bytes() if packet_path.exists() else None
+    result = HOOK.dispatch("session_start", _session_start_input(repo), expected_root=repo)
+    restored = _restored_context_payload(result)
+    assert result["continue"] is True
+    assert "task_packet" not in restored
+    assert "task_packet_truncated_fields" not in restored
+    assert restored["git"]["head"] == snapshot["git"]["head"]
+    assert restored["git"]["restore_check"]["freshness"] == "current"
+    assert _snapshot_path(repo).read_bytes() == saved
+    assert (packet_path.read_bytes() if packet_path.exists() else None) == current_packet
+
+
+def test_session_start_keeps_current_packet_while_reporting_git_change(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    packet_path = repo / ".codex" / "task-packet.json"
+    packet_path.parent.mkdir(parents=True)
+    packet_path.write_text(json.dumps({
+        "task_id": "CURRENT", "write_allowlist": ["current_owner.py"], "stop_when": ["Current task boundary."]
+    }), encoding="utf-8")
+    snapshot = _write_snapshot(repo)
+    saved = _snapshot_path(repo).read_bytes()
+    (repo / "tracked.txt").write_text("changed current source\n", encoding="utf-8")
+    restored = _restored_context_payload(HOOK.dispatch(
+        "session_start", _session_start_input(repo), expected_root=repo))
+    assert restored["task_packet"] == snapshot["task_packet"]
+    assert restored["git"]["restore_check"]["freshness"] == "stale"
+    assert restored["git"]["restore_check"]["reason"] == "status_changed"
+    assert _snapshot_path(repo).read_bytes() == saved
 
 
 def test_session_start_reports_changed_head_and_branch_as_stale(
@@ -502,55 +550,3 @@ def test_pre_compact_reports_snapshot_write_failure(
         ),
     }
     assert not _snapshot_path(repo).exists()
-
-
-def test_hooks_json_has_only_synchronous_v0_events_and_stable_root_commands() -> None:
-    configuration = json.loads(HOOKS_CONFIG_PATH.read_text(encoding="utf-8"))
-    hooks = configuration["hooks"]
-
-    assert set(hooks) == {"PreCompact", "SessionStart"}
-    assert hooks["PreCompact"][0]["matcher"] == "^(manual|auto)$"
-    assert hooks["SessionStart"][0]["matcher"] == "^(compact|resume)$"
-
-    for event_groups in hooks.values():
-        handler = event_groups[0]["hooks"][0]
-        assert handler["type"] == "command"
-        assert "async" not in handler
-        assert "git rev-parse --show-toplevel" in handler["command"]
-        assert "git rev-parse --show-toplevel" in handler["commandWindows"]
-        assert handler["timeout"] == 10
-
-    session_handler = hooks["SessionStart"][0]["hooks"][0]
-    assert session_handler["additionalContextLimit"] == 1200
-    assert "additionalContextLimit" not in hooks["PreCompact"][0]["hooks"][0]
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows hook command")
-def test_windows_hook_command_executes_from_repository_subdirectory(
-    tmp_path: Path,
-) -> None:
-    repo = _make_repo(tmp_path)
-    hook_dir = repo / ".codex" / "hooks"
-    hook_dir.mkdir(parents=True)
-    shutil.copy2(HOOK_PATH, hook_dir / "context_snapshot.py")
-    subdirectory = repo / "nested"
-    subdirectory.mkdir()
-    configuration = json.loads(HOOKS_CONFIG_PATH.read_text(encoding="utf-8"))
-    command = configuration["hooks"]["PreCompact"][0]["hooks"][0][
-        "commandWindows"
-    ]
-
-    completed = subprocess.run(
-        command,
-        cwd=subdirectory,
-        input=json.dumps(_pre_compact_input(repo)),
-        capture_output=True,
-        check=False,
-        encoding="utf-8",
-        shell=True,
-        text=True,
-    )
-
-    assert completed.returncode == 0, completed.stderr
-    assert json.loads(completed.stdout) == {"continue": True}
-    assert _snapshot_path(repo).is_file()

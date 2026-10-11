@@ -193,7 +193,7 @@ class TestGetToolSchemas:
         assert isinstance(schemas[0], types.Tool)
         assert schemas[0].name == "query_knowledge_hub"
         assert schemas[0].description == "Query the knowledge hub"
-        assert schemas[0].inputSchema == sample_tool_schema
+        assert schemas[0].inputSchema == {**sample_tool_schema, "additionalProperties": False}
 
 
 # ============================================================================

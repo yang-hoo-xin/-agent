@@ -32,3 +32,53 @@ def test_changed_or_absent_visible_response_must_include_full_current_code():
         assert len(messages) == 2
         assert messages[0].role == "assistant" and messages[0].content == raw
         assert "previous_response_ref" not in messages[1].content
+
+
+
+def test_recovery_uses_same_code_refs_when_source_read_cache_is_disabled(monkeypatch):
+    import json
+    from dataclasses import asdict
+    from types import SimpleNamespace
+    import pytest
+    from src.libs.llm.agent_turn import AgentTurnRequest
+    from src.mod_agent import local_entry as owner
+    from src.mod_agent.proposal.patch_agent_loop import PatchAgentLoopPolicy
+    from src.mod_agent.proposal.behavior_feedback_view import restore_visible_patch_response
+    code = "class Example { }\n" * 160
+    earlier = json.dumps({"changes": [{"edit_binding_id": "b", "after_text": code, "rationale": "prior"}]})
+    latest = json.dumps({"changes": [{"edit_binding_id": "b", "after_text": code, "rationale": "latest"}]})
+    prior = AgentTurnRequest(messages=(AgentMessage("user", "All original requirements"), AgentMessage("assistant", earlier)))
+    adapter = LocalOllamaInitialPatchAdapter.__new__(LocalOllamaInitialPatchAdapter)
+    adapter.patch_agent_loop_policy = PatchAgentLoopPolicy(reuse_covered_source_observations=False)
+    adapter._repair_input_projection = None
+    adapter._worker_response_admission = None
+    adapter._prior_worker_budget = {"consumed_observation_bytes": 0, "consumed_model_turns": 0, "consumed_tool_rounds": 0}
+    adapter._receipt = {"model_call_count": 1, "patch_agent_loop": {}}
+    adapter._recovery_observation_bytes = 0
+    adapter._recovery_observation_usage = lambda: (0, 0)
+    adapter._upstream_effects = {"evidence": "assess_and_continue", "planning": "assess_and_continue"}
+    adapter._emit = lambda *_: None
+    captured = {}
+    def loop(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(completed=False, final_content=None, model_turns_used=0,
+            final_request=kwargs["resume_request"], termination={"code": "FIXTURE_STOP_BEFORE_PROVIDER"},
+            to_dict=lambda: {"usage_by_turn": []})
+    monkeypatch.setattr(owner, "run_patch_agent_loop", loop)
+    feedback = {"observations": [{"expected": [], "observed": ["unexpected"]}]}
+    estimated_bytes = adapter._revision_payload_bytes(latest, feedback, prior)
+    correction = {}
+    with pytest.raises(owner.LocalEntryError, match="FIXTURE_STOP_BEFORE_PROVIDER"):
+        adapter._run_recovery_revision(previous_response=latest, feedback=feedback,
+            message_type="patch_behavior_correction", generation_request=prior,
+            inspector=None, agent_client=None, response_format=None,
+            correction_state=correction, run_id="fixture", response_label="fixture")
+    additions = captured["resume_request"].messages[len(prior.messages):]
+    assert restore_visible_patch_response(additions[0].content, prior.messages) == json.loads(latest)
+    assert additions[1].content["validator_feedback"] == feedback
+    assert captured["resume_request"].messages[:len(prior.messages)] == prior.messages
+    assert captured["policy"].reuse_covered_source_observations is False
+    assert captured["consumed_tool_rounds"] == 0
+    actual_bytes = len(owner._patch_agent_context_json([asdict(row) for row in additions]).encode())
+    assert actual_bytes == estimated_bytes == correction["feedback_budget"]["feedback_utf8_bytes"]
+    assert adapter._receipt["model_call_count"] == 1

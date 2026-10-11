@@ -9,6 +9,7 @@ import hashlib
 import json
 from collections import Counter
 from collections.abc import Mapping
+from contextlib import contextmanager
 from functools import wraps
 from typing import Any
 
@@ -102,6 +103,50 @@ def update_observation(span, **attributes) -> None:
         # The core trace counts recorder/sink failures. This protects optional
         # projection code from becoming a second product gate.
         return
+
+
+@contextmanager
+def observe_local_tool_bodies(span, input_payload):
+    """Retain actual arguments and a returned value, using the existing local store.
+
+    为什么要有它：hashes and merged evidence cannot recover a discarded per-call result;
+    observation failures must not replace the product's result or exception.
+    """
+    trace = current_trace()
+    references, capture = {}, {}
+
+    def retain(role, payload):
+        if trace is None:
+            return
+        try:
+            root = trace.context.metadata.get("local_body_root")
+            if root is None or span.observation_id is None:
+                capture[role] = {"status": "unknown", "reason": "local_body_root_unavailable"}
+            else:
+                # Imported at invocation time because the model observer also uses
+                # these upstream projection helpers. No new body format or store.
+                from src.mod_agent.upstream_model_trace import _json, _local_body
+
+                reference = _local_body(root, span.observation_id, "tool." + role + ".json", _json(payload))
+                references[role] = reference
+                capture[role] = {"status": "retained"}
+        except Exception as error:
+            capture[role] = {"status": "unknown", "reason": "local_body_capture_failed",
+                             "error_type": type(error).__name__}
+        update_observation(span, local_detail_refs=dict(references),
+                           local_tool_body_capture=dict(capture))
+
+    retain("request", input_payload)
+    try:
+        yield lambda payload: retain("response", payload)
+    except BaseException:
+        capture.setdefault("response", {"status": "unknown", "reason": "business_exception_no_returned_payload"})
+        update_observation(span, local_tool_body_capture=dict(capture))
+        raise
+    finally:
+        if trace is not None and "response" not in capture:
+            capture["response"] = {"status": "unknown", "reason": "no_returned_payload_recorded"}
+            update_observation(span, local_tool_body_capture=dict(capture))
 
 
 def observe_evidence_factory(factory):

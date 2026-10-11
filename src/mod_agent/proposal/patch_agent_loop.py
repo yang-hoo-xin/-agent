@@ -7,7 +7,7 @@ import json
 import re
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass, field, replace
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
@@ -30,6 +30,11 @@ from src.mod_agent.proposal.code_generator import (
     validate_patch_submission,
     validate_patch_submission_schema,
 )
+from src.mod_agent.proposal.noop_submission_feedback import (
+    noop_code_identity,
+    project_whole_noop_response,
+)
+from src.mod_agent.proposal.tool_batch_feedback import reject_nonread_batch
 
 PATCH_SOURCE_INSPECTION_TOOL_NAME = "inspect_plan_binding_source"
 PATCH_UPSTREAM_REQUEST_TOOL_NAME = "request_patch_upstream"
@@ -82,24 +87,31 @@ class PatchAgentLoopPolicy:
     allow_batched_reads: bool = False
     deduplicate_source_excerpts: bool = False
     reuse_covered_source_observations: bool = False
+    diagnose_behavior_failures: bool = False
     # One dispatched binding read consumes one unit, including in a batch.
     max_tool_rounds: int = 3
     max_total_model_turns: int = 5
+    model_call_budget_policy: str = "stage_and_total"
 
     def __post_init__(self) -> None:
         if any(type(getattr(self, name)) is not bool for name in (
             "finalize_after_first_observation", "enable_supporting_reads",
             "require_source_inspection", "allow_upstream_request", "allow_batched_reads",
             "deduplicate_source_excerpts", "reuse_covered_source_observations",
+            "diagnose_behavior_failures",
         )):
             raise PatchAgentLoopError(
                 "PATCH_AGENT_POLICY_INVALID",
                 stage="policy",
                 reason="Patch strategy switches must be boolean values.",
             )
-        if type(self.max_total_model_turns) is not int or not 1 <= self.max_total_model_turns <= 5:
+        if self.model_call_budget_policy not in {"stage_and_total", "task_total_only"}:
             raise PatchAgentLoopError("PATCH_AGENT_POLICY_INVALID", stage="policy",
-                reason="The selected model-turn limit must be between one and the shared maximum of five.")
+                reason="Unknown model-call budget policy.")
+        if (type(self.max_total_model_turns) is not int or self.max_total_model_turns < 1
+                or self.model_call_budget_policy == "stage_and_total" and self.max_total_model_turns > 5):
+            raise PatchAgentLoopError("PATCH_AGENT_POLICY_INVALID", stage="policy",
+                reason="The selected model-turn limit must be positive; legacy workers retain their five-turn bound.")
         if (type(self.max_tool_rounds) is not int or self.max_tool_rounds < 0
                 or (self.max_tool_rounds == 0 and self.require_source_inspection)):
             raise PatchAgentLoopError("PATCH_AGENT_POLICY_INVALID", stage="policy",
@@ -970,6 +982,7 @@ def run_patch_agent_loop(
     submission_validator: Callable[[AgentTurnResponse], None] | None = None,
     response_admission: Callable[[AgentTurnResponse], None] | None = None,
     request_projection: Callable[[AgentTurnRequest], AgentTurnRequest] | None = None,
+    diagnosis_request: AgentTurnRequest | None = None,
 ) -> PatchAgentLoopResult:
     """Run bounded source inspection turns and return final Patch content or a receipt."""
 
@@ -993,6 +1006,9 @@ def run_patch_agent_loop(
     if resume_request is not None and not isinstance(resume_request, AgentTurnRequest):
         raise PatchAgentLoopError("PATCH_AGENT_LOOP_INPUT_INVALID", stage="loop_admission",
             reason="Resuming requires an AgentTurnRequest.")
+    if diagnosis_request is not None and not isinstance(diagnosis_request, AgentTurnRequest):
+        raise PatchAgentLoopError("PATCH_AGENT_LOOP_INPUT_INVALID", stage="loop_admission",
+            reason="An optional diagnosis must be an AgentTurnRequest.")
     if selected_policy != source_inspector.policy:
         raise PatchAgentLoopError(
             "PATCH_AGENT_POLICY_MISMATCH",
@@ -1098,6 +1114,10 @@ def run_patch_agent_loop(
         and message.content.get("message_type") == "patch_submission_feedback"
         and isinstance(message.content.get("response_sha256"), str)
     }
+    rejected_noop_codes = {identity for message in base_request.messages
+        if message.role == "user" and isinstance(message.content, Mapping)
+        and message.content.get("message_type") == "patch_submission_feedback"
+        and (identity := noop_code_identity(message.content.get("diagnostics"))) is not None}
     format_correction_pending = False
 
     def result_for_segment(**kwargs: Any) -> PatchAgentLoopResult:
@@ -1120,6 +1140,7 @@ def run_patch_agent_loop(
             progress[-1]["observation_bytes_added"] += sum(
                 int(item.get("feedback_payload_bytes", 0)) for item in submission_trace
                 if item["turn_index"] == turn and item.get("feedback_queued"))
+            progress[-1]["observation_bytes_added"] += int(usage.get("diagnosis_context_bytes", 0))
         return replace(_loop_result(**kwargs), tool_availability_trace=tuple(deepcopy(tool_availability_trace)),
             read_accounting_version="new_source_window_v2" if reuse_covered else "binding_dispatch_v1",
             dispatched_binding_reads=sum(bool(item.get("dispatch_started")) for item in tool_call_trace),
@@ -1250,6 +1271,13 @@ def run_patch_agent_loop(
             temperature=0.0,
             historical_tool_exchanges=history,
         )
+        diagnosing = (diagnosis_request is not None and turn_index == consumed_model_turns + 1
+                      and turn_index < allowed_model_end)
+        if diagnosing:
+            # 为什么要有它：诊断占用同一真实调用额度且不执行工具，保留至少一次提交机会；模型猜想不成为验收门禁。
+            request = replace(diagnosis_request, tools=(), tool_choice="none", response_format=None,
+                tool_results=(), historical_tool_exchanges=(), provider_state=None,
+                tool_result_insert_index=None, parallel_tool_calls=False)
         availability: dict[str, object] = {"turn_index": turn_index,
             "allowed_tools": [tool.name for tool in request.tools],
             "budget_state": deepcopy(state_message.content["budget_state"]),
@@ -1264,7 +1292,7 @@ def run_patch_agent_loop(
             if entry.get("feedback_queued") and entry["response_sha256"] in feedback_in_request:
                 entry["feedback_in_request"] = True
         sent_request = request
-        if request_projection is not None:
+        if request_projection is not None and not diagnosing:
             try:
                 sent_request = request_projection(request)
             except Exception as exc:
@@ -1352,6 +1380,31 @@ def run_patch_agent_loop(
                     termination={**_termination(getattr(exc, "code", type(exc).__name__), str(exc), turn_index),
                         "failure_class": type(exc).__name__, "diagnostics": deepcopy(getattr(exc, "diagnostics", {}))})
 
+        if diagnosing:
+            usable = bool(response.content and not response.tool_calls and response.stop_reason not in {
+                "length", "max_tokens", "max_output_tokens", "incomplete", "content_filter", "refusal"})
+            usage_by_turn[-1]["purpose"] = "failure_diagnosis"
+            response_actions[turn_index]["diagnosis_usable"] = usable
+            availability["selection"] = "diagnosis_no_tools_executed"
+            for call in response.tool_calls:
+                tool_call_trace.append(_tool_trace(call, turn_index=turn_index,
+                    status="rejected_not_executed", code="PATCH_DIAGNOSIS_HAS_NO_TOOL_AUTHORITY",
+                    dispatch_started=False))
+            additions = ((AgentMessage("assistant", response.content),) if usable else ()) + (
+                AgentMessage("user", {"message_type": "patch_failure_diagnosis",
+                    "analysis_usable": usable, "authority": "model_hypothesis_only",
+                    "required_action": "Implement a corrected candidate using the original requirements, current checked code and actual failure observations. Any preceding diagnosis may be wrong; measured observations remain the facts. Preserve passing behavior and the existing Patch schema, source bindings and permissions."}),)
+            context_bytes = len(_canonical_json([asdict(item) for item in additions]).encode("utf-8"))
+            if total_observation_bytes + context_bytes > allowed_observation_end:
+                additions, context_bytes = (), 0
+                response_actions[turn_index]["diagnosis_usable"] = False
+                availability["selection"] = "diagnosis_context_budget_not_admitted"
+            # 为什么要有它：追加的诊断上下文沿用现有反馈字节计费，装不下时保留调用成本并继续原修订。
+            total_observation_bytes += context_bytes
+            usage_by_turn[-1]["diagnosis_context_bytes"] = context_bytes
+            base_request = replace(base_request, messages=(*base_request.messages, *additions))
+            continue
+
         if response.stop_reason in {"length", "max_tokens", "max_output_tokens", "incomplete", "content_filter", "refusal"}:
             incomplete = response.stop_reason in {"length", "max_tokens", "max_output_tokens", "incomplete"}
             code = "PATCH_AGENT_RESPONSE_INCOMPLETE" if incomplete else "PATCH_AGENT_PROVIDER_STOPPED"
@@ -1365,6 +1418,39 @@ def run_patch_agent_loop(
                 total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
                 tool_call_trace=tool_call_trace, observation_trace=observation_trace,
                 termination=_termination(code, "Provider output is incomplete or stopped; it is not a complete submission to format-correct.", turn_index))
+
+        rejection = reject_nonread_batch(response.tool_calls,
+            source_tool_name=PATCH_SOURCE_INSPECTION_TOOL_NAME,
+            upstream_tool_name=PATCH_UPSTREAM_REQUEST_TOOL_NAME,
+            executed_call_ids=seen_tool_call_ids)
+        if rejection is not None:
+            feedback_bytes = sum(len(_canonical_json(item.output).encode("utf-8"))
+                for item in rejection.results)
+            fits = total_observation_bytes + feedback_bytes <= allowed_observation_end
+            queued = bool(rejection.results) and fits and turn_index < allowed_model_end
+            for call, output in zip(response.tool_calls, rejection.results or (None,) * len(response.tool_calls)):
+                entry = _tool_trace(call, turn_index=turn_index, status="rejected_not_executed",
+                    code=rejection.code, dispatch_started=False)
+                entry.update(read_cost=0, upstream_request_registered=False,
+                    feedback_queued=queued, feedback_payload_bytes=(
+                        len(_canonical_json(output.output).encode("utf-8")) if queued else 0))
+                tool_call_trace.append(entry)
+            availability["selection"] = "rejected_not_executed"
+            if not queued:
+                code = (rejection.code if not rejection.results else
+                        "PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED" if not fits else
+                        "PATCH_AGENT_MODEL_TURN_BUDGET_EXHAUSTED")
+                return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                    model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                    total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                    tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                    termination=_termination(code, "The rejected batch has no safely deliverable follow-up: "
+                        + rejection.reason, turn_index))
+            # 为什么要有它：拒绝结果消耗原观察预算，但不伪造源码读取、不预留未执行ID，也不另开模型预算。
+            total_observation_bytes += feedback_bytes
+            pending_response, pending_tool_results = response, rejection.results
+            base_request = _without_loop_states(request)
+            continue
 
         if len(response.tool_calls) > 1 and not selected_policy.allow_batched_reads:
             code = "PATCH_AGENT_PARALLEL_TOOL_CALLS_FORBIDDEN"
@@ -1601,6 +1687,15 @@ def run_patch_agent_loop(
         if response.tool_calls:
             call = response.tool_calls[0]
             if call.name == PATCH_UPSTREAM_REQUEST_TOOL_NAME:
+                if isinstance(call.call_id, str) and call.call_id in seen_tool_call_ids:
+                    code = "PATCH_AGENT_TOOL_CALL_ID_REUSED"
+                    tool_call_trace.append(_tool_trace(call, turn_index=turn_index,
+                        status="rejected_not_executed", code=code, dispatch_started=False))
+                    return result_for_segment(status="blocked", final_content=None, provider=provider, model=model,
+                        model_turns_used=turn_index, tool_rounds_used=tool_rounds_used,
+                        total_observation_bytes=total_observation_bytes, usage_by_turn=usage_by_turn,
+                        tool_call_trace=tool_call_trace, observation_trace=observation_trace,
+                        termination=_termination(code, "An executed tool call ID cannot request a new upstream effect.", turn_index))
                 with trace_operation("patch.upstream_request", kind="tool", attributes={
                     "turn_index": turn_index, "tool_call_id": call.call_id,
                     "provider_response_id": response.request_id, "upstream_execution_performed": False,
@@ -1858,7 +1953,11 @@ def run_patch_agent_loop(
                 allowed_read_end = selected_policy.max_tool_rounds
                 allowed_observation_end = selected_policy.max_observation_bytes
             submission["diagnostics"] = deepcopy(exc.diagnostics)
-            if submission["response_sha256"] in rejected_submissions:
+            noop_view = project_whole_noop_response(raw_content, exc.diagnostics)
+            noop_identity = noop_code_identity(exc.diagnostics) if noop_view is not None else None
+            if noop_identity is not None:
+                submission["effective_code_sha256"] = noop_identity
+            if submission["response_sha256"] in rejected_submissions or (noop_identity is not None and noop_identity in rejected_noop_codes):
                 stop_code, reason = "PATCH_AGENT_REPEATED_INVALID_SUBMISSION", "The same unadmitted submission was returned after submission feedback."
             elif turn_index >= allowed_model_end:
                 stop_code, reason = "PATCH_AGENT_SUBMISSION_CORRECTION_BUDGET_EXHAUSTED", "No model turn remains in this segment to correct the submission; reserved behavior turns are unchanged."
@@ -1878,7 +1977,7 @@ def run_patch_agent_loop(
                     "If submitting, return one complete JSON object matching response_schema, without surrounding explanation. "
                     "Correct the reported submission defects and preserve already-correct behavior. "
                     "Keep the original requirements, bindings and unchanged source baseline; no code has been accepted or applied."}
-            original_output = (AgentMessage("assistant", raw_content),) if raw_content else ()
+            original_output = (AgentMessage("assistant", noop_view or raw_content),) if raw_content else ()
             additions = (*original_output, AgentMessage("user", feedback))
             feedback_bytes = len(_canonical_json([{"role": item.role, "content": item.content} for item in additions]).encode("utf-8"))
             if total_observation_bytes + feedback_bytes > allowed_observation_end:
@@ -1889,6 +1988,9 @@ def run_patch_agent_loop(
                     termination=_termination("PATCH_AGENT_OBSERVATION_BUDGET_EXHAUSTED", "Submission feedback does not fit the existing observation allowance.", turn_index))
             total_observation_bytes += feedback_bytes
             submission.update(feedback_queued=True, feedback_payload_bytes=feedback_bytes)
+            if noop_identity is not None:
+                rejected_noop_codes.add(noop_identity)
+                submission["feedback_code_view"] = "whole_noop_code_omitted"
             rejected_submissions.add(submission["response_sha256"])
             base_request = _without_loop_states(request)
             base_request = replace(base_request, messages=(*base_request.messages, *additions))

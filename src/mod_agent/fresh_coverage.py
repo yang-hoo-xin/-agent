@@ -23,6 +23,7 @@ from src.mod_agent.evidence import (
     RgLiveEvidenceProvider,
     make_requirement_coverage_evidence_provider,
 )
+from src.mod_agent.evidence.source_view import run_small_file_max_bytes
 from src.mod_agent.model_admission import (
     assert_ollama_model_identity_stable,
     local_model_admission_record,
@@ -840,7 +841,8 @@ def run_fresh_requirement_coverage(
         progress_reporter=progress_reporter,
     )
     provider = make_requirement_coverage_evidence_provider(
-        RgLiveEvidenceProvider(workspace, rg_executable=rg_executable),
+        RgLiveEvidenceProvider(workspace, rg_executable=rg_executable,
+            small_file_max_bytes=run_small_file_max_bytes(workspace)),
         complete_json=ledger.complete,
         source_augmentation_factory=source_augmentation_factory,
     )
@@ -1267,7 +1269,19 @@ def load_feature_spec_payload(path: str | Path) -> dict[str, Any]:
 def strict_feature_spec_payload(value: Mapping[str, Any]) -> dict[str, Any]:
     """Strictly rehydrate and round-trip one unblocked FeatureSpec payload."""
 
-    if type(value) is not dict or set(value) != _FEATURE_SPEC_FIELDS:
+    expected_fields = _FEATURE_SPEC_FIELDS
+    interpretation = value.get("request_interpretation") if isinstance(value, Mapping) else None
+    if interpretation is not None:
+        expected_fields = _FEATURE_SPEC_FIELDS | {"request_interpretation"}
+        if (type(interpretation) is not dict
+                or interpretation.get("schema_version") != "request_interpretation_v2"
+                or interpretation.get("raw_request") != value.get("user_request")
+                or interpretation.get("hook_requirement") != value.get("hook_requirement")):
+            raise FreshCoverageError(
+                "FRESH_COVERAGE_FEATURE_SPEC_INTERPRETATION_INVALID", "request",
+                "FeatureSpec interpretation must retain its version, raw request and Hook decision.",
+            )
+    if type(value) is not dict or set(value) != expected_fields:
         raise FreshCoverageError(
             "FRESH_COVERAGE_FEATURE_SPEC_SHAPE_INVALID",
             "request",
@@ -1372,6 +1386,7 @@ def strict_feature_spec_payload(value: Mapping[str, Any]) -> dict[str, Any]:
             "required": hook_requirement["required"],
             "reason": hook_requirement["reason"],
         },
+        request_interpretation=dict(interpretation or {}),
         blocked=False,
         blockers=(),
     ).to_artifact_payload()

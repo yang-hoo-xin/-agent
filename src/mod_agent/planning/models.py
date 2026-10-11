@@ -45,6 +45,7 @@ class RequestPlan:
     )
     uncertainties: tuple[Uncertainty, ...] = ()
     blocked: bool = False
+    request_interpretation: dict[str, Any] = field(default_factory=dict)
 
     def to_artifact_payload(self) -> dict[str, Any]:
         return {
@@ -64,6 +65,8 @@ class RequestPlan:
             "requires_runtime_evidence": self.requires_runtime_evidence,
             "hook_requirement": dict(self.hook_requirement),
             "uncertainties": [uncertainty.to_dict() for uncertainty in self.uncertainties],
+            **({"request_interpretation": dict(self.request_interpretation)}
+               if self.request_interpretation else {}),
             "blocked": self.blocked,
         }
 
@@ -86,6 +89,7 @@ class FeatureSpec:
     )
     blocked: bool = False
     blockers: tuple[dict[str, Any], ...] = ()
+    request_interpretation: dict[str, Any] = field(default_factory=dict)
 
     def to_artifact_payload(self) -> dict[str, Any]:
         return {
@@ -106,6 +110,8 @@ class FeatureSpec:
             "evidence_requirements": list(self.evidence_requirements),
             "runtime_verification_plan": list(self.runtime_verification_plan),
             "hook_requirement": dict(self.hook_requirement),
+            **({"request_interpretation": dict(self.request_interpretation)}
+               if self.request_interpretation else {}),
             "blocked": self.blocked,
             "blockers": list(self.blockers),
         }
@@ -174,6 +180,7 @@ class ImplementationPlan:
     blockers: tuple[dict[str, Any], ...] = ()
     evidence_source_paths: tuple[str, ...] = ()
     binding_registry: dict[str, Any] | None = None
+    verification_questions: tuple[str, ...] = ()
 
     def to_artifact_payload(self) -> dict[str, Any]:
         return {
@@ -190,6 +197,8 @@ class ImplementationPlan:
             "target_symbols": list(self.target_symbols),
             "evidence_refs": list(self.evidence_refs),
             "binding_registry": dict(self.binding_registry or {}),
+            **({"verification_questions": list(self.verification_questions)}
+               if self.verification_questions else {}),
             "proposed_changes": list(self.proposed_changes),
             "side_effect_boundaries": list(self.side_effect_boundaries),
             "test_plan": list(self.test_plan),

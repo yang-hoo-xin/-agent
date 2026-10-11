@@ -45,7 +45,8 @@ def validate_product_worker_upstream(*, execution, state, artifact_store):
         if not condition:
             raise PatchContinuationError("PATCH_UPSTREAM_ATTEMPT_MISMATCH", "upstream_admission", message)
 
-    if execution.replan_count:
+    from src.mod_agent.model_call_budget import total_only
+    if execution.replan_count and not total_only(execution.budget_snapshot()):
         raise PatchContinuationError("PATCH_UPSTREAM_CONTINUATION_BUDGET_EXHAUSTED", "upstream_admission",
             "This logical Product task has already consumed its one upstream cycle.")
     require(execution.last_worker is not None and execution.last_state is not None

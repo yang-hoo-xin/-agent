@@ -1,0 +1,349 @@
+{
+  "schema_version": "restricted_csharp_public_development_cases_v1",
+  "task_id": "private_eval_20260909_transfer_batch_001",
+  "eligibility": "public_development_only_not_independent_acceptance",
+  "cases": [
+    {
+      "case_id": "public_chained_credit",
+      "operation": {
+        "batches": [
+          {
+            "version": 4,
+            "balances": [
+              {
+                "key": "A",
+                "value": 7
+              },
+              {
+                "key": "B",
+                "value": 0
+              },
+              {
+                "key": "C",
+                "value": 0
+              },
+              {
+                "key": "U",
+                "value": 19
+              }
+            ],
+            "journal": [
+              {
+                "from": "U",
+                "to": "A",
+                "amount": 1
+              }
+            ],
+            "transfers": [
+              {
+                "from": "A",
+                "to": "B",
+                "amount": 7
+              },
+              {
+                "from": "B",
+                "to": "C",
+                "amount": 7
+              }
+            ],
+            "catch_exception": true,
+            "observe": [
+              "no_exception",
+              "invalid_operation_exception",
+              "overflow_exception",
+              "unchanged_state",
+              "balances_identity",
+              "journal_identity",
+              "first_entry_identity",
+              "returned_version",
+              "version",
+              "journal_count"
+            ],
+            "observe_balances": [
+              "A",
+              "B",
+              "C",
+              "U"
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "path": [],
+          "equals": [
+            {
+              "no_exception": true,
+              "invalid_operation_exception": false,
+              "overflow_exception": false,
+              "unchanged_state": false,
+              "balances_identity": true,
+              "journal_identity": true,
+              "first_entry_identity": true,
+              "returned_version": 5,
+              "version": 5,
+              "journal_count": 3,
+              "balances": {
+                "A": 0,
+                "B": 0,
+                "C": 7,
+                "U": 19
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "public_cumulative_debit_rollback",
+      "operation": {
+        "batches": [
+          {
+            "version": 4,
+            "balances": [
+              {
+                "key": "A",
+                "value": 8
+              },
+              {
+                "key": "B",
+                "value": 0
+              },
+              {
+                "key": "C",
+                "value": 0
+              },
+              {
+                "key": "U",
+                "value": 19
+              }
+            ],
+            "journal": [
+              {
+                "from": "U",
+                "to": "A",
+                "amount": 1
+              }
+            ],
+            "transfers": [
+              {
+                "from": "A",
+                "to": "B",
+                "amount": 5
+              },
+              {
+                "from": "A",
+                "to": "C",
+                "amount": 5
+              }
+            ],
+            "catch_exception": true,
+            "observe": [
+              "no_exception",
+              "invalid_operation_exception",
+              "overflow_exception",
+              "unchanged_state",
+              "balances_identity",
+              "journal_identity",
+              "first_entry_identity",
+              "returned_version",
+              "version",
+              "journal_count"
+            ],
+            "observe_balances": [
+              "A",
+              "B",
+              "C",
+              "U"
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "path": [],
+          "equals": [
+            {
+              "no_exception": false,
+              "invalid_operation_exception": true,
+              "overflow_exception": false,
+              "unchanged_state": true,
+              "balances_identity": true,
+              "journal_identity": true,
+              "first_entry_identity": true,
+              "returned_version": null,
+              "version": 4,
+              "journal_count": 1,
+              "balances": {
+                "A": 8,
+                "B": 0,
+                "C": 0,
+                "U": 19
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "public_balance_overflow_rollback",
+      "operation": {
+        "batches": [
+          {
+            "version": 4,
+            "balances": [
+              {
+                "key": "A",
+                "value": 1
+              },
+              {
+                "key": "B",
+                "value": 9223372036854775807
+              },
+              {
+                "key": "U",
+                "value": 19
+              }
+            ],
+            "journal": [
+              {
+                "from": "U",
+                "to": "A",
+                "amount": 1
+              }
+            ],
+            "transfers": [
+              {
+                "from": "A",
+                "to": "B",
+                "amount": 1
+              }
+            ],
+            "catch_exception": true,
+            "observe": [
+              "no_exception",
+              "invalid_operation_exception",
+              "overflow_exception",
+              "unchanged_state",
+              "balances_identity",
+              "journal_identity",
+              "first_entry_identity",
+              "returned_version",
+              "version",
+              "journal_count"
+            ],
+            "observe_balances": [
+              "A",
+              "B",
+              "U"
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "path": [],
+          "equals": [
+            {
+              "no_exception": false,
+              "invalid_operation_exception": false,
+              "overflow_exception": true,
+              "unchanged_state": true,
+              "balances_identity": true,
+              "journal_identity": true,
+              "first_entry_identity": true,
+              "returned_version": null,
+              "version": 4,
+              "journal_count": 1,
+              "balances": {
+                "A": 1,
+                "B": 9223372036854775807,
+                "U": 19
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "case_id": "public_version_overflow_rollback",
+      "operation": {
+        "batches": [
+          {
+            "version": 9223372036854775807,
+            "balances": [
+              {
+                "key": "A",
+                "value": 1
+              },
+              {
+                "key": "B",
+                "value": 0
+              },
+              {
+                "key": "U",
+                "value": 19
+              }
+            ],
+            "journal": [
+              {
+                "from": "U",
+                "to": "A",
+                "amount": 1
+              }
+            ],
+            "transfers": [
+              {
+                "from": "A",
+                "to": "B",
+                "amount": 1
+              }
+            ],
+            "catch_exception": true,
+            "observe": [
+              "no_exception",
+              "invalid_operation_exception",
+              "overflow_exception",
+              "unchanged_state",
+              "balances_identity",
+              "journal_identity",
+              "first_entry_identity",
+              "returned_version",
+              "version",
+              "journal_count"
+            ],
+            "observe_balances": [
+              "A",
+              "B",
+              "U"
+            ]
+          }
+        ]
+      },
+      "assertions": [
+        {
+          "path": [],
+          "equals": [
+            {
+              "no_exception": false,
+              "invalid_operation_exception": false,
+              "overflow_exception": true,
+              "unchanged_state": true,
+              "balances_identity": true,
+              "journal_identity": true,
+              "first_entry_identity": true,
+              "returned_version": null,
+              "version": 9223372036854775807,
+              "journal_count": 1,
+              "balances": {
+                "A": 1,
+                "B": 0,
+                "U": 19
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

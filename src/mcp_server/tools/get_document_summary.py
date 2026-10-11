@@ -205,11 +205,12 @@ class GetDocumentSummaryTool:
                 "Install it with: pip install chromadb"
             )
         
-        persist_path = Path(self.config.persist_directory).resolve()
+        from src.core.settings import require_storage_path
+        persist_path = require_storage_path(self.settings, self.config.persist_directory)
         
         if not persist_path.exists():
             logger.warning(f"ChromaDB directory does not exist: {persist_path}")
-            persist_path.mkdir(parents=True, exist_ok=True)
+            raise ValueError("KNOWLEDGE_STORE_NOT_FOUND")
         
         try:
             self._chroma_client = chromadb.PersistentClient(

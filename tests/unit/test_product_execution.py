@@ -2242,6 +2242,7 @@ def test_product_execution_actual8_projection_correction_no_progress_fails_close
     raw_outputs: list[dict[str, object]] = []
     response_schemas: list[dict[str, object]] = []
     raw_markers: list[str] = []
+    overlap_details: dict[str, object] = {}
 
     def overlap_completion(role, payload, schema):
         assert role in {
@@ -2252,18 +2253,6 @@ def test_product_execution_actual8_projection_correction_no_progress_fails_close
         assert [row["input_obligation_index"] for row in obligations] == list(
             range(1, len(obligations) + 1)
         )
-        overlap_obligation = obligations[6]
-        assert overlap_obligation["input_obligation_index"] == 7
-        assert overlap_obligation["origin"] == {
-            "field": "non_goals",
-            "index": 3,
-        }
-        assert overlap_obligation["allowed_roles"] == [
-            "preservation",
-            "pre_patch_evidence",
-        ]
-        assert overlap_obligation["allowed_dispositions"] == ["scope_boundary"]
-
         grouped: dict[str, dict[str, object]] = {}
         for obligation in obligations:
             requirement_role = obligation["allowed_roles"][0]
@@ -2280,13 +2269,22 @@ def test_product_execution_actual8_projection_correction_no_progress_fails_close
                 obligation["input_obligation_index"]
             )
         requirements = list(grouped.values())
+        # 为什么要有它：反例要制造真实义务的重复归类，不依赖已移出用户需求的旧平台非目标序号。
+        overlap_obligation = next(row for row in obligations if row["allowed_dispositions"]
+            and len(grouped[row["allowed_roles"][0]]["input_obligation_indexes"]) > 1)
+        overlap_index = overlap_obligation["input_obligation_index"]
+        group_index = next(index for index, row in enumerate(requirements)
+            if overlap_index in row["input_obligation_indexes"])
+        item_index = requirements[group_index]["input_obligation_indexes"].index(overlap_index)
+        overlap_details.update(index=overlap_index, group_index=group_index, item_index=item_index,
+            allowed_dispositions=overlap_obligation["allowed_dispositions"], requirement_count=len(requirements))
         raw_marker = "actual8-overlap-output-must-not-persist"
         projection = {
             "requirements": requirements,
             "input_dispositions": [
                 {
-                    "input_obligation_index": 7,
-                    "disposition": "scope_boundary",
+                    "input_obligation_index": overlap_index,
+                    "disposition": overlap_obligation["allowed_dispositions"][0],
                     "reason": raw_marker,
                 }
             ],
@@ -2406,7 +2404,8 @@ def test_product_execution_actual8_projection_correction_no_progress_fails_close
     assert len(set(raw_output_hashes)) == 1
 
     def expected_overlap_diagnostic(remaining: int) -> dict[str, object]:
-        requirement_path = "$.requirements[2].input_obligation_indexes[2]"
+        group_index, item_index = overlap_details["group_index"], overlap_details["item_index"]
+        requirement_path = f"$.requirements[{group_index}].input_obligation_indexes[{item_index}]"
         disposition_path = "$.input_dispositions[0]"
         return {
             "error_code": "REQUIREMENT_COVERAGE_INPUT_DISPOSITION_INVALID",
@@ -2415,13 +2414,13 @@ def test_product_execution_actual8_projection_correction_no_progress_fails_close
                 "obligation_already_accounted_and_dispositioned"
             ),
             "json_path": f"{disposition_path}.input_obligation_index",
-            "input_obligation_index": 7,
-            "allowed_dispositions": ["scope_boundary"],
+            "input_obligation_index": overlap_details["index"],
+            "allowed_dispositions": overlap_details["allowed_dispositions"],
             "conflicting_requirement_locations": [
                 {
-                    "requirement_item_index": 2,
-                    "requirement_item_json_path": "$.requirements[2]",
-                    "input_obligation_item_index": 2,
+                    "requirement_item_index": group_index,
+                    "requirement_item_json_path": f"$.requirements[{group_index}]",
+                    "input_obligation_item_index": item_index,
                     "input_obligation_json_path": requirement_path,
                 }
             ],
@@ -2487,7 +2486,7 @@ def test_product_execution_actual8_projection_correction_no_progress_fails_close
             attempt["input_disposition_count"],
         )
         for attempt in attempts
-    ] == [(4, None, 1), (4, None, 1)]
+    ] == [(overlap_details["requirement_count"], None, 1)] * 2
     assert [
         attempt["structured_output_canonical_sha256"] for attempt in attempts
     ] == raw_output_hashes

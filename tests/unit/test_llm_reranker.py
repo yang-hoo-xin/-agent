@@ -172,8 +172,8 @@ class TestLLMRerankerResponseParsing:
         )
         
         response = json.dumps([
-            {"passage_id": "chunk_1", "score": 2, "reasoning": "Relevant"},
-            {"passage_id": "chunk_2", "score": 1, "reasoning": "Partial match"},
+            {"passage_id": "chunk_1", "score": 2},
+            {"passage_id": "chunk_2", "score": 1},
         ])
         
         parsed = reranker._parse_llm_response(response)
@@ -300,9 +300,9 @@ class TestLLMRerankerReranking:
         
         # Mock LLM returns reranked scores
         llm_response = json.dumps([
-            {"passage_id": "chunk_3", "score": 3, "reasoning": "Most relevant"},
-            {"passage_id": "chunk_1", "score": 2, "reasoning": "Partially relevant"},
-            {"passage_id": "chunk_2", "score": 1, "reasoning": "Less relevant"},
+            {"passage_id": "chunk_3", "score": 3},
+            {"passage_id": "chunk_1", "score": 2},
+            {"passage_id": "chunk_2", "score": 1},
         ])
         
         mock_llm = MockLLM(response_content=llm_response)

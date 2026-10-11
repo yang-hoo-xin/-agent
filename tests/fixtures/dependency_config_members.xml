@@ -1,0 +1,36 @@
+<?xml version='1.0' encoding='utf-8'?>
+<doc><!--Offline excerpt fixture from BepInEx.Core.xml SHA256 1a19ea693c0c2549d35b95b04e4a5f51b419a43a0fc4bfeb998349ecb80b5762--><members><member name="M:BepInEx.Configuration.ConfigFile.Bind``1(BepInEx.Configuration.ConfigDefinition,``0,BepInEx.Configuration.ConfigDescription)">
+            <summary>
+                Create a new setting. The setting is saved to drive and loaded automatically.
+                Each definition can be used to add only one setting, trying to add a second setting will throw an exception.
+            </summary>
+            <typeparam name="T">Type of the value contained in this setting.</typeparam>
+            <param name="configDefinition">Section and Key of the setting.</param>
+            <param name="defaultValue">Value of the setting if the setting was not created yet.</param>
+            <param name="configDescription">Description of the setting shown to the user and other metadata.</param>
+        </member>
+        <member name="M:BepInEx.Configuration.ConfigFile.Bind``1(System.String,System.String,``0,BepInEx.Configuration.ConfigDescription)">
+            <summary>
+                Create a new setting. The setting is saved to drive and loaded automatically.
+                Each section and key pair can be used to add only one setting, trying to add a second setting will throw an
+                exception.
+            </summary>
+            <typeparam name="T">Type of the value contained in this setting.</typeparam>
+            <param name="section">Section/category/group of the setting. Settings are grouped by this.</param>
+            <param name="key">Name of the setting.</param>
+            <param name="defaultValue">Value of the setting if the setting was not created yet.</param>
+            <param name="configDescription">Description of the setting shown to the user and other metadata.</param>
+        </member>
+        <member name="M:BepInEx.Configuration.ConfigFile.Bind``1(System.String,System.String,``0,System.String)">
+            <summary>
+                Create a new setting. The setting is saved to drive and loaded automatically.
+                Each section and key pair can be used to add only one setting, trying to add a second setting will throw an
+                exception.
+            </summary>
+            <typeparam name="T">Type of the value contained in this setting.</typeparam>
+            <param name="section">Section/category/group of the setting. Settings are grouped by this.</param>
+            <param name="key">Name of the setting.</param>
+            <param name="defaultValue">Value of the setting if the setting was not created yet.</param>
+            <param name="description">Simple description of the setting shown to the user.</param>
+        </member>
+        </members></doc>

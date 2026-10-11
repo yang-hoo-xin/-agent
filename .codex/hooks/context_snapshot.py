@@ -226,7 +226,7 @@ def _read_task_packet(root: Path) -> dict[str, Any] | None:
         if not _is_within(resolved_packet, root):
             return None
         raw_text = resolved_packet.read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeError):
         return None
     if len(raw_text) > MAX_SNAPSHOT_CHARS:
         return None
@@ -692,6 +692,10 @@ def dispatch(
         snapshot = _read_snapshot(root, session_id)
         if snapshot is None:
             return _success_output()
+        task_packet = snapshot.get("task_packet")
+        if task_packet is not None and task_packet != _read_task_packet(root):
+            # 为什么要有它：删除或改变的任务限制不能因恢复而复活；只省略本次上下文，不重写保存快照。
+            snapshot = {key: value for key, value in snapshot.items() if key != "task_packet"}
         current_git = _read_git_state(root)
         context = _context_from_snapshot(
             snapshot,

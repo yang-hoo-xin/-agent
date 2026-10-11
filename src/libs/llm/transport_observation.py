@@ -7,8 +7,9 @@ _observer = ContextVar("agent_transport_observer", default=None)
 
 
 @contextmanager
-def observe_transport(callback, response_callback=None, request_callback=None):
-    token = _observer.set((callback, response_callback, request_callback))
+def observe_transport(callback, response_callback=None, request_callback=None, *,
+                      local_request_body_callback=None):
+    token = _observer.set((callback, response_callback, request_callback, local_request_body_callback))
     try:
         yield
     finally:
@@ -24,6 +25,25 @@ def transport_started():
         except Exception:
             # Instrumentation cannot block a send already admitted by its owner.
             pass
+
+
+def transport_local_request_body(request):
+    """Local-sender httpx hook: pass immutable wire bytes only to a local owner.
+
+    Headers and the Request object never enter the callback or ordinary span.
+    为什么要有它：实际发送字节不能由再次序列化猜测，记录失败也不能改变业务请求。
+    """
+    callbacks = _observer.get()
+    callback = callbacks[3] if callbacks is not None else None
+    if callback is None:
+        return
+    try:
+        raw = request.content
+        if isinstance(raw, bytes):
+            callback(raw)
+    except Exception:
+        # Optional local persistence must not block or retry an admitted send.
+        pass
 
 
 def transport_request_prepared(*, request_identity, context_admission):

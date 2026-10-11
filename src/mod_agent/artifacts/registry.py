@@ -132,6 +132,16 @@ class ArtifactTypeRegistry:
         artifact_type: str,
         payload: dict[str, Any],
     ) -> None:
+        if artifact_type == "isolated_apply_result" and (
+            "authorization_origin" in payload or "task_delegation_ref" in payload
+            or "task_delegation_resume_ref" in payload
+        ):
+            from ..execution.task_delegation import has_verified_apply_authorization
+
+            try:
+                has_verified_apply_authorization(payload)
+            except (KeyError, OSError, TypeError, ValueError) as exc:
+                raise ArtifactRegistryError(f"Invalid isolated Apply authorization: {exc}") from exc
         if artifact_type == "implementation_plan":
             _validate_implementation_plan_binding_registry(payload)
         if artifact_type == "binding_resolution":
@@ -167,6 +177,13 @@ class ArtifactTypeRegistry:
             _validate_evidence_run_attempt(payload)
         if artifact_type == "evidence_post_run_validation":
             _validate_evidence_post_run_validation(payload)
+        if artifact_type == "task_memory":
+            from ..planning.task_memory import validate_task_memory_payload
+
+            try:
+                validate_task_memory_payload(payload)
+            except ValueError as exc:
+                raise ArtifactRegistryError(str(exc)) from exc
 
 
 def _validate_evidence_run_attempt(payload: dict[str, Any]) -> None:
@@ -2309,6 +2326,23 @@ def default_artifact_contracts() -> list[ArtifactContract]:
                 "workflow_completion_status",
                 "requested_behavior_status",
             ),
+        ),
+        ArtifactContract(
+            artifact_type="task_memory",
+            schema_version="1.0",
+            required_fields=frozenset({
+                "node_name", "stage", "message", "schema_version", "authority",
+                "lesson_id", "revision", "previous_revision_ref", "request",
+                "evidence_refs", "facts", "outcome", "applicability", "unknowns",
+                "invalidation_conditions", "expires_at",
+            }),
+            producer_stage="task_memory",
+            consumer_stages=frozenset({
+                "task_memory", "planning_brief", "implementation_plan", "dashboard",
+            }),
+            allowed_statuses=frozenset({"success"}),
+            dashboard_projection=("lesson_id", "revision", "authority", "outcome"),
+            eval_visibility=False,
         ),
         ArtifactContract(
             artifact_type="workflow_trace",

@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """QA Multi-Step Test Runner — Execute and verify compound test cases.
 
-Provides deterministic, non-skippable multi-step test execution for tests
-that require sequential operations (ingest→query→delete→query, etc.).
-
-Each function prints step-by-step results with ACTUAL values so the AI
-cannot infer or skip steps.
+Execute one explicitly selected compound case in a marked isolated checkout.
+Each case keeps its necessary operation order (ingest→query→delete→query, etc.)
+and prints observed values for its assertions.
+为什么要有它：顺序只服务于所选复合场景，不是每次QA必须跑全部步骤的规则。
 
 Usage:
-    python .github/skills/qa-tester/scripts/qa_multistep.py <test_id>
+    python .agents/skills/qa-tester/scripts/qa_multistep.py <test_id> --target-repo <isolated-checkout>
 
 Supported test IDs:
     N-01   Complete lifecycle: ingest→query→delete→query
@@ -34,21 +33,49 @@ import tempfile
 import time
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+from qa_paths import (
+    SOURCE_REPO_ROOT,
+    create_backup,
+    require_contained_path,
+    resolve_isolated_repo,
+    restore_backup,
+    seal_target_state,
+)
+
+
+REPO_ROOT = SOURCE_REPO_ROOT
 sys.path.insert(0, str(REPO_ROOT))
 
 SCRIPTS = REPO_ROOT / "scripts"
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "sample_documents"
 CONFIG = REPO_ROOT / "config" / "settings.yaml"
-CONFIG_BAK = REPO_ROOT / "config" / "settings.yaml.multistep_bak"
+CONFIG_BAK = REPO_ROOT / "config" / "settings.yaml.qa-multistep-backup"
+QA_BOOTSTRAP = Path(__file__).resolve().with_name("qa_bootstrap.py")
 
 
-def run(args, check=False, capture=True):
+def configure_target(value: str | Path) -> Path:
+    """Bind this runner to one marked isolated checkout."""
+    global REPO_ROOT, SCRIPTS, FIXTURES, CONFIG, CONFIG_BAK
+    REPO_ROOT = resolve_isolated_repo(value)
+    SCRIPTS = require_contained_path(REPO_ROOT, REPO_ROOT / "scripts")
+    FIXTURES = require_contained_path(
+        REPO_ROOT, REPO_ROOT / "tests" / "fixtures" / "sample_documents"
+    )
+    CONFIG = require_contained_path(
+        REPO_ROOT, REPO_ROOT / "config" / "settings.yaml"
+    )
+    CONFIG_BAK = require_contained_path(
+        REPO_ROOT, REPO_ROOT / "config" / "settings.yaml.qa-multistep-backup"
+    )
+    return REPO_ROOT
+
+
+def run(args):
     """Run a command and return CompletedProcess."""
     r = subprocess.run(
         [sys.executable] + args,
         cwd=str(REPO_ROOT),
-        capture_output=capture,
+        capture_output=True,
         text=True,
         encoding="utf-8",
         errors="replace",
@@ -59,7 +86,14 @@ def run(args, check=False, capture=True):
 
 def clear_all():
     """Clear all data via bootstrap script."""
-    r = run([str(REPO_ROOT / ".github/skills/qa-tester/scripts/qa_bootstrap.py"), "clear"])
+    r = run(
+        [
+            str(QA_BOOTSTRAP),
+            "clear",
+            "--target-repo",
+            str(REPO_ROOT),
+        ]
+    )
     if r.returncode != 0:
         print(f"  ⚠️ Clear failed: {r.stderr}")
     return r.returncode == 0
@@ -118,13 +152,18 @@ def extract_sources(stdout):
 
 
 def backup_config():
-    shutil.copy2(CONFIG, CONFIG_BAK)
+    create_backup(CONFIG, CONFIG_BAK)
+
+
+def write_config_text(content: str) -> None:
+    """Write a runner-owned config state and seal that exact state."""
+    CONFIG.write_text(content, encoding="utf-8")
+    seal_target_state(CONFIG, CONFIG_BAK)
 
 
 def restore_config():
     if CONFIG_BAK.exists():
-        shutil.copy2(CONFIG_BAK, CONFIG)
-        CONFIG_BAK.unlink()
+        restore_backup(CONFIG, CONFIG_BAK)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -372,8 +411,7 @@ def test_M05():
         print("\n[Step 1] Inject YAML syntax error")
         with open(CONFIG, "r") as f:
             content = f.read()
-        with open(CONFIG, "w") as f:
-            f.write("invalid_yaml: {missing_bracket\n" + content)
+        write_config_text("invalid_yaml: {missing_bracket\n" + content)
 
         print("\n[Step 2] Run query")
         r = run([str(SCRIPTS / "query.py"), "--query", "test"])
@@ -408,8 +446,7 @@ def test_M06():
         with open(CONFIG) as f:
             cfg = yaml.safe_load(f)
         del cfg["embedding"]
-        with open(CONFIG, "w") as f:
-            yaml.dump(cfg, f)
+        write_config_text(yaml.dump(cfg))
 
         print("\n[Step 2] Run ingest")
         r = run([str(SCRIPTS / "ingest.py"), "--path", str(FIXTURES / "simple.pdf"), "--force"])
@@ -455,8 +492,7 @@ def test_M10():
         with open(CONFIG) as f:
             cfg = yaml.safe_load(f)
         cfg["ingestion"]["chunk_size"] = 500
-        with open(CONFIG, "w") as f:
-            yaml.dump(cfg, f, default_flow_style=False)
+        write_config_text(yaml.dump(cfg, default_flow_style=False))
 
         print("\n[Step 3] Ingest simple.pdf with chunk_size=500")
         ec2, out2 = ingest(FIXTURES / "simple.pdf", "default", force=True)
@@ -493,8 +529,7 @@ def test_M03():
         with open(CONFIG) as f:
             cfg = yaml.safe_load(f)
         cfg["llm"]["azure_endpoint"] = "https://invalid.openai.azure.com/"
-        with open(CONFIG, "w") as f:
-            yaml.dump(cfg, f, default_flow_style=False)
+        write_config_text(yaml.dump(cfg, default_flow_style=False))
 
         print("\n[Step 2] Run ingest (will fail at Transform stage)")
         r = run([str(SCRIPTS / "ingest.py"), "--path", str(FIXTURES / "simple.pdf"), "--force"])
@@ -530,8 +565,7 @@ def test_L07():
         cfg["rerank"]["enabled"] = True
         cfg["rerank"]["provider"] = "llm"
         cfg["llm"]["api_key"] = "invalid_key_for_rerank_test"
-        with open(CONFIG, "w") as f:
-            yaml.dump(cfg, f, default_flow_style=False)
+        write_config_text(yaml.dump(cfg, default_flow_style=False))
 
         print("\n[Step 2] Run query")
         r = run([str(SCRIPTS / "query.py"), "--query", "performance benchmarks", "--verbose"])
@@ -579,8 +613,7 @@ def test_M11():
         with open(CONFIG) as f:
             cfg = yaml.safe_load(f)
         cfg["ingestion"]["chunk_overlap"] = 0
-        with open(CONFIG, "w") as f:
-            yaml.dump(cfg, f, default_flow_style=False)
+        write_config_text(yaml.dump(cfg, default_flow_style=False))
 
         print("\n[Step 3] Ingest with chunk_overlap=0")
         ec2, out2 = ingest(doc, "default", force=True)
@@ -615,8 +648,7 @@ def test_M04():
         with open(CONFIG) as f:
             cfg = yaml.safe_load(f)
         cfg["vision_llm"]["enabled"] = False
-        with open(CONFIG, "w") as f:
-            yaml.dump(cfg, f, default_flow_style=False)
+        write_config_text(yaml.dump(cfg, default_flow_style=False))
 
         print("\n[Step 2] Ingest with_images.pdf (has 1 image)")
         r = run([str(SCRIPTS / "ingest.py"), "--path",
@@ -671,7 +703,15 @@ TESTS = {
 def main():
     parser = argparse.ArgumentParser(description="Run a multi-step QA test")
     parser.add_argument("test_id", choices=list(TESTS.keys()), help="Test ID to run")
+    parser.add_argument(
+        "--target-repo",
+        required=True,
+        type=Path,
+        help="Marked isolated checkout that receives every QA mutation",
+    )
     args = parser.parse_args()
+
+    configure_target(args.target_repo)
 
     test_fn = TESTS[args.test_id]
     try:

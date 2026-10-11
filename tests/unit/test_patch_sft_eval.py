@@ -20,6 +20,27 @@ from tests.unit.test_external_patch import _consent, _profile
 from tests.unit.test_patch_repair_cli import _message_jsons
 
 
+def _visible_b0_binding_text(prompt, binding_id, values):
+    """Read the literal B0 excerpt that the fixture actually supplied to the model."""
+    binding = prompt["edit_binding_contexts"][binding_id]
+    if "source_excerpt" in binding:
+        return binding["source_excerpt"]
+    observations = []
+    for role, value in values:
+        if not isinstance(value, dict):
+            continue
+        if (role == "tool" and value.get("binding_id") == binding_id
+                and isinstance(value.get("excerpt"), str)):
+            observations.append(value)
+        supplied = value.get("observation")
+        if (value.get("message_type") == "provided_source_observation"
+                and isinstance(supplied, dict) and supplied.get("binding_id") == binding_id
+                and isinstance(supplied.get("excerpt"), str)):
+            observations.append(supplied)
+    assert len(observations) == 1
+    return observations[0]["excerpt"]
+
+
 def _fake_execution(root, source, program, tools):
     root.mkdir(parents=True)
     path = root / "Subject.cs"
@@ -35,6 +56,17 @@ def _fake_execution(root, source, program, tools):
         "execution_origin": "actual_csharp_process", "source_ref": data.ref(path),
         "compilation_ref": compilation, "assembly_ref": data.ref(assembly), "fixture_only": True}
     return {**record, "report_ref": data.save(root / "behavior.json", record)}
+
+
+def test_check_definition_allows_runtime_expected_values_but_not_identity_drift():
+    first = [{"check": "dynamic", "group": "target", "expected": 1},
+             {"check": "preserve", "group": "preservation", "expected": True}]
+    second = [{"check": "dynamic", "group": "target", "expected": 2},
+              {"check": "preserve", "group": "preservation", "expected": True}]
+    assert evaluation._check_definition_signature(first) == evaluation._check_definition_signature(second)
+    assert evaluation._check_definition_signature(first) != evaluation._check_definition_signature(list(reversed(second)))
+    with pytest.raises(ValueError, match="DUPLICATE"):
+        evaluation._check_definition_signature([first[0], first[0]])
 
 
 def _fixture(tmp_path, monkeypatch):
@@ -72,7 +104,8 @@ def _install(monkeypatch):
                 "name": "inspect_plan_binding_source", "arguments": {"binding_id": binding}}}]}
         else:
             context = next(iter(prompt["edit_binding_contexts"].values()))
-            after = context["source_excerpt"].replace("Published++;", "if (publish) Published++;")
+            after = _visible_b0_binding_text(prompt, context["binding_id"], values).replace(
+                "Published++;", "if (publish) Published++;")
             message = {"role": "assistant", "content": json.dumps({"changes": [{"edit_binding_id": context["binding_id"],
                 "rationale": "Synthetic response in an offline integration test.", "rollback_hint": "Restore original.", "after_text": after}]})}
         return httpx.Response(200, json={"model": "offline-sft", "message": message, "done": True,
@@ -216,15 +249,31 @@ def _install_external(monkeypatch):
         values = _message_jsons(payload)
         prompt = _restore_patch_agent_context(next(value for _, value in values if "required_change_units" in value))
         context = next(iter(prompt["edit_binding_contexts"].values()))
-        if len(chats) == 2:
-            feedback = next(value for _, value in values if value.get("message_type") == "patch_behavior_correction")
-            assert feedback["validator_feedback"]["observations"]
-        replacement = "if (publish || sample != 0) Published++;" if len(chats) == 1 else "if (publish) Published++;"
-        content = json.dumps({"changes": [{"edit_binding_id": context["binding_id"],
-            "rationale": "Offline fixture repair.", "rollback_hint": "Restore original.",
-            "after_text": context["source_excerpt"].replace("Published++;", replacement)}]})
+        fixed_failure = any(value.get("message_type") == "patch_repair_context"
+                            for _, value in values if isinstance(value, dict))
+        if fixed_failure and len(chats) == 1:
+            tool = next(row["function"] for row in payload["tools"]
+                        if row["function"]["name"] == "inspect_plan_binding_source")
+            message = {"role": "assistant", "content": None, "tool_calls": [{
+                "id": "fixed-failure-source-read", "type": "function", "function": {
+                    "name": tool["name"],
+                    "arguments": json.dumps({"binding_id": context["binding_id"]}),
+                }}]}
+        else:
+            if len(chats) == 2 and not fixed_failure:
+                feedback = next(value for _, value in values
+                                if value.get("message_type") == "patch_behavior_correction")
+                assert feedback["validator_feedback"]["observations"]
+            replacement = ("if (publish || sample != 0) Published++;"
+                           if len(chats) == 1 else "if (publish) Published++;")
+            content = json.dumps({"changes": [{"edit_binding_id": context["binding_id"],
+                "rationale": "Offline fixture repair.", "rollback_hint": "Restore original.",
+                "after_text": _visible_b0_binding_text(
+                    prompt, context["binding_id"], values).replace("Published++;", replacement)}]})
+            message = {"role": "assistant", "content": content}
         return httpx.Response(200, json={"id": f"offline-{len(chats)}", "model": "qwen3.6-plus",
-            "choices": [{"message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+            "choices": [{"message": message,
+                         "finish_reason": "tool_calls" if message.get("tool_calls") else "stop"}],
             "usage": {"prompt_tokens": 200, "completion_tokens": 80}}, request=request)
     transport = httpx.MockTransport(handle)
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", lambda _self, request: transport.handle_request(request))
@@ -274,7 +323,9 @@ def test_external_eval_shared_worker_repairs_original_checks_and_reaches_review_
     journal = json.loads(Path(result["attempt_ref"]["path"]).read_text(encoding="utf-8"))
     factory = journal["factory_receipt"]
     assert factory["adapter"] == "ExternalQwenPatchAdapter"
-    assert [row["status"] for row in factory["patch_agent_loop"]["behavior_evaluations"]] == ["behavior_failed", "passed"]
+    expected_evaluations = (["passed"] if mode == "fixed_failure"
+                            else ["behavior_failed", "passed"])
+    assert [row["status"] for row in factory["patch_agent_loop"]["behavior_evaluations"]] == expected_evaluations
     assert "hidden_oracle" not in json.dumps(chats) and "CheckApp" not in json.dumps(chats)
     teacher_c2 = json.loads(sample["completion"][0]["content"])["changes"][0]["after_text"]
     assert teacher_c2 not in [message.get("content") for message in chats[0]["messages"]]

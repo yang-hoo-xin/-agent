@@ -1,0 +1,392 @@
+{
+  "schema_version": "startup-notice-reload-cases.v1",
+  "plugin_identity": {
+    "guid": "local.modagent.c364143153b15df48f94e10224306a8d",
+    "name": "启动公告",
+    "version": "0.1.0"
+  },
+  "scope": "Cold real BasePlugin.Load followed by real ConfigFile.Reload in the same process; plugin constructor, Chainloader, file watcher and game are not executed.",
+  "state_comparison": "After Load and after every completed Reload remember actual Enabled and Message values, including disabled or blank states; ordinal string comparison.",
+  "cases": [
+    {
+      "name": "fresh",
+      "seed_config": null,
+      "initial": {
+        "enabled": true,
+        "message": "Ready"
+      },
+      "reload_actions": [],
+      "why": "为什么要有它：保留已交付首次Load的默认、显式值、禁用及空白抑制行为。"
+    },
+    {
+      "name": "stored_true_custom",
+      "seed_config": "[General]\nEnabled = true\nMessage = Explicit custom message\n",
+      "initial": {
+        "enabled": true,
+        "message": "Explicit custom message"
+      },
+      "reload_actions": [],
+      "why": "为什么要有它：保留已交付首次Load的默认、显式值、禁用及空白抑制行为。"
+    },
+    {
+      "name": "stored_false_custom",
+      "seed_config": "[General]\nEnabled = false\nMessage = Disabled custom message\n",
+      "initial": {
+        "enabled": false,
+        "message": "Disabled custom message"
+      },
+      "reload_actions": [],
+      "why": "为什么要有它：保留已交付首次Load的默认、显式值、禁用及空白抑制行为。"
+    },
+    {
+      "name": "stored_empty",
+      "seed_config": "[General]\nEnabled = true\nMessage = \n",
+      "initial": {
+        "enabled": true,
+        "message": ""
+      },
+      "reload_actions": [],
+      "why": "为什么要有它：保留已交付首次Load的默认、显式值、禁用及空白抑制行为。"
+    },
+    {
+      "name": "stored_whitespace",
+      "seed_config": "[General]\nEnabled = true\nMessage =    \t  \n",
+      "initial": {
+        "enabled": true,
+        "message": ""
+      },
+      "reload_actions": [],
+      "why": "为什么要有它：保留已交付首次Load的默认、显式值、禁用及空白抑制行为。"
+    },
+    {
+      "name": "state_transitions",
+      "seed_config": null,
+      "initial": {
+        "enabled": true,
+        "message": "Ready"
+      },
+      "why": "为什么要有它：停用和空白也更新上次有效状态，重新启用或恢复消息时应恢复一次提示。",
+      "reload_actions": [
+        {
+          "id": "unchanged",
+          "config_text": "[General]\nEnabled = true\nMessage = Ready\n",
+          "expected": {
+            "enabled": true,
+            "message": "Ready",
+            "logs": []
+          }
+        },
+        {
+          "id": "message_change",
+          "config_text": "[General]\nEnabled = true\nMessage = Alpha\n",
+          "expected": {
+            "enabled": true,
+            "message": "Alpha",
+            "logs": [
+              {
+                "level": "Info",
+                "message": "Alpha"
+              }
+            ]
+          }
+        },
+        {
+          "id": "repeat",
+          "config_text": "# formatting only\n[General]\nMessage = Alpha\nEnabled = true\n",
+          "expected": {
+            "enabled": true,
+            "message": "Alpha",
+            "logs": []
+          }
+        },
+        {
+          "id": "disable_and_change",
+          "config_text": "[General]\nMessage = Beta\nEnabled = false\n",
+          "expected": {
+            "enabled": false,
+            "message": "Beta",
+            "logs": []
+          }
+        },
+        {
+          "id": "disabled_message_change",
+          "config_text": "[General]\nEnabled = false\nMessage = Gamma\n",
+          "expected": {
+            "enabled": false,
+            "message": "Gamma",
+            "logs": []
+          }
+        },
+        {
+          "id": "reenable",
+          "config_text": "[General]\nEnabled = true\nMessage = Gamma\n",
+          "expected": {
+            "enabled": true,
+            "message": "Gamma",
+            "logs": [
+              {
+                "level": "Info",
+                "message": "Gamma"
+              }
+            ]
+          }
+        },
+        {
+          "id": "empty",
+          "config_text": "[General]\nEnabled = true\nMessage = \n",
+          "expected": {
+            "enabled": true,
+            "message": "",
+            "logs": []
+          }
+        },
+        {
+          "id": "whitespace",
+          "config_text": "[General]\nEnabled = true\nMessage =    \t  \n",
+          "expected": {
+            "enabled": true,
+            "message": "",
+            "logs": []
+          }
+        },
+        {
+          "id": "restore",
+          "config_text": "[General]\nEnabled = true\nMessage = Ready\n",
+          "expected": {
+            "enabled": true,
+            "message": "Ready",
+            "logs": [
+              {
+                "level": "Info",
+                "message": "Ready"
+              }
+            ]
+          }
+        },
+        {
+          "id": "repeat_restored",
+          "config_text": "[General]\nEnabled = true\nMessage = Ready\n",
+          "expected": {
+            "enabled": true,
+            "message": "Ready",
+            "logs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "both_keys_one_completion",
+      "seed_config": "[General]\nEnabled = false\nMessage = Old\n",
+      "initial": {
+        "enabled": false,
+        "message": "Old"
+      },
+      "why": "为什么要有它：同次两个键更新不得在逐SettingChanged中输出旧值或双日志，重载完成后只读最终状态。",
+      "reload_actions": [
+        {
+          "id": "enable_and_change",
+          "config_text": "[General]\nEnabled = true\nMessage = New\n",
+          "expected": {
+            "enabled": true,
+            "message": "New",
+            "logs": [
+              {
+                "level": "Info",
+                "message": "New"
+              }
+            ]
+          }
+        },
+        {
+          "id": "disable_message_first",
+          "config_text": "[General]\nMessage = Quiet\nEnabled = false\n",
+          "expected": {
+            "enabled": false,
+            "message": "Quiet",
+            "logs": []
+          }
+        },
+        {
+          "id": "enable_message_first",
+          "config_text": "[General]\nMessage = Latest\nEnabled = true\n",
+          "expected": {
+            "enabled": true,
+            "message": "Latest",
+            "logs": [
+              {
+                "level": "Info",
+                "message": "Latest"
+              }
+            ]
+          }
+        },
+        {
+          "id": "repeat_latest",
+          "config_text": "[General]\nEnabled = true\nMessage = Latest\n",
+          "expected": {
+            "enabled": true,
+            "message": "Latest",
+            "logs": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "comparison_and_unrelated_settings",
+      "seed_config": "[General]\nEnabled = true\nMessage = Alpha\n",
+      "initial": {
+        "enabled": true,
+        "message": "Alpha"
+      },
+      "why": "为什么要有它：消息比较保留大小写，未改变General两项的其他配置不能触发提示，禁用后重启不能误去重。",
+      "reload_actions": [
+        {
+          "id": "same",
+          "config_text": "[General]\nEnabled = true\nMessage = Alpha\n",
+          "expected": {
+            "enabled": true,
+            "message": "Alpha",
+            "logs": []
+          }
+        },
+        {
+          "id": "case_change",
+          "config_text": "[General]\nEnabled = true\nMessage = alpha\n",
+          "expected": {
+            "enabled": true,
+            "message": "alpha",
+            "logs": [
+              {
+                "level": "Info",
+                "message": "alpha"
+              }
+            ]
+          }
+        },
+        {
+          "id": "clear",
+          "config_text": "[General]\nEnabled = true\nMessage = \n",
+          "expected": {
+            "enabled": true,
+            "message": "",
+            "logs": []
+          }
+        },
+        {
+          "id": "disabled_new_text",
+          "config_text": "[General]\nEnabled = false\nMessage = Alpha\n",
+          "expected": {
+            "enabled": false,
+            "message": "Alpha",
+            "logs": []
+          }
+        },
+        {
+          "id": "reenabled_previous_text",
+          "config_text": "[General]\nEnabled = true\nMessage = Alpha\n",
+          "expected": {
+            "enabled": true,
+            "message": "Alpha",
+            "logs": [
+              {
+                "level": "Info",
+                "message": "Alpha"
+              }
+            ]
+          }
+        },
+        {
+          "id": "unrelated_only",
+          "config_text": "[General]\nEnabled = true\nMessage = Alpha\n\n[Unrelated]\nSetting = changed\n",
+          "expected": {
+            "enabled": true,
+            "message": "Alpha",
+            "logs": []
+          }
+        },
+        {
+          "id": "next_text",
+          "config_text": "[General]\nEnabled = true\nMessage = Beta\n",
+          "expected": {
+            "enabled": true,
+            "message": "Beta",
+            "logs": [
+              {
+                "level": "Info",
+                "message": "Beta"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "silent_state_roundtrips",
+      "seed_config": "[General]\nEnabled = true\nMessage = Sticky\n",
+      "initial": {
+        "enabled": true,
+        "message": "Sticky"
+      },
+      "reload_actions": [
+        {
+          "id": "disable_same_text",
+          "config_text": "[General]\nEnabled = false\nMessage = Sticky\n",
+          "expected": {
+            "enabled": false,
+            "message": "Sticky",
+            "logs": []
+          }
+        },
+        {
+          "id": "enable_same_text",
+          "config_text": "[General]\nEnabled = true\nMessage = Sticky\n",
+          "expected": {
+            "enabled": true,
+            "message": "Sticky",
+            "logs": [
+              {
+                "level": "Info",
+                "message": "Sticky"
+              }
+            ]
+          }
+        },
+        {
+          "id": "blank_same_enabled",
+          "config_text": "[General]\nEnabled = true\nMessage = \n",
+          "expected": {
+            "enabled": true,
+            "message": "",
+            "logs": []
+          }
+        },
+        {
+          "id": "restore_same_text",
+          "config_text": "[General]\nEnabled = true\nMessage = Sticky\n",
+          "expected": {
+            "enabled": true,
+            "message": "Sticky",
+            "logs": [
+              {
+                "level": "Info",
+                "message": "Sticky"
+              }
+            ]
+          }
+        },
+        {
+          "id": "repeat_after_restore",
+          "config_text": "[General]\nEnabled = true\nMessage = Sticky\n",
+          "expected": {
+            "enabled": true,
+            "message": "Sticky",
+            "logs": []
+          }
+        }
+      ],
+      "why": "为什么要有它：记忆对象必须是每次完整状态而非上次已输出消息；无日志的停用和空白也必须更新比较基准。"
+    }
+  ],
+  "why": "为什么要有它：合同在产品模型运行前固定，旧行为与新增重载行为均由真实程序集和配置事件验收。",
+  "case_revision": 2
+}

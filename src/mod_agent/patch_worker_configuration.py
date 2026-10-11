@@ -133,7 +133,7 @@ class _LazyBehaviorEvaluator:
         return self._get_delegate()(*args, **kwargs)
 
     def __getattr__(self, name: str) -> Any:
-        if name != "verification_identity":
+        if name not in {"verification_identity", "verify_existing_assembly"}:
             raise AttributeError(name)
         # Missing optional metadata must stay missing. In particular, do not
         # supply a method returning None to an owner that validates method output.

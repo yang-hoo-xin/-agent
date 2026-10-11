@@ -73,7 +73,8 @@ ENGLISH_STOPWORDS: Set[str] = {
 DEFAULT_STOPWORDS: Set[str] = CHINESE_STOPWORDS | ENGLISH_STOPWORDS
 
 # Pattern for filter syntax: key:value
-FILTER_PATTERN: Pattern = re.compile(r'(\w+):([^\s]+)')
+# 为什么要有它：自然语言里的 URL、Windows 路径和限定成员名属于查询内容，不能意外变成检索权限或元数据过滤器。
+FILTER_PATTERN: Pattern = re.compile(r'(?<![\w./\\])(\w+):(?![/\\])([^\s]+)')
 
 
 @dataclass

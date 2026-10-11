@@ -314,28 +314,16 @@ def materialize_exact_text_patch(
     )
 
 
-def validate_materialized_patch_submission(materialized: MaterializedPatchBytes) -> None:
-    """Check the existing diff whitespace rule without altering or writing bytes.
+def validate_materialized_patch_submission(materialized: MaterializedPatchBytes) -> dict[str, int]:
+    """Return advisory formatting observations for an exactly materialized patch.
 
-    Call only after exact materialization has checked live source authority.
-    This is submission feedback, not Review, Dry-run or semantic approval.
+    为什么要有它：tb1 的候选在行为验收前因六行尾部空白被拒；通用格式统计不授予或撤销修改权限，原字节交给真实验收。
+    The compatibility name remains callable; source authority is checked by
+    materialize_exact_text_patch. No whitespace is trimmed or rewritten here.
     """
-    # Proposal imports execution consumers during package initialization.
-    from src.mod_agent.proposal.code_generator import PatchSubmissionValidationError
-
-    count = _added_trailing_whitespace_count(
+    return {"added_trailing_whitespace_count": _added_trailing_whitespace_count(
         original_by_target=materialized.baseline_files, staged=materialized.files,
-    )
-    if count:
-        raise PatchSubmissionValidationError(
-            "Unified diff introduces trailing whitespace on "
-            f"{count} added line(s).",
-            diagnostics={
-                "failure_boundary": "deterministic_patch_validation",
-                "failure_classification": "added_diff_trailing_whitespace",
-                "added_trailing_whitespace_count": count,
-            },
-        )
+    )}
 
 
 class ExactTextPatchApplier:
@@ -346,11 +334,14 @@ class ExactTextPatchApplier:
         implementation_plan: dict[str, Any], review: dict[str, Any], allow_write: bool,
         approved_diff_hash: str | None = None,
         human_semantic_decision: Mapping[str, Any] | None = None,
+        task_delegation_ref: Mapping[str, str] | None = None,
+        task_delegation_resume_ref: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         try:
             return self._run(workspace_root=workspace_root, proposal=proposal,
                 implementation_plan=implementation_plan, review=review, allow_write=allow_write,
-                approved_diff_hash=approved_diff_hash, human_semantic_decision=human_semantic_decision)
+                approved_diff_hash=approved_diff_hash, human_semantic_decision=human_semantic_decision,
+                task_delegation_ref=task_delegation_ref, task_delegation_resume_ref=task_delegation_resume_ref)
         except BaseException as error:
             if not hasattr(error, "patch_apply_failure"):
                 # Every physical target replacement is covered by the inner
@@ -370,6 +361,8 @@ class ExactTextPatchApplier:
         allow_write: bool,
         approved_diff_hash: str | None = None,
         human_semantic_decision: Mapping[str, Any] | None = None,
+        task_delegation_ref: Mapping[str, str] | None = None,
+        task_delegation_resume_ref: Mapping[str, str] | None = None,
     ) -> dict[str, Any]:
         if review.get("allowed_next_stage") != "dry_run_apply":
             raise PatchApplyError("Proposal review did not allow dry-run apply.")
@@ -400,15 +393,7 @@ class ExactTextPatchApplier:
             original_by_target=original_by_target,
             staged=staged,
         )
-        added_trailing_whitespace_count = _added_trailing_whitespace_count(
-            original_by_target=original_by_target,
-            staged=staged,
-        )
-        if added_trailing_whitespace_count:
-            raise PatchApplyError(
-                "Unified diff introduces trailing whitespace on "
-                f"{added_trailing_whitespace_count} added line(s)."
-            )
+        format_diagnostics = validate_materialized_patch_submission(materialized)
         unified_diff_bytes = unified_diff.encode("utf-8")
         diff_stats = _unified_diff_stats(unified_diff)
         context_hashes = {
@@ -444,6 +429,20 @@ class ExactTextPatchApplier:
             else None
         )
         validated_human_decision: dict[str, Any] | None = None
+        delegation_fields = {}
+        if task_delegation_ref is not None:
+            from .task_delegation import delegation_result_fields, validate_task_delegation
+
+            if not allow_write or human_semantic_decision is not None:
+                raise PatchApplyError("Delegation is exclusive to a non-human isolated Apply.")
+            validate_task_delegation(task_delegation_ref, workspace_root=root, diff_hash=diff_hash,
+                context_hashes=context_hashes, materialized_code_identity={
+                    "baseline_sha256": materialized.baseline_sha256, "code_sha256": materialized.code_sha256,
+                    "files": sorted(materialized.files)}, before_apply=True,
+                resume_report_ref=task_delegation_resume_ref)
+            delegation_fields = delegation_result_fields(task_delegation_ref, task_delegation_resume_ref)
+        elif task_delegation_resume_ref is not None:
+            raise PatchApplyError("A delegated resume receipt requires its exact decision reference.")
         if allow_write:
             if approved_diff_hash is None:
                 raise PatchApplyError("Exact diff hash approval is required before writing.")
@@ -451,7 +450,7 @@ class ExactTextPatchApplier:
                 raise PatchApplyError(
                     "Approved diff hash does not match the current exact patch."
                 )
-            if human_semantic_review_required:
+            if human_semantic_review_required and not delegation_fields:
                 validated_human_decision = _validate_human_semantic_decision(
                     human_semantic_decision,
                     expected_binding=semantic_decision_binding or {},
@@ -497,9 +496,10 @@ class ExactTextPatchApplier:
             except BaseException as error:
                 facts = _write_failure_details(root, staged, original_by_target, replacements, operation, cleanup_errors)
                 facts.update(diff_hash=diff_hash, approved_diff_hash=approved_diff_hash,
-                    approved_by_user=True, context_hashes=context_hashes,
+                    approved_by_user=not bool(delegation_fields), context_hashes=context_hashes,
                     human_semantic_decision=validated_human_decision,
                     human_semantic_review_result="approved" if validated_human_decision is not None else "not_required_for_legacy_non_semantic_contract")
+                facts.update(delegation_fields)
                 attach_patch_apply_failure(error, facts)
                 raise
 
@@ -540,6 +540,7 @@ class ExactTextPatchApplier:
             "unified_diff": unified_diff,
             "unified_diff_sha256": hashlib.sha256(unified_diff_bytes).hexdigest(),
             "unified_diff_bytes": len(unified_diff_bytes),
+            "format_diagnostics": format_diagnostics,
             "diff_stats": {
                 "files": len(staged),
                 "change_units": len(diff_preview),
@@ -551,6 +552,7 @@ class ExactTextPatchApplier:
             ],
             "changed_files": sorted({item["path"] for item in file_results}),
             "changes": file_results,
+            **delegation_fields,
         }
 
 

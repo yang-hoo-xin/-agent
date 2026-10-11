@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any, Literal, Mapping, TypedDict
 
 StageName = Literal[
@@ -124,6 +125,37 @@ class StateOwnershipPolicy:
         """Return whether a workflow component may write a field."""
 
         return writer in cls.allowed_writers(field_name)
+
+
+def _copy_mod_agent_state(state: ModAgentState) -> ModAgentState:
+    """Copy mutable workflow state while preserving every declared field."""
+
+    return ModAgentState(
+        run_id=state["run_id"],
+        request_id=state["request_id"],
+        feature_id=state["feature_id"],
+        user_request=state["user_request"],
+        target_domain=state["target_domain"],
+        target_mod=state["target_mod"],
+        execution_path=state["execution_path"],
+        risk_level=state["risk_level"],
+        current_stage=state["current_stage"],
+        next_stage=state["next_stage"],
+        artifacts=dict(state["artifacts"]),
+        artifact_hashes=dict(state["artifact_hashes"]),
+        approvals=dict(state["approvals"]),
+        blockers=list(state["blockers"]),
+        warnings=list(state["warnings"]),
+        evidence_summary=dict(state["evidence_summary"]),
+        review_summary=dict(state["review_summary"]),
+        build_summary=dict(state["build_summary"]),
+        runtime_summary=dict(state["runtime_summary"]),
+        edit_authority_review_result=deepcopy(
+            state.get("edit_authority_review_result")
+        ),
+        trace_events=list(state["trace_events"]),
+        retry_count=state["retry_count"],
+    )
 
 
 def create_initial_state(

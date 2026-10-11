@@ -15,7 +15,7 @@ from src.mod_agent.planning.model_selection import PlanningTargetSelectionError
 from src.mod_agent.proposal.patch_agent_loop import PATCH_UPSTREAM_REQUEST_TOOL_NAME
 from src.mod_agent.repair.upstream import run_patch_upstream_replanning
 from tests.unit.test_model_planning_selection import _Client, _selector
-from tests.unit.test_patch_repair_cli import _message_jsons, _source_hashes, _write_json
+from tests.unit.test_patch_repair_cli import _message_jsons, _sha, _source_hashes, _write_json
 from tests.unit.test_patch_repair_continuation import _repair_case
 from tests.unit.test_patch_upstream_budget import _ConsumedReadTransport
 from tests.unit.test_patch_upstream_cli import _case, _run
@@ -51,7 +51,9 @@ def test_explicit_upstream_retain_keeps_original_plan_and_explains_repair(tmp_pa
     ) == old_revisions
     assert len(client.calls) == 1
     assessment = client.calls[0].messages[1].content["upstream_assessment"]
-    assert assessment["current_plan"] == inputs.store.read(request.implementation_plan_ref)["data"]
+    original_plan = inputs.store.read(request.implementation_plan_ref)["data"]
+    for field in ("target_files", "target_symbols", "proposed_changes", "side_effect_boundaries"):
+        assert assessment["current_plan"][field] == original_plan[field]
     assert assessment["failure_report"]
     assert assessment["previous_response"]
     assert assessment["retain_current_plan_allowed"] is True
@@ -159,7 +161,12 @@ class _RetainTransport(_ConsumedReadTransport):
             super().__call__(request)
             assert planning["upstream_assessment"]["previous_response"] == self.latest_failed_raw
             assert planning["upstream_assessment"]["failure_report"]["generated_changes_sha256"] == self.new_failure["generated_changes_sha256"]
-            return self._response(request, {"role": "assistant", "content": json.dumps(_retain({}))})
+            selection = _retain({})
+            # 为什么要有它：配置行为检查器时真实 Planning 合同使用 verification_questions，模拟响应须遵守当前 schema。
+            if "verification_questions" in payload["format"]["properties"]:
+                selection["verification_questions"] = selection.pop("missing_evidence")
+            assert set(selection) == set(payload["format"]["required"])
+            return self._response(request, {"role": "assistant", "content": json.dumps(selection)})
         if not self.planning_sent:
             return super().__call__(request)
         self.requests.append((request.method, str(request.url)))
@@ -199,28 +206,56 @@ def test_public_cli_retains_plan_tool_history_and_last_model_allowance(tmp_path,
     monkeypatch.setattr("socket.socket.connect", forbid)
     monkeypatch.setattr("socket.socket.connect_ex", forbid)
     code, result = _run(case, capsys)
-    assert (code != 0) if repeat_upstream else (code == 0), result
-    assert handler.stage_roles == ["patch", "patch", "patch", "planning", "patch"]
+    diagnostic = {key: result.get(key) for key in ("status", "reason", "first_failure")}
+    assert (code != 0) if repeat_upstream else (code == 0), diagnostic
+    assert handler.stage_roles == ["patch", "patch", "patch", "planning", "patch"], diagnostic
     assert result["implementation_plan_artifact"]["artifact_hash"] == case.request.implementation_plan_ref.artifact_hash
     assert case.inputs.store.list_feature_artifact_revisions(
         case.request.feature_spec_ref.feature_id, "implementation_plan") == revisions
     assert result["execution_counts"]["model"] == 5
     assert result["execution_counts"]["planning"] == 1
     assert result["execution_counts"]["review"] == result["execution_counts"]["dry_run"] == (0 if repeat_upstream else 1)
+    assert result["execution_counts"]["apply"] == result["execution_counts"]["build"] == result["execution_counts"]["runtime"] == 0
     journal = json.loads(Path(result["attempt_receipt"]["path"]).read_text())
     first, second = journal["patch_execution_segments"]
     assert first["selected_artifacts"] == second["selected_artifacts"]
+    assert second["factory_receipt"]["context_calibration_inheritance"] == {
+        "status": "inherited", "observed_calibration_count": 3,
+        "client_transport_reused": False, "context_window_changed": False}
     loop = second["factory_receipt"]["patch_agent_loop"]
     assert loop["prior_worker_budget"]["consumed_model_turns"] == 3
     assert loop["prior_worker_budget"]["consumed_tool_rounds"] == 1
-    assert loop["prior_worker_budget"]["consumed_observation_bytes"] > 0
+    old_loop = first["factory_receipt"]["patch_agent_loop"]
+    old_source_bytes = old_loop["total_observation_bytes"] + old_loop["behavior_correction"]["execution"]["total_observation_bytes"]
+    assert loop["prior_worker_budget"]["consumed_observation_bytes"] == old_source_bytes + old_loop["recovery_observation_bytes"]
     assert loop["model_turns_used"] == 1
     assert loop["tool_rounds_used"] == 0
     old_payload = handler.chat_requests[2][1]
     old_tools = [message for message in old_payload["messages"] if message["role"] == "tool"]
     assert old_tools
+    retained_messages = handler.retained_payload["messages"]
+    retained_tools = [message for message in retained_messages if message["role"] == "tool"]
+    assert len(retained_tools) == len(old_tools) + 1
     for message in old_tools:
-        assert message in handler.retained_payload["messages"]
+        assert retained_tools.count(message) == 1
+    # 为什么要有它：同 Plan 续接要保留旧源码观察并恰好闭合一次原生补查请求，不能伪造批准或重复交换。
+    upstream_results = [message for message in retained_tools
+                        if message.get("tool_name") == PATCH_UPSTREAM_REQUEST_TOOL_NAME]
+    assert len(upstream_results) == 1
+    upstream_message = upstream_results[0]
+    response_ref = first["factory_receipt"]["worker_turns"][-1]["response_ref"]
+    response_bytes = Path(response_ref["path"]).read_bytes()
+    assert _sha(response_bytes) == response_ref["sha256"]
+    response = json.loads(response_bytes)
+    prior_call, = response["tool_calls"]
+    assert prior_call["name"] == PATCH_UPSTREAM_REQUEST_TOOL_NAME
+    native_call = retained_messages[retained_messages.index(upstream_message) - 1]
+    assert native_call["role"] == "assistant"
+    assert native_call["tool_calls"] == response["provider_state"]["tool_calls"]
+    assert native_call["content"] == response["provider_state"]["content"]
+    upstream_result = json.loads(upstream_message["content"])
+    assert upstream_result == {"status": "completed", "decision": "retain_current_plan",
+                               "new_material": False, "approval_inherited": False}
     assert any(message.get("content") == handler.latest_failed_raw
                for message in handler.retained_payload["messages"] if message["role"] == "assistant")
     assessments = [value for _, value in _message_jsons(handler.retained_payload)
@@ -229,7 +264,11 @@ def test_public_cli_retains_plan_tool_history_and_last_model_allowance(tmp_path,
     assert _retain({})["rationale"] in json.dumps(assessments[0])
     new_feedback_bytes = len(_patch_agent_context_json([
         {"role": "user", "content": assessments[0]}]).encode("utf-8"))
-    assert loop["recovery_observation_bytes"] == new_feedback_bytes
+    # 为什么要有它：从实际 wire 结果和已绑定 call_id 重建新增观察，检验补查回复也计入原有字节预算。
+    upstream_result_bytes = len(_patch_agent_context_json([{
+        "call_id": prior_call["call_id"], "name": prior_call["name"], "output": upstream_result,
+    }]).encode("utf-8"))
+    assert loop["recovery_observation_bytes"] == new_feedback_bytes + upstream_result_bytes
     assert loop["total_observation_bytes"] == 0
     for kind in ("patch_repair_context", "patch_behavior_correction"):
         assert sum(value.get("message_type") == kind for _, value in _message_jsons(handler.retained_payload)) == 1

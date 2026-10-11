@@ -1,117 +1,89 @@
 #!/usr/bin/env python3
-"""QA Note Validator — Detect inference-based notes in QA_TEST_PROGRESS.md.
+"""Validate the structure of explicitly supplied QA progress rows.
 
-Scans all ✅ test entries and flags those whose Note column contains
-cross-referencing, inference, or missing execution evidence.
+This helper checks row structure only. It never treats prose as proof that a
+test command ran.
 
 Usage:
-    python .github/skills/qa-tester/scripts/qa_validate_notes.py
+    python .agents/skills/qa-tester/scripts/qa_validate_notes.py <progress.md>
 
 Exit code:
     0 — All notes pass validation
-    1 — One or more notes flagged as potentially inferred
+    1 — One or more structural checks failed
 """
 
+import argparse
 import re
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-PROGRESS_FILE = REPO_ROOT / "QA_TEST_PROGRESS.md"
-
-# ── Patterns that indicate INFERRED rather than EXECUTED results ──
-
-INFERENCE_PATTERNS = [
-    # Cross-referencing another test
-    (r"(?i)\bverified\s+(in|via|across|through)\s+[A-Z]-\d", "Cross-references another test ID"),
-    (r"(?i)\balready\s+verified\b", "Claims 'already verified' elsewhere"),
-    (r"(?i)\bsame\s+(as|code\s+path|pattern)\b", "Infers from 'same code path'"),
-    (r"(?i)\bwill\s+be\s+tested\b", "Defers to future test"),
-    (r"(?i)\bverified\s+(via|through)\s+[A-Z]-\d", "Cross-references test ID"),
-
-    # Structural / code-reading inference
-    (r"(?i)\bcode\s+uses\b", "Infers from reading code, not execution"),
-    (r"(?i)\bdataclass\s+validates\b", "Infers from code structure"),
-    (r"(?i)\bauto-creates\b", "Infers behavior, not observed"),
-    (r"(?i)\bwould\s+(raise|fail|crash|similarly)\b", "Speculative 'would' language"),
-    (r"(?i)\bshould\s+(work|succeed|fail)\b", "Speculative 'should' language"),
-    (r"(?i)\b(expected|expect)\b(?!.*\bactual\b)", "Says 'expected' without 'actual'"),
-
-    # Too vague — no concrete values
-    (r"(?i)\bparameter\s+accepted\b$", "Vague: 'parameter accepted' without observed result"),
-    (r"(?i)\bconfig\s+.*\bcontrols\s+behavior\b", "Vague: 'controls behavior' without evidence"),
-    (r"(?i)\bsimilar\s+to\s+[A-Z]-\d", "Cross-references another test ID"),
-
-    # Missing execution evidence keywords
-    # A valid ✅ note should contain at least one of: exit=, stdout, AppTest:, output, returned, =
-]
-
-# A valid PASS note MUST contain at least one of these evidence markers
-EVIDENCE_MARKERS = [
-    r"exit[_=]",
-    r"stdout",
-    r"AppTest:",
-    r"output",
-    r"returned",
-    r"score[=s]",
-    r"\d+\s*(chunks|results|items|ms|chars|files)",
-    r"exit_code",
-    r"PASS",
-    r"FAIL",
-    r"VERDICT",
-    r"source_path",
-    r"source_file",
-]
+REPO_ROOT = Path(__file__).resolve().parents[4]
+RESULT_ROW = re.compile(
+    r"\|\s*(✅|❌|⏭️?|PASS|FAIL|SKIP)\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*\|$",
+    re.IGNORECASE,
+)
 
 
-def validate():
-    content = PROGRESS_FILE.read_text(encoding="utf-8")
+def validate(progress_file: str | Path) -> bool:
+    progress_path = Path(progress_file)
+    if not progress_path.is_file():
+        print(f"FAIL: progress file not found: {progress_path}")
+        return False
+    content = progress_path.read_text(encoding="utf-8")
     lines = content.splitlines()
 
     issues = []
-    total_pass = 0
+    total_results = 0
+    identifiers = set()
 
     for lineno, line in enumerate(lines, 1):
-        # Match ✅ rows: | ✅ | ID | Title | Note |
-        m = re.match(r"\|\s*✅\s*\|\s*(\S+)\s*\|[^|]*\|\s*(.*?)\s*\|$", line)
+        # 为什么要有它：校验结果行结构，不把至少一次通过当作报告有效性的条件。
+        m = RESULT_ROW.match(line.strip())
         if not m:
             continue
 
-        test_id = m.group(1)
-        note = m.group(2).strip()
-        total_pass += 1
+        test_id = m.group(2).strip()
+        title = m.group(3).strip()
+        note = m.group(4).strip()
+        total_results += 1
+        if not test_id:
+            issues.append(("<empty>", lineno, "Result row test ID is empty", note[:80]))
+        if test_id in identifiers:
+            issues.append((test_id, lineno, "Duplicate result test ID", note[:80]))
+        identifiers.add(test_id)
+        if not title:
+            issues.append((test_id, lineno, "Result row title is empty", note[:80]))
+        if not note:
+            issues.append((test_id, lineno, "Result row note is empty", ""))
 
-        # Check for inference patterns
-        for pattern, reason in INFERENCE_PATTERNS:
-            if re.search(pattern, note):
-                issues.append((test_id, lineno, reason, note[:80]))
-
-        # Check for evidence markers (at least one required)
-        has_evidence = any(re.search(p, note, re.IGNORECASE) for p in EVIDENCE_MARKERS)
-        if not has_evidence and note:
-            issues.append((test_id, lineno, "No execution evidence (missing exit=, stdout, score, etc.)", note[:80]))
+    if total_results == 0:
+        issues.append(("<none>", 0, "No result rows found", ""))
 
     # Print report
     print("QA Note Validation Report")
-    print(f"   Total PASS entries: {total_pass}")
+    print(f"   Total result entries: {total_results}")
     print(f"   Flagged entries:    {len(issues)}")
     print()
 
     if issues:
-        print("FLAGGED ENTRIES (likely inferred, not executed):")
+        print("STRUCTURAL ISSUES:")
         print("-" * 70)
         for test_id, lineno, reason, note_preview in issues:
             print(f"  [{test_id}] Line {lineno}")
             print(f"    Reason: {reason}")
             print(f"    Note:   {note_preview}...")
             print()
-        print(f"FAIL: {len(issues)} notes need re-execution or re-writing with actual evidence.")
+        print(f"FAIL: {len(issues)} structural issue(s) found.")
     else:
-        print("PASS: All notes contain execution evidence. No inference detected.")
+        print("PASS: Result rows are structurally complete.")
+        print("NOTE: Structural checks cannot prove that any test command ran.")
 
     return len(issues) == 0
 
 
 if __name__ == "__main__":
-    ok = validate()
+    parser = argparse.ArgumentParser(description="Validate QA progress row structure")
+    parser.add_argument("progress_file", type=Path)
+    arguments = parser.parse_args()
+    ok = validate(arguments.progress_file)
     sys.exit(0 if ok else 1)

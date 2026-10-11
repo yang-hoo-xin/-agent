@@ -3,24 +3,24 @@
 from __future__ import annotations
 
 import json
-import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
 
 import pytest
 
+from src.core.types import RetrievalResult
 from src.libs.evaluator.base_evaluator import BaseEvaluator
 from src.libs.evaluator.custom_evaluator import CustomEvaluator
 from src.observability.evaluation.composite_evaluator import CompositeEvaluator
 from src.observability.evaluation.eval_runner import (
-    EvalRunner,
     EvalReport,
+    EvalRunner,
     GoldenTestCase,
     QueryResult,
     load_test_set,
 )
-
 
 # ── Fixtures / Helpers ────────────────────────────────────────────
 
@@ -692,6 +692,164 @@ class TestEvalRunner:
         assert round_tripped["query_results"][0]["retrieval_measurement"]["status"] == "observed"
         assert round_tripped["metric_measurements"]["hit_rate"]["scored"] == 1
 
+    @pytest.mark.parametrize("outcome", [{"faithfulness": 0.0}, RuntimeError("judge offline")])
+    def test_report_preserves_exact_consumed_contexts_and_run_metadata(
+        self, tmp_path: Path, outcome: Any,
+    ) -> None:
+        f = tmp_path / "g.json"
+        _write_golden_json(f, [{"query": "Q", "reference_answer": "reference only"}])
+        retrieved = [RetrievalResult(
+            chunk_id="c1", text="  Exact context\n第二行。  ", score=0.123456789,
+            metadata={"source_path": "public.txt", "section": {"lines": [2, 3]}},
+        )]
+        generator = MagicMock(return_value="actual answer")
+        evaluator = SequenceEvaluator([outcome])
+        evaluator.evaluate = MagicMock(wraps=evaluator.evaluate)
+        metadata = {"generator": {"model": "fixture-model"}, "index_revision": "fixture-v1"}
+        runner = EvalRunner(
+            settings={"api_key": "must not be exported"},
+            hybrid_search=_search_with(retrieved),
+            answer_generator=generator, evaluator=evaluator,
+            expected_metrics=["faithfulness"], synthetic_fallback=False,
+        )
+
+        report = runner.run(f, run_metadata=metadata)
+        payload = report.to_dict()
+        row = payload["query_results"][0]
+        expected_context = retrieved[0].to_dict()
+
+        assert generator.call_args.args == ("Q", retrieved)
+        assert evaluator.evaluate.call_args.kwargs["retrieved_chunks"] is retrieved
+        assert row["retrieved_contexts"] == [expected_context]
+        assert row["retrieved_contexts"][0]["text"] == generator.call_args.args[1][0].text
+        assert row["retrieved_contexts"][0]["text"] == (
+            evaluator.evaluate.call_args.kwargs["retrieved_chunks"][0].text
+        )
+        assert row["reference_answer"] == "reference only"
+        assert row["generated_answer"] == "actual answer"
+        assert payload["run_metadata"] == metadata
+        assert json.loads(json.dumps(payload, allow_nan=False)) == payload
+        assert "must not be exported" not in json.dumps(payload)
+        if isinstance(outcome, Exception):
+            assert row["metrics"] == {}
+            assert row["metric_measurements"]["faithfulness"] == "failed_to_measure"
+            assert payload["measurement_status"] == "unmeasured"
+        else:
+            assert row["metrics"] == {"faithfulness": 0.0}
+            assert row["metric_measurements"]["faithfulness"] == "observed"
+            assert payload["measurement_status"] == "complete"
+
+        # Later caller, retriever, or exported-dictionary mutations cannot rewrite evidence.
+        metadata["generator"]["model"] = "changed"
+        retrieved[0].text = "changed"
+        retrieved[0].metadata["section"]["lines"].append(4)
+        payload["run_metadata"]["generator"]["model"] = "changed again"
+        row["retrieved_contexts"][0]["metadata"]["section"]["lines"].append(5)
+        assert report.run_metadata["generator"]["model"] == "fixture-model"
+        assert report.query_results[0].retrieved_contexts == [expected_context]
+
+    @pytest.mark.parametrize("failed_stage", ["retrieval", "answer", "evaluator", None])
+    def test_stop_on_failure_preserves_unattempted_cases_and_zero_scores_continue(
+        self, tmp_path: Path, failed_stage: str | None,
+    ) -> None:
+        f = tmp_path / "g.json"
+        _write_golden_json(f, [
+            {"query": "Q1", "reference_answer": "reference one"},
+            {"query": "Q2", "reference_answer": "reference two"},
+        ])
+        chunks = [{"chunk_id": "c1", "text": "context"}]
+        failure = TimeoutError("provider timeout")
+        search = _search_with(failure if failed_stage == "retrieval" else chunks, chunks)
+        generator = MagicMock(side_effect=[
+            failure if failed_stage == "answer" else "first answer", "second answer",
+        ])
+        evaluator = SequenceEvaluator([
+            failure if failed_stage == "evaluator" else {"faithfulness": 0.0},
+            {"faithfulness": 1.0},
+        ])
+        runner = EvalRunner(
+            hybrid_search=search, answer_generator=generator, evaluator=evaluator,
+            expected_metrics=["faithfulness"], synthetic_fallback=False,
+        )
+
+        report = runner.run(f, stop_on_failure=True)
+        first, second = report.to_dict()["query_results"]
+
+        assert [(row["case_index"], row["query"], row["reference_answer"])
+                for row in (first, second)] == [
+            (0, "Q1", "reference one"), (1, "Q2", "reference two"),
+        ]
+        assert report.metric_measurements["faithfulness"]["total"] == 2
+        if failed_stage is None:
+            assert search.search.call_count == generator.call_count == evaluator.call_count == 2
+            assert first["metrics"] == {"faithfulness": 0.0}
+            assert second["metrics"] == {"faithfulness": 1.0}
+            assert report.metric_measurements["faithfulness"]["observed"] == 2
+            assert report.aggregate_metrics == {"faithfulness": 0.5}
+        else:
+            assert search.search.call_count == 1
+            assert generator.call_count == (0 if failed_stage == "retrieval" else 1)
+            assert evaluator.call_count == (1 if failed_stage == "evaluator" else 0)
+            assert first[f"{failed_stage}_measurement"]["status"] == "failed_to_measure"
+            assert second["metrics"] == {}
+            assert second["retrieved_contexts"] == []
+            assert second["generated_answer"] is None
+            for stage in ("retrieval_measurement", "answer_measurement", "evaluator_measurement"):
+                assert second[stage]["status"] == "failed_to_measure"
+                assert second[stage]["mode"] == "run_stopped"
+                assert second[stage]["error_category"] == "PreviousCaseFailed"
+                assert "not attempted" in second[stage]["error_message"]
+            assert report.metric_measurements["faithfulness"]["failed_to_measure"] == 2
+            assert report.metric_measurements["faithfulness"]["observed"] == 0
+            assert report.aggregate_metrics == {}
+
+    def test_actual_case_timestamps_leave_unattempted_and_legacy_results_empty(
+        self, tmp_path: Path,
+    ) -> None:
+        f = tmp_path / "g.json"
+        _write_golden_json(f, [{"query": "Q1"}, {"query": "Q2"}])
+        runner = EvalRunner(
+            hybrid_search=_search_with([{"chunk_id": "c1", "text": "context"}]),
+            answer_generator=lambda query, chunks: "answer",
+            evaluator=SequenceEvaluator([TimeoutError("judge timeout")]),
+            expected_metrics=["faithfulness"], synthetic_fallback=False,
+        )
+        before = datetime.now(timezone.utc)
+
+        report = runner.run(f, stop_on_failure=True)
+
+        after = datetime.now(timezone.utc)
+        actual, unattempted = report.to_dict()["query_results"]
+        started = datetime.fromisoformat(actual["started_at"])
+        finished = datetime.fromisoformat(actual["finished_at"])
+        assert started.tzinfo == finished.tzinfo == timezone.utc
+        assert before <= started <= finished <= after
+        assert unattempted["started_at"] is None
+        assert unattempted["finished_at"] is None
+        legacy = QueryResult("Q", ["c1"], "answer", {"faithfulness": 0.0}, 2.0)
+        assert legacy.elapsed_ms == 2.0
+        assert legacy.started_at is legacy.finished_at is None
+
+    @pytest.mark.parametrize("metadata", [{"bad": object()}, {"bad": float("nan")}, []])
+    def test_invalid_run_metadata_fails_before_retrieval_or_models(
+        self, tmp_path: Path, metadata: Any,
+    ) -> None:
+        f = tmp_path / "g.json"
+        _write_golden_json(f, [{"query": "Q"}])
+        search = _search_with([])
+        generator = MagicMock(return_value="answer")
+        evaluator = SequenceEvaluator([{"faithfulness": 1.0}])
+        runner = EvalRunner(
+            hybrid_search=search, answer_generator=generator, evaluator=evaluator,
+        )
+
+        with pytest.raises((TypeError, ValueError)):
+            runner.run(f, run_metadata=metadata)
+
+        search.search.assert_not_called()
+        generator.assert_not_called()
+        assert evaluator.call_count == 0
+
 
 class TestEvalRunnerAggregation:
     """Test metric aggregation logic."""
@@ -732,6 +890,143 @@ class TestEvalRunnerAggregation:
         # Each metric averaged over only the queries that produced it
         assert avg["hit_rate"] == 1.0
         assert avg["faithfulness"] == 0.9
+
+
+class TestPublicDiagnosticMetadataAndRagOff:
+    def test_suite_and_case_provenance_are_preserved_without_becoming_answer_input(
+        self, tmp_path: Path,
+    ) -> None:
+        from src.observability.evaluation.ragas_evaluator import RagasEvaluator
+
+        path = tmp_path / "public.json"
+        path.write_text(json.dumps({
+            "description": "Public smoke set",
+            "tier": "tier_0_public_smoke",
+            "purpose": "Interface check",
+            "source": {"url": "https://example.test/rfc", "sha256": "abc"},
+            "authoring_origin": {"type": "codex_synthesized_from_public_source"},
+            "human_verified": False,
+            "answer_policy": "fixed",
+            "citation_policy": "cite retrieved contexts",
+            "test_cases": [{
+                "query": "Question",
+                "reference_answer": "REFERENCE_NOT_FOR_GENERATION",
+                "source_sections": ["6"],
+                "source_pages": [7],
+                "diagnostic_types": ["single_hop"],
+                "expected_behavior": "answer",
+            }],
+        }), encoding="utf-8")
+        seen = []
+        evaluator = RagasEvaluator(metrics=[
+            "faithfulness", "answer_relevancy", "context_precision",
+        ])
+        evaluator.evaluate = MagicMock(return_value={"answer_relevancy": 0.0})
+        runner = EvalRunner(
+            hybrid_search=None,
+            evaluator=evaluator,
+            answer_generator=lambda query, contexts: seen.append((query, contexts)) or "answer",
+        )
+
+        report = runner.run(path, comparison_arm="rag_off")
+        payload = report.to_dict()
+
+        assert seen == [("Question", [])]
+        assert payload["comparison_arm"] == "rag_off"
+        assert payload["measurement_status"] == "complete"
+        assert payload["test_set_metadata"] == {
+            "description": "Public smoke set",
+            "tier": "tier_0_public_smoke",
+            "purpose": "Interface check",
+            "source": {"url": "https://example.test/rfc", "sha256": "abc"},
+            "authoring_origin": {"type": "codex_synthesized_from_public_source"},
+            "human_verified": False,
+            "answer_policy": "fixed",
+            "citation_policy": "cite retrieved contexts",
+        }
+        row = payload["query_results"][0]
+        assert row["reference_answer"] == "REFERENCE_NOT_FOR_GENERATION"
+        assert row["case_metadata"] == {
+            "source_sections": ["6"],
+            "source_pages": [7],
+            "diagnostic_types": ["single_hop"],
+            "expected_behavior": "answer",
+        }
+        assert row["metric_measurements"] == {
+            "faithfulness": "not_applicable",
+            "answer_relevancy": "observed",
+            "context_precision": "not_applicable",
+        }
+        assert row["metrics"] == {"answer_relevancy": 0.0}
+        assert report.metric_measurements["answer_relevancy"]["scored"] == 1
+        assert report.metric_measurements["faithfulness"]["not_applicable"] == 1
+        evaluator.evaluate.assert_called_once_with(
+            query="Question", retrieved_chunks=[], generated_answer="answer", ground_truth=None,
+        )
+
+    @pytest.mark.parametrize("fixture_name, tier, case_count", [
+        ("rfc8259_public.json", "tier_0_public_smoke", 3),
+        ("rfc8259_diagnostic.json", "tier_1_public_diagnostic", 10),
+    ])
+    def test_public_sets_have_explicit_nonhuman_origin(
+        self, fixture_name: str, tier: str, case_count: int,
+    ) -> None:
+        path = Path("tests/fixtures/evaluation") / fixture_name
+        data = json.loads(path.read_text(encoding="utf-8"))
+        cases = load_test_set(path)
+
+        assert data["tier"] == tier
+        assert data["authoring_origin"]["type"] == "codex_synthesized_from_public_source"
+        assert data["human_verified"] is False
+        assert "Human-written" not in data["description"]
+        assert len(cases) == case_count
+        assert all(case.source_sections and case.source_pages for case in cases)
+        assert all(case.diagnostic_types and case.expected_behavior for case in cases)
+
+    def test_human_verified_requires_an_exact_boolean(self, tmp_path: Path) -> None:
+        from src.observability.evaluation.eval_runner import load_test_set_metadata
+
+        path = tmp_path / "invalid.json"
+        path.write_text(json.dumps({
+            "human_verified": "false", "test_cases": [{"query": "Question"}],
+        }), encoding="utf-8")
+        with pytest.raises(ValueError, match="exact boolean"):
+            load_test_set_metadata(path)
+
+    def test_explicit_public_citation_policy_rejects_rag_off_fake_citation(
+        self, tmp_path: Path,
+    ) -> None:
+        from src.observability.evaluation.ragas_evaluator import RagasEvaluator
+
+        path = tmp_path / "rag-off.json"
+        path.write_text(json.dumps({
+            "citation_policy": "RAG-off answers must not invent retrieved citations.",
+            "test_cases": [{"query": "Question"}],
+        }), encoding="utf-8")
+        evaluator = RagasEvaluator(metrics=["answer_relevancy"])
+        evaluator.evaluate = MagicMock(return_value={"answer_relevancy": 1.0})
+        runner = EvalRunner(
+            hybrid_search=None,
+            evaluator=evaluator,
+            answer_generator=lambda query, contexts: "Unsupported [context:1]",
+        )
+
+        report = runner.run(path, comparison_arm="rag_off")
+        result = report.query_results[0]
+
+        assert result.generated_answer == "Unsupported [context:1]"
+        assert result.answer_measurement.status == "observed"
+        assert result.citation_measurement.status == "failed_to_measure"
+        assert result.citation_measurement.error_category == "CitationWithoutContext"
+        assert result.metric_measurements["answer_relevancy"] == "observed"
+        assert report.aggregate_metrics == {"answer_relevancy": 1.0}
+        assert report.measurement_status == "partial"
+        evaluator.evaluate.assert_called_once_with(
+            query="Question",
+            retrieved_chunks=[],
+            generated_answer="Unsupported [context:1]",
+            ground_truth=None,
+        )
 
 
 # ── Tests: Golden test set fixture ────────────────────────────────

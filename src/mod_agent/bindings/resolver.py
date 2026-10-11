@@ -123,6 +123,14 @@ class BindingResolver:
             if "requirement_coverage" in self.evidence_pack
             else None
         )
+        from src.mod_agent.evidence.compilation_candidate import compilation_candidate_scope
+
+        try:
+            candidate = compilation_candidate_scope(self.evidence_pack)
+            if candidate is not None:
+                coverage_change_support_ids = frozenset(candidate["evidence_ids"])
+        except ValueError as exc:
+            blockers.append({"code": "COMPILATION_CANDIDATE_SCOPE_INVALID", "message": str(exc)})
         for binding in self.edit_bindings.values():
             evidence_id = str(binding.get("evidence_id") or "")
             if (

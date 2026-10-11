@@ -3,7 +3,10 @@ window.__ModuleLoader__.load({
   id: '@local/dsh-mod-agent',
   factory: () => {
     const target = 'controlled-mod-command-activity';
-    const names = new Set(['mod-runs', 'mod-status', 'mod-submit', 'mod-review', 'mod-approve', 'mod-reject']);
+    const names = new Set(['mod-resume', 'mod-continue', 'mod-observe', 'mod-new', 'mod-tasks', 'mod-deployment', 'mod-deploy', 'mod-runs', 'mod-status', 'mod-submit', 'mod-review', 'mod-approve', 'mod-reject', 'mod-run', 'mod-delivery', 'mod-deliver', 'mod-decline', 'mod-investigate', 'mod-remember', 'mod-memory']);
+
+    // 为什么要有它：自然语言入口也有异步执行与澄清结果，活动视图需要跟踪其原始命令状态。
+    names.add('mod');
 
     function createView() {
       const results = new Map();

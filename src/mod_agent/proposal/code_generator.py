@@ -17,7 +17,7 @@ from referencing.exceptions import Unresolvable
 from src.libs.llm import BaseLLM, ChatResponse, Message
 
 PATCH_RESPONSE_CONTRACT_ID = "patch_generation"
-PATCH_RESPONSE_CONTRACT_VERSION = "2"
+PATCH_RESPONSE_CONTRACT_VERSION = "3"
 
 _LITERAL_VALIDATION_MARKER_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,}$")
 _DETERMINISTICALLY_INHERITED_VALIDATION = frozenset(
@@ -48,8 +48,8 @@ class PatchGenerationError(RuntimeError):
 class PatchSubmissionValidationError(PatchGenerationError):
     """A complete submission has a bounded, model-correctable text defect.
 
-    Only no-op replacements, the existing C# header-preservation check and
-    added diff trailing whitespace use this type. Authority, source identity,
+    No-op replacements and the existing C# header-preservation check use this
+    type. Authority, source identity,
     schema and provider-admission failures retain their original hard errors.
     """
 
@@ -194,13 +194,16 @@ class LLMExactPatchGenerator:
         if (
             not isinstance(prepared, PreparedNativePatchContract)
             or prepared.contract_id != PATCH_RESPONSE_CONTRACT_ID
-            or prepared.contract_version != PATCH_RESPONSE_CONTRACT_VERSION
+            or prepared.contract_version not in {"2", PATCH_RESPONSE_CONTRACT_VERSION}
             or prepared.schema_sha256
             != _canonical_json_sha256(prepared.response_schema)
         ):
             raise PatchGenerationError(
                 "Prepared native Patch contract identity is invalid."
             )
+        contract_kind = _frozen_native_response_contract(_native_provider_contract(prepared.messages, prepared.response_schema))
+        if (prepared.contract_version == "3") != (contract_kind == "binding_local_v3"):
+            raise PatchGenerationError("Prepared native Patch version and schema disagree.")
         if post_response_admission is not None:
             post_response_admission(response)
         return _materialize_frozen_native_response(
@@ -638,6 +641,8 @@ class LLMExactPatchGenerator:
             )
             _validate_submission_text(
                 changes, binding_contexts=binding_contexts, native=require_native_schema,
+                binding_evidence_excerpts=binding_evidence_excerpts,
+                native_v3_raw_changes=raw_changes if require_native_schema else None,
             )
         except Exception as exc:
             diagnostics = _response_diagnostics(response)
@@ -857,11 +862,10 @@ def _frozen_native_response_contract(
         required_change_count=required_count,
     ):
         return "legacy_pair"
-    if body_schema == _patch_response_schema(
-        allowed,
-        required_change_count=required_count,
-    ):
+    if body_schema == _patch_response_schema(allowed, required_change_count=required_count, allow_local_before=False):
         return "binding_only"
+    if body_schema == _patch_response_schema(allowed, required_change_count=required_count):
+        return "binding_local_v3"
     raise _native_validation_error(
         "Frozen Patch native response schema is not recognized.",
         failure_classification="frozen_patch_response_schema_unknown",
@@ -1062,6 +1066,7 @@ def _materialize_native_changes(
     normalized_required_changes: tuple[dict[str, Any], ...],
     required_validation: Mapping[str, tuple[str, ...]],
     binding_contexts: Mapping[str, Mapping[str, Any]],
+    allow_local_before: bool = True,
 ) -> tuple[dict[str, Any], ...]:
     required_changes_by_binding = {
         str(item["edit_binding_id"]): item
@@ -1072,7 +1077,7 @@ def _materialize_native_changes(
             "Native Plan change units do not have unique edit bindings.",
             failure_classification="required_change_unit_binding_duplicate",
         )
-    return tuple(
+    changes = tuple(
         _materialize_native_change(
             item,
             allowed_bindings=allowed_bindings,
@@ -1081,9 +1086,14 @@ def _materialize_native_changes(
             required_validation=required_validation,
             binding_contexts=binding_contexts,
             index=index,
+            allow_local_before=allow_local_before,
         )
         for index, item in enumerate(raw_changes, start=1)
     )
+
+    if allow_local_before and any(isinstance(row, dict) and "before_text" in row for row in raw_changes):
+        _validate_native_local_ranges(changes, binding_contexts, binding_evidence_excerpts)
+    return changes
 
 
 def _materialize_legacy_native_changes(
@@ -1158,12 +1168,16 @@ def _materialize_frozen_native_response(
             normalized_required_changes=normalized_required_changes,
             required_validation=required_validation,
             binding_contexts=binding_contexts,
+            **({"allow_local_before": response_contract == "binding_local_v3"}
+               if response_contract != "legacy_pair" else {}),
         )
         _validate_required_change_coverage(
             changes,
             required_change_units=normalized_required_changes,
         )
-        _validate_submission_text(changes, binding_contexts=binding_contexts, native=True)
+        _validate_submission_text(changes, binding_contexts=binding_contexts, native=True,
+                                  binding_evidence_excerpts=binding_evidence_excerpts,
+                                  native_v3_raw_changes=raw_changes if response_contract == "binding_local_v3" else None)
     except Exception as exc:
         diagnostics = _response_diagnostics(response)
         if isinstance(exc, PatchGenerationError):
@@ -1475,6 +1489,9 @@ def _supporting_evidence_view(
     if source_hash is not None:
         view["source_hash"] = source_hash
     view["excerpt"] = evidence["excerpt"]
+    if evidence.get("document_provenance") is not None:
+        from src.mod_agent.evidence.model_view import api_evidence_model_fields
+        view.update(api_evidence_model_fields(evidence))
     if include_member_facts:
         for field in (
             "declared_member_types",
@@ -1641,12 +1658,12 @@ def _patch_system_prompt(
             "Minimal exact-text Patch from verified evidence; strict schema-only JSON, no fences. "
             "Do not add trailing spaces or tabs. One change per required_change_units item, solely exact "
             "edit_binding_id. Never invent paths/symbols/APIs/bindings. Omit Plan/binding-derived "
-            "change_id/before_text/paths/hashes/kind/occurrence count/change type/operation/validation. "
-            "after_text replaces full matching source_excerpt; keep unrelated text. "
+            "change_id/paths/hashes/kind/occurrence count/change type/operation/validation. "
+            "Native v3: optional before_text selects one exact nonempty unique fragment of matching source_excerpt; after_text replaces only it. Prefer a small unique exact fragment for a local change; include enough original context to disambiguate. Omit before_text to replace the full excerpt. Preserve all unrelated text and CRLF/BOM. 为什么要有它：全文阅读不应强迫重写全文；局部锚点仍须受原binding和源码前像约束。 "
             "target_behavior/constraints/acceptance_criteria/runtime_verification_plan form one feature contract. "
             "Units carry only identity/operation/binding refs, not per-change obligations. "
             "supporting_evidence is read-only. Non-Boolean receivers as Boolean operands require exact "
-            "verified_member_accesses. Uppercase required_validation_by_binding identifiers must appear literally in after_text."
+            "verified_member_accesses. Uppercase required_validation_by_binding identifiers must appear literally in the resulting bound source (preserved original text plus replacement)."
         )
     identity_contract = (
         "Return exactly one change for every required_change_units entry and "
@@ -1679,10 +1696,10 @@ def _patch_system_prompt(
     )
     if require_native_schema:
         return shared + (
-            "For each authorized edit binding, after_text must replace the entire "
-            "source_excerpt in its matching edit_binding_context, preserving all "
+            "Native v3 allows optional before_text selecting one exact nonempty unique fragment of the matching source_excerpt. "
+            "after_text replaces that fragment only; omitted before_text replaces the entire source_excerpt. Preserve all "
             "unrelated text. Return only the schema fields. Do not return or copy "
-            "before_text, a file path, a source hash, patch kind, occurrence count, "
+            "a file path, a source hash, patch kind, occurrence count, "
             "change type, operation, or expected validation; deterministic code "
             "materializes those authoritative fields from the verified binding and "
             "Plan."
@@ -1709,6 +1726,7 @@ def _patch_response_schema(
     allowed_bindings: set[str],
     *,
     required_change_count: int | None = None,
+    allow_local_before: bool = True,
 ) -> dict[str, Any]:
     """Return the single schema used by the local prompt and native format."""
 
@@ -1742,6 +1760,8 @@ def _patch_response_schema(
                         "rationale": {"type": "string", "minLength": 1},
                         "rollback_hint": {"type": "string", "minLength": 1},
                         "after_text": {"type": "string", "minLength": 1},
+                        **({"before_text": {"type": "string", "minLength": 1}}
+                           if allow_local_before else {}),
                     },
                 },
             }
@@ -1759,6 +1779,7 @@ def _legacy_pair_patch_response_schema(
     schema = _patch_response_schema(
         allowed_bindings,
         required_change_count=required_change_count,
+        allow_local_before=False,
     )
     item_schema = schema["properties"]["changes"]["items"]
     item_schema["required"] = [
@@ -2177,6 +2198,7 @@ def _materialize_native_change(
     required_validation: Mapping[str, tuple[str, ...]],
     binding_contexts: Mapping[str, Mapping[str, Any]],
     index: int,
+    allow_local_before: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise _native_validation_error(
@@ -2194,6 +2216,9 @@ def _materialize_native_change(
     if legacy_pair_identity:
         required_fields.add("change_id")
     actual_fields = set(raw)
+    local = "before_text" in raw
+    if local and allow_local_before and not legacy_pair_identity:
+        required_fields.add("before_text")
     if actual_fields != required_fields:
         raise _native_validation_error(
             f"Change {index} does not match the native Patch response contract.",
@@ -2264,7 +2289,8 @@ def _materialize_native_change(
             change_id=change_id,
             binding_id=binding_id,
         )
-    before = binding_evidence_excerpts.get(binding_id)
+    full_before = binding_evidence_excerpts.get(binding_id)
+    before = full_before
     if not isinstance(before, str) or not before:
         raise _native_validation_error(
             f"Change {index} has no exact authoritative source excerpt.",
@@ -2273,10 +2299,18 @@ def _materialize_native_change(
             change_id=change_id,
             binding_id=binding_id,
         )
-    if before.startswith("\ufeff"):
+    if local:
+        before = raw["before_text"]
+        if (not isinstance(before, str) or not before or _overlapping_count(full_before, before) != 1):
+            raise _native_validation_error("Native local before_text must select exactly one bound source fragment.",
+                failure_classification="native_before_text_not_unique_in_binding", binding_id=binding_id)
+        if before.startswith("\ufeff") != after.startswith("\ufeff"):
+            raise _native_validation_error("Native local replacement must preserve the selected BOM bytes.",
+                failure_classification="native_local_bom_changed", binding_id=binding_id)
+    if not local and before.startswith("\ufeff"):
         if not after.startswith("\ufeff"):
             after = "\ufeff" + after
-    elif after.startswith("\ufeff"):
+    elif not local and after.startswith("\ufeff"):
         raise _native_validation_error(
             f"Change {index} must not introduce a UTF-8 BOM.",
             failure_classification="native_after_text_bom_invalid",
@@ -2284,8 +2318,10 @@ def _materialize_native_change(
             change_id=change_id,
             binding_id=binding_id,
         )
+    # 为什么要有它：局部raw输出保持原样，语言和验证义务仍针对重建后的完整绑定上下文检查。
+    complete_after = full_before.replace(before, after, 1) if local else after
     _validate_bound_language_semantics(
-        after=after,
+        after=complete_after,
         binding_id=binding_id,
         binding_contexts=binding_contexts,
         index=index,
@@ -2299,7 +2335,7 @@ def _materialize_native_change(
     missing_markers = [
         marker
         for marker in expected_validation
-        if _LITERAL_VALIDATION_MARKER_RE.fullmatch(marker) and marker not in after
+        if _LITERAL_VALIDATION_MARKER_RE.fullmatch(marker) and marker not in complete_after
     ]
     if missing_markers:
         raise _native_validation_error(
@@ -2337,11 +2373,56 @@ def _materialize_native_change(
     }
 
 
+def _overlapping_count(text: str, selected: str) -> int:
+    if not selected:
+        return 0
+    count, offset = 0, 0
+    while (offset := text.find(selected, offset)) >= 0:
+        count += 1
+        offset += 1
+    return count
+
+
+def _validate_native_local_ranges(changes, contexts, excerpts):
+    """Compare original-source coordinates, not positions shifted by earlier replacements."""
+    occupied = {}
+    for change in changes:
+        binding_id = change["edit_binding_id"]
+        context = contexts[binding_id]
+        span = context.get("target_span")
+        full = excerpts[binding_id]
+        before = change["patch"]["before_text"]
+        if (not isinstance(span, Mapping) or type(span.get("start_line")) is not int
+                or type(span.get("end_line")) is not int or span["start_line"] < 1
+                or span["end_line"] < span["start_line"] or _overlapping_count(full, before) != 1):
+            raise _native_validation_error("Native local patch requires a unique original span.",
+                failure_classification="native_local_span_invalid", binding_id=binding_id)
+        start = full.index(before)
+        def coordinate(position):
+            prefix = full[:position]
+            return (span["start_line"] + prefix.count("\n"),
+                    len(prefix.rsplit("\n", 1)[-1].encode("utf-8")))
+        interval = coordinate(start), coordinate(start + len(before))
+        path = context.get("canonical_target_path")
+        last_line = coordinate(start + len(before.rstrip("\r\n")))[0]
+        if not isinstance(path, str) or not path or last_line > span["end_line"]:
+            raise _native_validation_error("Native local patch escapes its Plan span.",
+                failure_classification="native_local_span_invalid", binding_id=binding_id)
+        # 为什么要有它：全部片段必须对同一B0定位，重叠选择不能依赖先前生成文本或执行顺序取得授权。
+        for previous in occupied.setdefault(path, []):
+            if max(interval[0], previous[0]) < min(interval[1], previous[1]):
+                raise _native_validation_error("Native local patch selections overlap.",
+                    failure_classification="native_local_selections_overlap", binding_id=binding_id)
+        occupied[path].append(interval)
+
+
 def _validate_submission_text(
     changes: tuple[dict[str, Any], ...],
     *,
     binding_contexts: Mapping[str, Mapping[str, Any]],
     native: bool,
+    binding_evidence_excerpts: Mapping[str, str] | None = None,
+    native_v3_raw_changes: list[Any] | None = None,
 ) -> None:
     """Check repairable text only after every change's hard validation passes."""
     for index, change in enumerate(changes, start=1):
@@ -2349,6 +2430,8 @@ def _validate_submission_text(
         before = change["patch"]["before_text"]
         after = change["patch"]["after_text"]
         if before == after:
+            from .noop_submission_feedback import whole_noop_facts
+
             raise PatchSubmissionValidationError(
                 f"Change {index} after_text must be a real replacement.",
                 diagnostics={
@@ -2360,14 +2443,39 @@ def _validate_submission_text(
                     "change_index": index,
                     "change_id": change["change_id"],
                     "binding_id": binding_id,
+                    **(whole_noop_facts(changes) if native else {}),
                 },
             )
         if native:
-            _validate_csharp_header_preservation(
-                before=before, after=after,
-                binding_context=binding_contexts.get(binding_id) or {},
-                index=index, change_id=change["change_id"], binding_id=binding_id,
-            )
+            full_before = (binding_evidence_excerpts or {}).get(binding_id, before)
+            full_after = full_before.replace(before, after, 1) if before != full_before else after
+            try:
+                _validate_csharp_header_preservation(
+                    before=full_before, after=full_after,
+                    binding_context=binding_contexts.get(binding_id) or {},
+                    index=index, change_id=change["change_id"], binding_id=binding_id,
+                )
+            except PatchSubmissionValidationError as error:
+                _add_native_v3_omitted_anchor_feedback(error, native_v3_raw_changes, index)
+                raise
+
+
+def _add_native_v3_omitted_anchor_feedback(error, raw_changes, index):
+    """Explain an omitted v3 anchor without inferring or changing submitted bytes."""
+    if (error.diagnostics.get("failure_classification") != "csharp_file_header_usings_removed"
+            or raw_changes is None or index > len(raw_changes)):
+        return
+    raw = raw_changes[index - 1]
+    if not isinstance(raw, dict) or "before_text" in raw:
+        return
+    # 为什么要有它：v3 片段漏填锚点会被当作完整绑定替换；纠错需说明协议原因，不能自动猜锚点或放宽原校验。
+    error.diagnostics["native_v3_correction"] = (
+        "This native v3 change omitted before_text, so after_text replaces the entire bound source_excerpt. "
+        "For a local replacement, provide before_text copied verbatim from exactly one nonempty unique fragment "
+        "of the original source_excerpt, and after_text for that fragment. Alternatively, omit before_text and "
+        "submit the complete replacement source_excerpt as after_text, preserving unrelated code and using directives. "
+        "为什么要有它：省略锚点的局部片段不能被当作完整源码替换；原始绑定与校验边界保持不变。"
+    )
 
 
 def _validate_csharp_header_preservation(

@@ -53,6 +53,7 @@ def _consent(profile, *, feedback=True):
 class _QwenTransport:
     def __init__(self, *, direct=False, listed=True, wrong_model=False, missing_model=False, timeout=False, prose=False):
         self.calls, self.wires, self.reads, self.outputs = [], [], [], []
+        self.chat_requests = []
         self.direct, self.listed, self.wrong_model, self.timeout = direct, listed, wrong_model, timeout
         self.missing_model = missing_model
         self.prose = prose
@@ -71,6 +72,7 @@ class _QwenTransport:
         if self.timeout:
             raise httpx.ReadTimeout("do not expose unit-test-secret", request=request)
         payload = json.loads(request.content)
+        self.chat_requests.append((request.content, payload))
         assert payload["model"] == "qwen3.6-plus"
         assert payload["enable_thinking"] is False
         assert payload["tool_choice"] == "auto"
@@ -99,7 +101,7 @@ class _QwenTransport:
                 prompt["edit_binding_contexts"][binding_id]["source_excerpt"] = _fixture_visible_binding_text(
                     prompt, binding_id, payload["messages"])
             assert "PreserveFeedback must remain unchanged." in json.dumps(payload)
-            output = json.dumps(_UpstreamTransport._patch(prompt, passed=self.direct or number == 4))
+            output = json.dumps(_UpstreamTransport._patch(self, prompt, passed=self.direct or number == 4))
             if self.prose:
                 output = "Explanation preceding the requested JSON.\n" + output
             self.outputs.append(output)
@@ -202,6 +204,37 @@ def test_initial_external_patch_does_not_claim_unsent_feedback_classes(tmp_path,
     assert receipt["external_provider_requests"][0]["requested_data_classes"] == list(SOURCE_DISCLOSURE_DATA_CLASSES)
     assert receipt["source_disclosure"]["requested_data_classes"] == list(SOURCE_DISCLOSURE_DATA_CLASSES)
     assert receipt["external_provider_requests"][0]["requested_response_format"] == {"type": "json_object"}
+
+
+def test_baseline_compilation_feedback_requires_disclosure_before_external_send(tmp_path, monkeypatch):
+    case = _public_case(tmp_path)
+    profile = _profile()
+    handler = _install(monkeypatch)
+    configuration = PatchWorkerConfiguration.load(case.config_path)
+    adapter = ExternalQwenPatchAdapter(profile=profile, artifact_store=case.inputs.store,
+        workspace_root=case.inputs.workspace, patch_agent_loop_policy=configuration.policy,
+        source_disclosure=_consent(profile, feedback=False),
+        approved_source_files=_source_hashes(case.inputs.workspace))
+    recorded = []
+    adapter.bind_attempt_recorder(recorded.append)
+    evidence = case.inputs.store.read(case.request.evidence_pack_ref)["data"]
+    adapter._admit_model_identity({}, {}, evidence)
+    request = AgentTurnRequest(messages=(AgentMessage(role="user", content={
+        "baseline_compilation_failure": {
+            "status": "failed", "errors": [{"code": "CS0103", "message": "Owned synthetic missing name."}],
+        },
+    }),), tool_choice="none")
+
+    with pytest.raises(AgentTurnProviderError, match="verification_feedback") as rejected:
+        adapter._external_client(profile).complete_turn(request)
+
+    assert rejected.value.diagnostic["failure_boundary"] == "external_patch_admission"
+    assert rejected.value.diagnostic["provider_request_started"] is False
+    assert handler.calls == [("GET", "/api/v1/models")] and not handler.wires
+    receipt = adapter.patch_attempt_receipt()
+    assert not receipt.get("external_provider_requests")
+    assert receipt["source_disclosure"]["occurred"] is False
+    assert receipt["source_disclosure"]["send_attempted"] is False
 
 
 def test_json_mode_does_not_extract_patch_from_prose_and_retains_exact_response(tmp_path, monkeypatch):

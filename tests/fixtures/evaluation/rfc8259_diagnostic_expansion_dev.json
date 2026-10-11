@@ -1,0 +1,103 @@
+{
+  "description": "Six public RFC 8259 development diagnostics for surrogate handling and parser/generator boundaries. Codex-authored, not human-written or held-out.",
+  "tier": "tier_1_public_diagnostic_development",
+  "source": {
+    "url": "https://www.rfc-editor.org/rfc/rfc8259.txt",
+    "sha256": "36eae5d5812250c57e31cd87e591e6fd63fa2384ac4d8c53d7e0306807c75680"
+  },
+  "authoring_origin": {
+    "type": "codex_synthesized_from_public_source",
+    "creation_task_id": "01a0bd50-c593-7780-85ae-d24e81768b8d",
+    "purpose": "development and judge-calibration diagnostics"
+  },
+  "human_verified": false,
+  "partition": "development",
+  "answer_policy": "Answer from RFC 8259 and cite supplied contexts. Preserve normative strength. Alternative wording is acceptable when every required fact is retained and no contradictory claim is added.",
+  "citation_policy": "Citations must be valid context indexes and each material claim must be entailed by its cited passage.",
+  "test_cases": [
+    {
+      "case_id": "rfc8259_t1x_surrogate_direct_dev",
+      "category": "unpaired_surrogate",
+      "query": "RFC 8259 uses \\uDEAD as an example of an unpaired UTF-16 surrogate. What overall receiver behavior does it warn about, and what two concrete outcomes does it name?",
+      "reference_answer": "Receiver behavior is unpredictable. Implementations may report different string lengths or suffer fatal runtime exceptions.",
+      "accepted_claim_sets": [
+        ["receiver behavior is unpredictable", "string length may differ", "fatal runtime exceptions may occur"],
+        ["implementations can disagree", "length results can differ", "a runtime may fail fatally"]
+      ],
+      "required_facts": ["unpredictable behavior", "different string length", "fatal runtime exception"],
+      "source_sections": ["8.2"],
+      "source_lines": ["455-463"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t1x_surrogate_truncation_dev",
+      "category": "unpaired_surrogate",
+      "query": "A library truncates UTF-16 text between the two halves of a surrogate pair and emits the remaining half in JSON. Under RFC 8259, how should this case be characterized and what can receivers do?",
+      "reference_answer": "The ABNF can allow the resulting bit sequence even though it cannot encode a Unicode character. Receiver behavior is unpredictable, including differing length results or fatal runtime exceptions.",
+      "accepted_claim_sets": [
+        ["ABNF allows the bit sequence", "it does not encode a Unicode character", "receiver behavior is unpredictable"],
+        ["the grammar does not guarantee rejection", "the value may be non-Unicode", "implementations may disagree or fail"]
+      ],
+      "required_facts": ["ABNF permits such bit sequences", "not a Unicode character", "unpredictable receiver behavior"],
+      "source_sections": ["8.2"],
+      "source_lines": ["455-463"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t1x_surrogate_competing_dev",
+      "category": "unpaired_surrogate",
+      "query": "Contrast RFC 8259's \\uD834\\uDD1E example with a lone \\uDEAD. What does each represent, and why are their interoperability consequences different?",
+      "reference_answer": "The first is a UTF-16 surrogate pair encoding a non-BMP Unicode character. The lone surrogate is a bit sequence allowed by the ABNF that cannot encode a Unicode character, so receiver behavior is unpredictable.",
+      "accepted_claim_sets": [
+        ["paired surrogates encode one non-BMP character", "the lone surrogate is not a Unicode character", "lone-surrogate handling is unpredictable"],
+        ["the G-clef example is a valid pair", "\\uDEAD is unpaired", "implementations can disagree or fail on the latter"]
+      ],
+      "required_facts": ["valid surrogate pair for a non-BMP character", "lone surrogate cannot encode a Unicode character", "unpredictable behavior for the lone surrogate"],
+      "source_sections": ["7", "8.2"],
+      "source_lines": ["396-400", "455-463"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t1x_parser_obligation_dev",
+      "category": "parser_generator",
+      "query": "Can an RFC 8259 JSON parser reject a text merely because it dislikes a valid grammar form, and may that parser accept extensions?",
+      "reference_answer": "It must accept every text conforming to the JSON grammar. It may additionally accept non-JSON forms or extensions.",
+      "accepted_claim_sets": [
+        ["must accept grammar-conforming JSON", "may accept extensions"],
+        ["conforming texts cannot be rejected as a general parser policy", "non-JSON extensions are optional"]
+      ],
+      "required_facts": ["parser MUST accept conforming texts", "parser MAY accept extensions"],
+      "source_sections": ["9"],
+      "source_lines": ["474-483"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t1x_generator_obligation_dev",
+      "category": "parser_generator",
+      "query": "If some parser accepts a non-JSON extension, may an RFC 8259-conforming JSON generator emit that extension?",
+      "reference_answer": "No. A parser may accept extensions, but a generator's output must strictly conform to the JSON grammar.",
+      "accepted_claim_sets": [
+        ["no", "parser extension acceptance is optional", "generator output must strictly conform"],
+        ["lenient consumption does not relax generation", "generators must emit grammar-conforming JSON"]
+      ],
+      "required_facts": ["parser MAY accept extensions", "generator MUST strictly conform", "parser leniency does not authorize generator extensions"],
+      "source_sections": ["9", "10"],
+      "source_lines": ["474-488"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t1x_parser_generator_asymmetry_dev",
+      "category": "parser_generator",
+      "query": "Summarize RFC 8259's intentional asymmetry between what a parser may accept and what a generator may produce.",
+      "reference_answer": "A parser must accept conforming JSON and may accept extensions. A generator must produce text that strictly conforms to the JSON grammar.",
+      "accepted_claim_sets": [
+        ["parser MUST accept conforming texts", "parser MAY accept extensions", "generator MUST strictly conform"],
+        ["input handling can be more permissive", "output generation remains grammar-strict"]
+      ],
+      "required_facts": ["parser conformance minimum", "optional parser extensions", "strict generator output"],
+      "source_sections": ["9", "10"],
+      "source_lines": ["474-488"],
+      "expected_behavior": "answer"
+    }
+  ]
+}

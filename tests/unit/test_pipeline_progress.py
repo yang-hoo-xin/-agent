@@ -6,6 +6,7 @@ callback at each pipeline stage with (stage_name, current, total).
 
 from typing import List, Tuple
 from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -25,11 +26,18 @@ def _make_fake_pipeline() -> object:
         force = False
 
     fp = FP()
+    fp.processing_fingerprint = "fingerprint"
+    fp.processing_identity = {"llm": None}
+    fp.settings = SimpleNamespace(ingestion=None, vision_llm=None)
+    fp.storage_paths = {"history": "history", "bm25": "bm25", "vector_store": "chroma"}
+    fp.document_manager = MagicMock()
+    fp.document_manager.chunk_ids_for_source_path.return_value = []
 
     # Stage 1: integrity
     fp.integrity_checker = MagicMock()
     fp.integrity_checker.compute_sha256.return_value = "hash123"
     fp.integrity_checker.should_skip.return_value = False
+    fp.integrity_checker.begin_ingestion.return_value = {"prior_hashes": [], "same_hash_previous_status": None}
 
     # Stage 2: loader
     fp.loader = MagicMock()
@@ -56,6 +64,7 @@ def _make_fake_pipeline() -> object:
     # Stage 5: encoding
     batch_result = MagicMock()
     batch_result.dense_vectors = [[0.1, 0.2]] * 3
+    batch_result.failed_chunks = 0
     batch_result.sparse_stats = [{"doc_id": f"c{i}"} for i in range(3)]
     fp.batch_processor = MagicMock()
     fp.batch_processor.process.return_value = batch_result

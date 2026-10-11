@@ -49,8 +49,8 @@ def _pipelines(tmp_path, monkeypatch):
             chunk_refiner={"use_llm": False}, metadata_enricher={"use_llm": False}),
         vector_store=SimpleNamespace(provider="chroma", persist_directory=str(tmp_path / "chroma")),
         embedding=SimpleNamespace(provider="offline"), vision_llm=None,
+        storage_root=str(tmp_path),
     )
-    monkeypatch.setattr(module, "resolve_path", lambda path: tmp_path / path)
     monkeypatch.setattr(module, "PdfLoader", Loader)
     monkeypatch.setattr(module.EmbeddingFactory, "create", lambda _: Embedding())
     return tuple(IngestionPipeline(settings, collection=name) for name in ("scope-alpha", "scope-beta")), calls

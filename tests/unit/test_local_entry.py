@@ -99,6 +99,7 @@ from src.mod_agent.local_entry import (
     SOURCE_DISCLOSURE_DATA_CLASSES,
     run_local_request,
 )
+from tests.fixtures.local_request_profile import request_budget
 
 _OLLAMA_DIGEST = "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0"
 
@@ -1881,7 +1882,7 @@ def test_game_folder_source_containment_rejects_before_copy(
 ) -> None:
     copy_calls: list[object] = []
     monkeypatch.setattr(
-        "src.mod_agent.local_entry._copy_validated_directory_tree",
+        "src.mod_agent.build.dependencies._copy_validated_directory_tree",
         lambda **kwargs: copy_calls.append(kwargs),
     )
     canonical = tmp_path / "canonical" / "Project"
@@ -2968,13 +2969,13 @@ def _install_local_ollama_factory(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_pre_graph_verifier_failure_persists_terminal_lineage(
-    tmp_path: Path,
+    short_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = _local_run_test_target(tmp_path)
-    workspace = tmp_path / "runs"
+    source = _local_run_test_target(short_workspace)
+    workspace = short_workspace / "runs"
     _install_local_ollama_factory(monkeypatch)
-    inspector_project = tmp_path / "tracked-inspector" / "r8_il_inspector.csproj"
+    inspector_project = short_workspace / "tracked-inspector" / "r8_il_inspector.csproj"
     inspector_project.parent.mkdir()
     inspector_project.write_text(
         "<Project Sdk=\"Microsoft.NET.Sdk\" />",
@@ -3022,6 +3023,7 @@ def test_pre_graph_verifier_failure_persists_terminal_lineage(
 
     with pytest.raises(LocalEntryError, match="compiled identity mismatch"):
         run_local_request(
+            **request_budget(),
             description="make General.Enabled control startup patch registration",
             target_project=source,
             workspace_base=workspace,
@@ -3083,10 +3085,10 @@ def test_pre_graph_verifier_failure_persists_terminal_lineage(
 
 
 def test_member_access_dependency_failure_is_persisted_before_graph(
-    tmp_path: Path,
+    short_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = tmp_path / "canonical" / "BetterHitFeedback"
+    source = short_workspace / "canonical" / "BetterHitFeedback"
     source.mkdir(parents=True)
     (source / "BetterHitFeedback.csproj").write_text(
         "<Project><PropertyGroup>"
@@ -3098,8 +3100,8 @@ def test_member_access_dependency_failure_is_persisted_before_graph(
         "namespace BetterHitFeedback; public sealed class Plugin {}\n",
         encoding="utf-8",
     )
-    workspace = tmp_path / "runs"
-    inspector_project = tmp_path / "tracked-inspector" / "r8_il_inspector.csproj"
+    workspace = short_workspace / "runs"
+    inspector_project = short_workspace / "tracked-inspector" / "r8_il_inspector.csproj"
     inspector_project.parent.mkdir()
     inspector_project.write_text(
         '<Project Sdk="Microsoft.NET.Sdk" />',
@@ -3145,6 +3147,7 @@ def test_member_access_dependency_failure_is_persisted_before_graph(
         match="compiled artifact member access dependency root is missing",
     ):
         run_local_request(
+            **request_budget(),
             description="make General.Enabled control startup patch registration",
             target_project=source,
             workspace_base=workspace,
@@ -3186,11 +3189,11 @@ def test_member_access_dependency_failure_is_persisted_before_graph(
 
 
 def test_pre_graph_restore_failure_records_exact_stage_and_stops(
-    tmp_path: Path,
+    short_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = _local_run_test_target(tmp_path)
-    workspace = tmp_path / "runs"
+    source = _local_run_test_target(short_workspace)
+    workspace = short_workspace / "runs"
     _install_local_ollama_factory(monkeypatch)
 
     def fail_restore(_profile):
@@ -3211,6 +3214,7 @@ def test_pre_graph_restore_failure_records_exact_stage_and_stops(
 
     with pytest.raises(LocalEntryError, match="baseline build failed"):
         run_local_request(
+            **request_budget(),
             description="make General.Enabled control startup patch registration",
             target_project=source,
             workspace_base=workspace,
@@ -3236,9 +3240,11 @@ def test_pre_graph_restore_failure_records_exact_stage_and_stops(
     assert not (run_root / "a").exists()
 
 
+@pytest.mark.parametrize("configure_dependency_api", [False, True])
 def test_run_local_request_records_game_folder_binding_before_fake_restore(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    configure_dependency_api: bool,
 ) -> None:
     source = _local_run_test_target(tmp_path)
     dependency = _game_folder_dependency(tmp_path)
@@ -3246,6 +3252,15 @@ def test_run_local_request_records_game_folder_binding_before_fake_restore(
     binding = _game_folder_binding(dependency)
     workspace = tmp_path / "runs"
     _install_local_ollama_factory(monkeypatch)
+
+    api_config = None
+    if configure_dependency_api:
+        inspector = tmp_path / "inspector.dll"
+        inspector.write_bytes(b"read-only-inspector-test")
+        api_config = tmp_path / "dependency-api.json"
+        api_config.write_text(json.dumps({"schema_version": "run_dependency_api_config_v1",
+            "inspector_ref": {"path": str(inspector), "sha256": hashlib.sha256(inspector.read_bytes()).hexdigest()},
+            "max_method_inspections": 2}), encoding="utf-8")
 
     def fail_restore(profile):
         exact = f"-p:GameFolder={profile.game_folder_dir}"
@@ -3274,9 +3289,11 @@ def test_run_local_request_records_game_folder_binding_before_fake_restore(
             settings_path=Path("config/settings.yaml"),
             confirm_isolated_write=True,
             allow_build=True,
+            task_model_call_limit=1,
             allow_source_disclosure=False,
             diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
             game_folder_build_binding=binding,
+            dependency_api_config=api_config,
             local_ollama=True,
             ollama_model="qwen3:4b-instruct",
             ollama_context_window=32768,
@@ -3289,6 +3306,19 @@ def test_run_local_request_records_game_folder_binding_before_fake_restore(
     failure = json.loads((run_root / "run_failure.json").read_text(encoding="utf-8"))
     game_folder = manifest["game_folder_build_dependency"]
     assert manifest["game_folder_build_binding"] == binding.to_dict()
+    assert manifest["small_project_context_policy"] == {
+        "schema_version": "small_project_source_context_v1", "enabled": True,
+        "max_files": 4, "max_total_bytes": 8192, "max_entries": 256}
+    if configure_dependency_api:
+        api_binding = manifest["dependency_api"]
+        assert api_binding["status"] == "configured"
+        assert api_binding["configuration_ref"]["path"] == str(api_config)
+        assert api_binding["source_snapshot_sha256"] == binding.snapshot_sha256
+        assert api_binding["target_code_execution_allowed"] is False
+        assert api_binding["model_calls_performed"] == 0
+        assert api_binding["max_method_inspections"] == 2
+    else:
+        assert manifest["dependency_api"]["status"] == "not_configured"
     assert game_folder["source_snapshot_sha256"] == binding.snapshot_sha256
     assert game_folder["copy_snapshot_sha256"] == binding.snapshot_sha256
     assert Path(game_folder["isolated_copy"]).is_relative_to(run_root)
@@ -3323,6 +3353,7 @@ def test_run_local_request_game_folder_snapshot_drift_stops_before_dotnet(
             settings_path=Path("config/settings.yaml"),
             confirm_isolated_write=True,
             allow_build=True,
+            task_model_call_limit=1,
             allow_source_disclosure=False,
             diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
             game_folder_build_binding=binding,
@@ -3361,7 +3392,7 @@ def test_run_local_request_game_folder_copy_failure_is_bound_before_dotnet(
         raise OSError("injected long-path copy failure")
 
     monkeypatch.setattr(
-        "src.mod_agent.local_entry._copy_validated_directory_tree",
+        "src.mod_agent.build.dependencies._copy_validated_directory_tree",
         fail_copy,
     )
     monkeypatch.setattr(
@@ -3377,6 +3408,7 @@ def test_run_local_request_game_folder_copy_failure_is_bound_before_dotnet(
             settings_path=Path("config/settings.yaml"),
             confirm_isolated_write=True,
             allow_build=True,
+            task_model_call_limit=1,
             allow_source_disclosure=False,
             diff_approval_reader=lambda dry_run: str(dry_run["diff_hash"]),
             game_folder_build_binding=binding,
@@ -3401,11 +3433,11 @@ def test_run_local_request_game_folder_copy_failure_is_bound_before_dotnet(
 
 
 def test_pre_graph_cleanup_failure_is_terminally_bound(
-    tmp_path: Path,
+    short_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    source = _local_run_test_target(tmp_path)
-    workspace = tmp_path / "runs"
+    source = _local_run_test_target(short_workspace)
+    workspace = short_workspace / "runs"
     _install_local_ollama_factory(monkeypatch)
 
     built_working_directories: list[Path] = []
@@ -3438,6 +3470,7 @@ def test_pre_graph_cleanup_failure_is_terminally_bound(
 
     with pytest.raises(PermissionError, match="cleanup denied"):
         run_local_request(
+            **request_budget(),
             description="make General.Enabled control startup patch registration",
             target_project=source,
             workspace_base=workspace,
@@ -3489,6 +3522,7 @@ def test_run_request_blocks_source_access_without_explicit_disclosure_consent(
 
     with pytest.raises(LocalEntryError, match="--allow-source-disclosure"):
         run_local_request(
+            **request_budget(),
             description="change a local source file",
             target_project=tmp_path / "missing-target",
             workspace_base=workspace,
@@ -3520,6 +3554,7 @@ def test_local_run_selects_ollama_without_api_key_or_external_disclosure(
 
     with pytest.raises(LocalEntryError, match="Target project"):
         run_local_request(
+            **request_budget(),
             description="change a local source file",
             target_project=tmp_path / "missing-target",
             workspace_base=tmp_path / "runs",
@@ -3578,6 +3613,7 @@ def test_local_run_forwards_main_timeout_without_reusing_it_for_repair(
 
     with pytest.raises(LocalEntryError, match="Target project"):
         run_local_request(
+            **request_budget(),
             description="change a local source file",
             target_project=tmp_path / "missing-target",
             workspace_base=tmp_path / "runs",
@@ -3646,6 +3682,7 @@ def test_local_run_applies_timeout_only_to_repair_ollama_role(
 
     with pytest.raises(LocalEntryError, match="Target project"):
         run_local_request(
+            **request_budget(),
             description="change a local source file",
             target_project=tmp_path / "missing-target",
             workspace_base=tmp_path / "runs",
@@ -3693,6 +3730,7 @@ def test_local_run_rejects_invalid_repair_ollama_timeout(timeout: float) -> None
         match="Repair Ollama timeout seconds must be a positive finite number",
     ):
         run_local_request(
+            **request_budget(),
             description="change a local source file",
             target_project=Path("missing-target"),
             workspace_base=Path("missing-runs"),
@@ -3719,6 +3757,7 @@ def test_local_run_rejects_invalid_main_ollama_timeout(timeout: object) -> None:
         match="Main Ollama timeout seconds must be a positive finite number",
     ):
         run_local_request(
+            **request_budget(),
             description="change a local source file",
             target_project=Path("missing-target"),
             workspace_base=Path("missing-runs"),
@@ -3740,6 +3779,7 @@ def test_non_local_run_rejects_main_ollama_timeout() -> None:
         match="Main Ollama timeout can only be configured for local Ollama execution",
     ):
         run_local_request(
+            **request_budget(),
             description="change a local source file",
             target_project=Path("missing-target"),
             workspace_base=Path("missing-runs"),
@@ -4318,6 +4358,7 @@ def test_local_run_rejects_external_disclosure_boundary_mix(
 ) -> None:
     with pytest.raises(LocalEntryError, match="exactly one model boundary"):
         run_local_request(
+            **request_budget(),
             description="change a local source file",
             target_project=tmp_path / "missing-target",
             workspace_base=tmp_path / "runs",
@@ -4336,6 +4377,7 @@ def test_local_run_rejects_external_disclosure_boundary_mix(
 def test_local_run_requires_exact_model_without_inference(tmp_path: Path) -> None:
     with pytest.raises(LocalEntryError, match="exact --ollama-model"):
         run_local_request(
+            **request_budget(),
             description="change a local source file",
             target_project=tmp_path / "missing-target",
             workspace_base=tmp_path / "runs",
@@ -4361,6 +4403,7 @@ def test_local_run_requires_explicit_context_window_before_catalog_read(
 
     with pytest.raises(LocalEntryError, match="--ollama-context-window"):
         run_local_request(
+            **request_budget(),
             description="change a local source file",
             target_project=tmp_path / "missing-target",
             workspace_base=tmp_path / "runs",
@@ -4382,6 +4425,7 @@ def test_local_run_rejects_context_window_not_above_output_budget(
 ) -> None:
     with pytest.raises(LocalEntryError, match="must exceed"):
         run_local_request(
+            **request_budget(),
             description="change a local source file",
             target_project=tmp_path / "missing-target",
             workspace_base=tmp_path / "runs",
@@ -4412,6 +4456,7 @@ def test_local_run_rejects_non_literal_loopback_before_catalog_read(
         match="LOCAL_AGENT_ENDPOINT_MUST_BE_LITERAL_LOOPBACK_HTTP_ORIGIN",
     ):
         run_local_request(
+            **request_budget(),
             description="change a local source file",
             target_project=tmp_path / "missing-target",
             workspace_base=tmp_path / "runs",
@@ -4444,6 +4489,7 @@ def test_local_provider_initialization_failure_has_no_fallback(
 
     with pytest.raises(LocalEntryError, match="Local Ollama initialization failed"):
         run_local_request(
+            **request_budget(),
             description="change a local source file",
             target_project=tmp_path / "missing-target",
             workspace_base=tmp_path / "runs",
@@ -4551,6 +4597,7 @@ def test_external_run_still_requires_api_key_after_disclosure(
 
     with pytest.raises(LocalEntryError, match="MISSING_EXTERNAL_KEY"):
         run_local_request(
+            **request_budget(),
             description="change a local source file",
             target_project=tmp_path / "missing-target",
             workspace_base=tmp_path / "runs",

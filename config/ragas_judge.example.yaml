@@ -1,0 +1,54 @@
+# Independent judge settings for --judge-settings. This template is not a live profile.
+# Replace the .invalid URLs and model identifiers with the approved service values.
+# llm and embedding endpoints may differ. This does not change config/settings.yaml.
+# With api_key: null, the OpenAI SDK reads OPENAI_API_KEY in the evaluator process.
+# For separate credentials, supply them only in an untracked local copy; never commit keys.
+# Before an acceptance run, set RAGAS_DO_NOT_TRACK=true and obtain its call/data scope.
+llm:
+  provider: openai
+  model: CONFIGURE_JUDGE_MODEL
+  base_url: https://judge.invalid/v1
+  api_key: null
+  azure_endpoint: null
+  deployment_name: null
+  api_version: null
+  temperature: 0.0
+  max_tokens: 4096
+
+embedding:
+  provider: openai
+  model: CONFIGURE_EMBEDDING_MODEL
+  base_url: https://embedding.invalid/v1
+  api_key: null
+  azure_endpoint: null
+  deployment_name: null
+  api_version: null
+  dimensions: 1536 # Set to the selected model's output width; not an API override.
+
+evaluation:
+  enabled: true
+  provider: ragas
+  metrics: [faithfulness, answer_relevancy, context_precision]
+
+# Required Settings fields; scoring uses only llm, embedding and evaluation above.
+vector_store:
+  provider: chroma
+  persist_directory: ./artifacts/ragas_provider_acceptance/unused_vector_store
+  collection_name: unused_judge_collection
+retrieval:
+  dense_enabled: false
+  dense_provider: disabled
+  dense_top_k: 3
+  sparse_top_k: 3
+  fusion_top_k: 3
+  rrf_k: 60
+rerank:
+  enabled: false
+  provider: none
+  model: unused
+  top_k: 3
+observability:
+  log_level: INFO
+  trace_enabled: false
+  trace_file: ./artifacts/ragas_provider_acceptance/unused_trace.jsonl
+  structured_logging: true

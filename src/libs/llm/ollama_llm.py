@@ -19,6 +19,16 @@ from src.libs.llm.base_llm import BaseLLM, ChatResponse, Message
 from src.libs.llm.transport_observation import transport_started, transport_response_received
 
 
+def nonnegative_token_count(value: object) -> int | None:
+    """Read a measured integer count without inventing an absent zero."""
+    return value if type(value) is int and value >= 0 else None
+
+
+def ollama_cached_input_tokens(response_data: Mapping[str, Any]) -> int | None:
+    """Preserve the native inclusive cache count; absent/invalid is unknown."""
+    return nonnegative_token_count(response_data.get("prompt_eval_cached_count"))
+
+
 def ollama_provider_body_utf8_policy_projection(
     payload: Mapping[str, Any],
 ) -> bytes:
@@ -144,6 +154,29 @@ class OllamaLLMError(RuntimeError):
         self.diagnostics = dict(diagnostics or {})
 
 
+def _schema_constraint_loss(value: object, path: str = "$") -> dict[str, object] | None:
+    """Detect the exact mixed-union shape the bundled llama.cpp drops."""
+    if isinstance(value, Mapping):
+        for combinator in ("oneOf", "anyOf"):
+            if combinator in value and any(
+                key in value for key in ("properties", "required", "additionalProperties")
+            ):
+                ignored = sorted(set(value).intersection(
+                    {"type", "properties", "required", "additionalProperties"}))
+                return {"json_path": path, "combinator": combinator,
+                        "ignored_sibling_keywords": ignored}
+        for key, nested in value.items():
+            failure = _schema_constraint_loss(nested, f"{path}.{key}")
+            if failure is not None:
+                return failure
+    elif isinstance(value, list):
+        for index, nested in enumerate(value):
+            failure = _schema_constraint_loss(nested, f"{path}[{index}]")
+            if failure is not None:
+                return failure
+    return None
+
+
 class OllamaLLM(BaseLLM):
     """Ollama LLM provider implementation for local inference.
     
@@ -208,7 +241,7 @@ class OllamaLLM(BaseLLM):
         
         Args:
             settings: Application settings containing LLM configuration.
-            base_url: Optional base URL override (falls back to env var OLLAMA_BASE_URL).
+            base_url: Optional override (then settings.llm.base_url, environment, default).
             timeout: Optional timeout override for requests.
             context_window: Optional explicit Ollama num_ctx request value.
             **kwargs: Additional configuration overrides.
@@ -271,9 +304,14 @@ class OllamaLLM(BaseLLM):
         self.observed_prompt_identity_sha256 = observed_prompt_identity_sha256
         self.observed_prompt_token_source = observed_prompt_token_source
         
-        # Base URL: explicit > env var > default
+        # 为什么要有它：工厂调用必须使用配置的endpoint，不能让重排等调用绕开配置的代理、权限或预算记录。
+        configured_base_url = getattr(settings.llm, "base_url", None)
+        if not isinstance(configured_base_url, str):
+            configured_base_url = None
+        # Base URL: explicit > settings > env var > default
         self.base_url = (
             base_url 
+            or configured_base_url
             or os.environ.get("OLLAMA_BASE_URL") 
             or self.DEFAULT_BASE_URL
         )
@@ -314,12 +352,18 @@ class OllamaLLM(BaseLLM):
         model = kwargs.get("model", self.model)
         response_format = kwargs.get("response_format")
         provider_request_recorder = kwargs.get("provider_request_recorder")
+        provider_response_recorder = kwargs.get("provider_response_recorder")
         stream_response = kwargs.get("stream_response", False)
         stream_activity_recorder = kwargs.get("stream_activity_recorder")
+        stream_content_recorder = kwargs.get("stream_content_recorder")
+        if stream_content_recorder is not None and (not callable(stream_content_recorder) or not stream_response):
+            raise ValueError("Ollama stream_content_recorder requires a callable and stream_response=true.")
         if response_format is not None and not isinstance(response_format, Mapping):
             raise ValueError("Ollama response_format must be a JSON Schema object.")
         if provider_request_recorder is not None and not callable(provider_request_recorder):
             raise ValueError("Ollama provider_request_recorder must be callable.")
+        if provider_response_recorder is not None and not callable(provider_response_recorder):
+            raise ValueError("Ollama provider_response_recorder must be callable.")
         if type(stream_response) is not bool:
             raise ValueError("Ollama stream_response must be a boolean.")
         if stream_activity_recorder is not None and not callable(
@@ -348,7 +392,20 @@ class OllamaLLM(BaseLLM):
                 provider_request_recorder=provider_request_recorder,
                 stream_response=stream_response,
                 stream_activity_recorder=stream_activity_recorder,
+                **({"stream_content_recorder": stream_content_recorder} if stream_content_recorder is not None else {}),
             )
+            if provider_response_recorder is not None:
+                # 为什么要有它：完整性门禁拒绝的原生响应也须保留，不能把截断错误变成没有原件的推测。
+                try:
+                    provider_response_recorder(deepcopy(response_data))
+                except Exception as record_error:
+                    raise OllamaLLMError(
+                        "[Ollama] Provider response persistence failed.",
+                        diagnostics={
+                            "failure_boundary": "provider_response_recording",
+                            "failure_classification": "durable_provider_response_failure",
+                        },
+                    ) from record_error
             if response_format is not None:
                 content, usage = self._admit_chat_response(
                     response_data,
@@ -494,6 +551,7 @@ class OllamaLLM(BaseLLM):
         provider_request_recorder: Callable[[dict[str, Any]], None] | None = None,
         stream_response: bool = False,
         stream_activity_recorder: Callable[[dict[str, Any]], None] | None = None,
+        stream_content_recorder: Callable[[str], None] | None = None,
     ) -> Dict[str, Any]:
         """Make the actual API call to Ollama.
         
@@ -555,6 +613,7 @@ class OllamaLLM(BaseLLM):
             frozen_request_bytes=frozen_request_bytes,
             stream_response=stream_response,
             stream_activity_recorder=stream_activity_recorder,
+            **({"stream_content_recorder": stream_content_recorder} if stream_content_recorder is not None else {}),
         )
 
     def _prepare_structured_api_request(
@@ -582,6 +641,17 @@ class OllamaLLM(BaseLLM):
                 diagnostics={
                     "failure_boundary": "provider_request_gate",
                     "failure_classification": "durable_provider_request_missing",
+                },
+            )
+        schema_failure = _schema_constraint_loss(response_format)
+        if schema_failure is not None:
+            raise OllamaLLMError(
+                "[Ollama] Structured schema would lose common constraints in "
+                "the admitted local backend.",
+                diagnostics={
+                    "failure_boundary": "provider_request_gate",
+                    "failure_classification": "provider_request_schema_constraint_loss",
+                    **schema_failure,
                 },
             )
         options: dict[str, Any] = {
@@ -831,6 +901,7 @@ class OllamaLLM(BaseLLM):
         frozen_request_bytes: bytes | None,
         stream_response: bool,
         stream_activity_recorder: Callable[[dict[str, Any]], None] | None,
+        stream_content_recorder: Callable[[str], None] | None = None,
     ) -> Dict[str, Any]:
         import httpx
 
@@ -876,6 +947,7 @@ class OllamaLLM(BaseLLM):
                         result = self._collect_streaming_response(
                             response,
                             activity_recorder=stream_activity_recorder,
+                            content_recorder=stream_content_recorder,
                         )
                         transport_response_received(http_status=response.status_code, response_complete=True)
                         return result
@@ -955,6 +1027,7 @@ class OllamaLLM(BaseLLM):
         response: Any,
         *,
         activity_recorder: Callable[[dict[str, Any]], None] | None,
+        content_recorder: Callable[[str], None] | None = None,
     ) -> Dict[str, Any]:
         """Accumulate one Ollama NDJSON response without exposing its content."""
 
@@ -1060,6 +1133,9 @@ class OllamaLLM(BaseLLM):
                     },
                 )
             content_parts.append(content)
+            if content_recorder is not None:
+                # 为什么要有它：正文消费者及合作取消是执行边界，异常须关闭现有stream；不发送thinking或吞掉取消。
+                content_recorder(content)
             if thinking:
                 thinking_parts.append(thinking)
             if raw_tool_calls:
@@ -1241,11 +1317,15 @@ class OllamaLLM(BaseLLM):
         completion_tokens = response_data.get("eval_count", 0)
         if not isinstance(prompt_tokens, int) or not isinstance(completion_tokens, int):
             return None
-        return {
+        usage = {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
         }
+        cached = ollama_cached_input_tokens(response_data)
+        if cached is not None:
+            usage["cached_input_tokens"] = cached
+        return usage
     
     def _parse_error_response(self, response: Any) -> str:
         """Parse error details from API response.

@@ -37,6 +37,8 @@ def mock_settings_with_llm():
     settings = Mock(spec=Settings)
     settings.ingestion = Mock()
     settings.ingestion.chunk_refiner = {'use_llm': True}
+    settings.ingestion.max_workers = 5
+    settings.llm = Mock(base_url=None)
     return settings
 
 

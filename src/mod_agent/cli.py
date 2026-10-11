@@ -20,6 +20,7 @@ from .actual_execution import (
 )
 from .artifacts import ArtifactRef, ArtifactStore
 from .artifacts.store import ArtifactStorePreflightError
+from .build.dependencies import RunLocalGameFolderBindingV1
 from .edit_authority_capabilities import (
     parse_current_edit_authority_review_result,
 )
@@ -59,7 +60,6 @@ from .local_entry import (
     LocalEntryError,
     LocalOllamaInitialPatchAdapter,
     LocalOllamaInitialPatchProfileV1,
-    RunLocalGameFolderBindingV1,
     make_exact_no_write_dry_run_factory,
     preflight_local_runtime,
     preflight_stagger_edit_authority_review,
@@ -931,6 +931,13 @@ def build_parser(
         ),
     )
 
+    pretransport_parser = subparsers.add_parser("continue-pretransport-patch",
+        help="Resume an exact terminal Patch pre-transport failure within its inherited task budget.")
+    pretransport_parser.add_argument("--run-root", required=True)
+    pretransport_parser.add_argument("--run-id", required=True)
+    pretransport_parser.add_argument("--execution-config", required=True)
+    pretransport_parser.add_argument("--recovery-config", required=True)
+    pretransport_parser.add_argument("--prepare-only", action="store_true")
     planning_continuation_parser = subparsers.add_parser(
         "continue-fresh-planning",
         help=(
@@ -1150,14 +1157,25 @@ def build_parser(
     run_parser.add_argument("--ollama-context-window", type=int)
     run_parser.add_argument("--source-retrieval", choices=("rg_live", "indexed_source"), default="rg_live",
         help="Select current-source retrieval for initial Evidence and every reassessment; rg_live remains the default.")
+    run_parser.add_argument("--reuse-query-observations", action=argparse.BooleanOptionalAction, default=True,
+        help="Reuse identical source-bound queries within a batch; disable for a recorded online comparison.")
+    run_parser.add_argument("--compress-findings-input", action=argparse.BooleanOptionalAction, default=True,
+        help="Use reversible Findings input text references; disable for a recorded online comparison.")
     run_parser.add_argument("--patch-worker-config",
         help="Explicit existing PatchWorkerConfiguration JSON for the shared worker and optional evaluator.")
     run_parser.add_argument("--defer-approval", action="store_true",
         help="Persist the completed exact Dry-run and pause before asking for or performing Apply; resume through apply-patch --resume-approval.")
     run_parser.add_argument("--task-model-call-limit", type=int,
         help="Positive total model-call limit shared across this product task.")
+    run_parser.add_argument("--model-call-budget-policy", choices=("task_total_only", "stage_and_total"),
+        default="task_total_only", help="Task total is the default hard limit; stage_and_total reproduces legacy bounded runs.")
     run_parser.add_argument("--stage-model-call-limits",
         help="JSON object with the existing requirement_projection, requirement_findings, planning, initial_patch and repair call limits.")
+    run_parser.add_argument("--dependency-api-config", help="Explicit hash-bound metadata/IL inspector configuration for the run-local GameFolder copy.")
+    run_parser.add_argument("--knowledge-evidence-config", help="Explicit source/hash/budget-bound read-only MCP document knowledge configuration.")
+    run_parser.add_argument("--resume-initial-findings", help="Exact original execution configuration for one same-task Findings continuation.")
+    run_parser.add_argument("--findings-stage-allocation", help="Separate reviewed stage-allocation/time configuration; original limits stay unchanged.")
+    run_parser.add_argument("--findings-approval-stdin", action="store_true")
     _add_execution_trace_arguments(run_parser)
     run_parser.add_argument(
         "--allow-source-disclosure",
@@ -1841,6 +1859,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         return 1 if result.evidence_pack_artifact is not None else 2
 
+    if args.command == "continue-pretransport-patch":
+        from src.mod_agent.interrupted_patch_continuation import prepare_interrupted_patch, resume_interrupted_patch
+        try:
+            kwargs = dict(run_root=args.run_root, run_id=args.run_id, execution_config=args.execution_config,
+                recovery_config=read_json_object(args.recovery_config), pretransport=True)
+            if args.prepare_only:
+                prepared = prepare_interrupted_patch(**kwargs)
+                result = {"status": "ready", "scope": prepared["scope"], "scope_sha256": prepared["scope_sha256"],
+                    "model_calls_performed": 0, "apply_calls_performed": 0}
+            else:
+                result = resume_interrupted_patch(**kwargs)
+        except (ValueError, OSError, KeyError, TypeError) as error:
+            result = {"status": "blocked", "reason": str(error)}
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result.get("status") in {"ready", "awaiting_approval"} else 2
+
     if args.command == "continue-fresh-planning":
         continuation_started = time.perf_counter()
         try:
@@ -2496,6 +2530,41 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "run-request":
+        if args.resume_initial_findings is not None:
+            from src.mod_agent.initial_findings_continuation import (
+                execute_initial_findings_continuation,
+            )
+            continuation_invoked = False
+            try:
+                if not args.findings_stage_allocation or not args.findings_approval_stdin:
+                    raise ValueError("INITIAL_FINDINGS_EXPLICIT_APPROVAL_CHANNEL_REQUIRED")
+                original = read_json_object(args.resume_initial_findings)
+                expected = build_parser().parse_args(["run-request", *original["arguments"], "--", args.description])
+                excluded = {"resume_initial_findings", "findings_stage_allocation", "findings_approval_stdin"}
+                if {key: value for key, value in vars(args).items() if key not in excluded} != {
+                        key: value for key, value in vars(expected).items() if key not in excluded}:
+                    raise ValueError("INITIAL_FINDINGS_CLI_CONFIGURATION_CHANGED")
+                original_manifest = read_json_object(Path(args.workspace_root) / args.run_id / "run_manifest.json")
+                if args.description != original_manifest["request"]:
+                    raise ValueError("INITIAL_FINDINGS_CLI_REQUEST_CHANGED")
+                raw = sys.stdin.buffer.read(16385)
+                if len(raw) > 16384:
+                    raise ValueError("INITIAL_FINDINGS_APPROVAL_TOO_LARGE")
+                decision = json.loads(raw)
+                continuation_invoked = True
+                result = execute_initial_findings_continuation(
+                    run_root=Path(args.workspace_root) / args.run_id, run_id=args.run_id,
+                    execution_config=args.resume_initial_findings, allocation_config=args.findings_stage_allocation,
+                    decision=decision)
+            except (OSError, ValueError, RuntimeError, KeyError, TypeError) as error:
+                result = {"entry": "initial-findings-continuation", "run_id": args.run_id,
+                          "status": "blocked", "reason": str(error),
+                          "model_calls_performed": None if continuation_invoked else 0,
+                          "continuation_invocation_attempted": continuation_invoked}
+            print(json.dumps(result, ensure_ascii=True))
+            return 0 if result["status"] == "awaiting_approval" else 2
+        if args.findings_stage_allocation or args.findings_approval_stdin:
+            raise ValueError("INITIAL_FINDINGS_RESUME_SELECTOR_REQUIRED")
         try:
             dependency_binding = None
             if args.game_folder_build_binding:
@@ -2519,6 +2588,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 run_id=args.run_id,
                 request_id=args.request_id,
                 game_folder_build_binding=dependency_binding,
+                dependency_api_config=args.dependency_api_config,
+                knowledge_evidence_config=args.knowledge_evidence_config,
                 external_patch_profile=external_profile,
                 workspace_base=args.workspace_root,
                 settings_path=args.settings,
@@ -2544,7 +2615,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                    if args.ollama_timeout_seconds is not None else {}),
                 patch_worker_configuration=worker_configuration,
                 source_retrieval_mode=args.source_retrieval,
+                reuse_query_observations=args.reuse_query_observations,
+                compress_findings_input=args.compress_findings_input,
                 task_model_call_limit=args.task_model_call_limit,
+                model_call_budget_policy=args.model_call_budget_policy,
                 stage_model_call_limits=stage_limits,
                 execution_trace_configuration=_execution_trace_configuration(args),
                 defer_approval=bool(args.defer_approval),

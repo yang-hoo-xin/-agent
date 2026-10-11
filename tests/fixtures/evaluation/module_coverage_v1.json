@@ -1,0 +1,1312 @@
+{
+  "schema_version": "module_evaluation_manifest.v1",
+  "scope": "13 responsibility modules; selected engineering scenarios, not independent Mod tasks",
+  "repeats": "once initially; rerun affected selection only after failure/fix",
+  "why": "为什么要有它：已通过且未受改动影响的检查复用原记录，首败与修后验证分开。",
+  "model_calls_planned": 0,
+  "product_e2e_runs_planned": 0,
+  "nodes": [
+    {
+      "nodeid": "tests/unit/test_proposal_review.py::test_reviewer_fuses_passing_critic_without_weakening_hard_rules",
+      "module_id": "governance",
+      "scenario_id": "review_hard_rules_over_critic",
+      "assertion": "即使 critic 通过，缺失 expected_tests 仍无 allowed_next_stage，并产生 test_plan_presence finding。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "手写 proposal/evidence/critic payload；无真实模型或人工审查。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_proposal_review.py::test_reviewer_blocks_critic_score_bound_to_stale_proposal_hash",
+      "module_id": "governance",
+      "scenario_id": "review_stale_critic",
+      "assertion": "陈旧 proposal hash 的 critic assessment 被 required_failed 阻止。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "手写 critic 评分，只测消费端绑定。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_proposal_review.py::test_reviewer_blocks_forbidden_path",
+      "module_id": "governance",
+      "scenario_id": "review_forbidden_path",
+      "assertion": "指向 .git/config 的 proposal 返回 blocked_scope_risk/forbidden_paths。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "仅 reviewer 决策，无写入。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_patch_apply.py::test_apply_rejects_missing_or_mismatched_exact_diff_hash",
+      "module_id": "governance",
+      "scenario_id": "apply_exact_diff_required",
+      "assertion": "None、空值与不匹配 approved_diff_hash 全部拒绝，原文件 bytes 不变。",
+      "evidence_kind": "local_filesystem_unit",
+      "boundary": "真实 ExactTextPatchApplier；临时 C# 文本、手写已审查记录；无编译。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_patch_apply.py::test_approved_hash_blocks_live_source_drift_before_write",
+      "module_id": "governance",
+      "scenario_id": "apply_live_preimage",
+      "assertion": "dry-run 后原文件增加内容，即使 before_text 仍可匹配，旧 diff_hash 拒绝 Apply 且保留漂移后 bytes。",
+      "evidence_kind": "local_filesystem_unit",
+      "boundary": "人为改动前像作为边界反例，不是新增线上缺陷。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_deferred_product_approval.py::test_product_can_persist_pending_diff_without_rejection_apply_or_build",
+      "module_id": "governance",
+      "scenario_id": "deferred_pause_no_effect",
+      "assertion": "awaiting_approval 仅保留 dry_run_apply checkpoint；apply/build_calls=0、源与隔离文件未变，无 Apply/Build artifact。",
+      "evidence_kind": "scripted_product_graph",
+      "boundary": "真实 product executor/store/graph；规划、代码和编译入口使用测试工厂。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_deferred_product_approval.py::test_explicit_rejection_is_preserved_and_writes_no_product_bytes",
+      "module_id": "governance",
+      "scenario_id": "approval_rejection_no_effect",
+      "assertion": "明确 reject 返回 rejected、product_source_writes_performed=False、原文件不变且无 Apply artifact。",
+      "evidence_kind": "scripted_product_graph",
+      "boundary": "人工决定为构造的 fixture；无用户真实审批证据。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_task_delegation.py::test_delegation_applies_and_builds_once_without_claiming_human_review",
+      "module_id": "governance",
+      "scenario_id": "delegation_once_origin",
+      "assertion": "委托 Apply 和 Build 各一次，重复 resume blocked，原仓库 bytes 不变；授权来源保留 delegated origin 而非 human review。",
+      "evidence_kind": "scripted_product_graph",
+      "boundary": "真实 Apply/Graph；受控 acceptance 文档与假 DLL、注入 Build 工厂；不证明编译或产品成功。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_task_delegation.py::test_changed_resume_or_source_is_rejected_before_consumption_or_write",
+      "module_id": "governance",
+      "scenario_id": "delegation_bound_resume",
+      "assertion": "cross_run/diff/original/isolated/actor/runtime_resume 六种变化均在消费/写入前拒绝，无 resume/apply artifact。",
+      "evidence_kind": "scripted_product_graph",
+      "boundary": "人工变异授权数据；真实源码/hash/范围门禁。",
+      "expected_pytest_cases": 6
+    },
+    {
+      "nodeid": "tests/unit/test_task_delegation.py::test_policy_scope_excludes_runtime_and_nonisolated_roots",
+      "module_id": "governance",
+      "scenario_id": "delegation_effect_scope",
+      "assertion": "runtime scope、源/隔离根重叠、目标在隔离根外均拒绝。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "_scope 直接调用；不证明 OS sandbox。",
+      "expected_pytest_cases": 3
+    },
+    {
+      "nodeid": "tests/unit/test_task_delegation.py::test_decision_alone_cannot_bypass_checkpoint_consumption",
+      "module_id": "governance",
+      "scenario_id": "delegation_checkpoint_receipt",
+      "assertion": "只有 delegation decision 但缺 consumed resume receipt 的直接 Apply 被 RESUME_RECEIPT_REQUIRED 拒绝。",
+      "evidence_kind": "local_filesystem_unit",
+      "boundary": "构造 unit delegation，真实 applier，零产品源码写。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_governance_scenario_measurement.py::test_deferred_duplicate_resume_has_one_physical_apply_and_one_apply_artifact",
+      "module_id": "governance",
+      "scenario_id": "resume_physical_idempotency",
+      "assertion": "观察真实 allow_write 调用次数：重复 deferred resume 总计一次写尝试、一次 Apply artifact，原仓库不变。",
+      "evidence_kind": "scripted_product_graph",
+      "boundary": "monkeypatch 仅包裹计数并委托原 applier；无跨进程/并发 exactly-once 证明。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_build_adapter.py::test_local_build_requires_explicit_execution_approval",
+      "module_id": "build_runtime",
+      "scenario_id": "build_requires_execution_approval",
+      "assertion": "allow_execution=False 时 runner 未调用、skipped、real_build_performed=False、claims_real_build_success=False。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "注入 runner 不执行外部编译。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_build_adapter.py::test_local_build_with_zero_exit_without_expected_artifact_does_not_claim_success",
+      "module_id": "build_runtime",
+      "scenario_id": "build_zero_exit_missing_artifact",
+      "assertion": "零退出码但 expected DLL 缺失返回 failed/artifact_verification_failed、不得声称真实成功。",
+      "evidence_kind": "local_filesystem_unit",
+      "boundary": "返回码由 runner 合成；真实文件存在性校验。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_full_project_compilation.py::test_full_source_and_config_copies_compile_without_source_or_dependency_writes",
+      "module_id": "build_runtime",
+      "scenario_id": "compile_whole_source_and_config",
+      "assertion": "baseline/changed 所有三份 required files 在编译 manifest，配置复制一致、artifact ref hash 可复查，源/依赖无改写。",
+      "evidence_kind": "synthetic_compiler_integration",
+      "boundary": "编译 runner 写人工 manifest 和假 DLL，未启动 .NET；只验证编译拥有者、复制与身份契约。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_full_project_compilation.py::test_baseline_environment_or_unbound_failure_stops_candidate_compilation",
+      "module_id": "build_runtime",
+      "scenario_id": "compile_environment_owner",
+      "assertion": "restore/timeout/process/msbuild/mixed/unbound/global_compiler 失败归 environment，停止候选编译、仅 baseline 一次。",
+      "evidence_kind": "synthetic_compiler_integration",
+      "boundary": "七种错误为人为注入，不计新增实际缺陷。",
+      "expected_pytest_cases": 7
+    },
+    {
+      "nodeid": "tests/unit/test_full_project_compilation.py::test_success_exit_and_dll_without_changed_file_in_compile_manifest_is_not_pass",
+      "module_id": "build_runtime",
+      "scenario_id": "compile_omitted_changed_source",
+      "assertion": "零退出码+DLL 仍不能掩盖修改文件未参与编译；返回 verification_incomplete/failure_owner=validator。",
+      "evidence_kind": "synthetic_compiler_integration",
+      "boundary": "两个 baseline 分支均是合成 compiler/manifest。",
+      "expected_pytest_cases": 2
+    },
+    {
+      "nodeid": "tests/unit/test_runtime_probe.py::test_runtime_probe_subprocess_verifies_acceptance_contract",
+      "module_id": "build_runtime",
+      "scenario_id": "runtime_marker_subprocess_positive",
+      "assertion": "实际 Python 子进程输出 startup+两个 acceptance markers；runtime payload 覆盖全部条件并 verified。",
+      "evidence_kind": "real_local_subprocess_harness",
+      "boundary": "heavy 标记用于统一调度；仅 Python print marker harness，不是游戏运行、真实 DLL 或行为评估。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_runtime_probe.py::test_runtime_probe_missing_marker_is_inconclusive",
+      "module_id": "build_runtime",
+      "scenario_id": "runtime_marker_subprocess_negative",
+      "assertion": "实际子进程只有 startup marker，判 inconclusive、不声称真实行为成功、evidence_items=[]。",
+      "evidence_kind": "real_local_subprocess_harness",
+      "boundary": "heavy 标记用于统一调度；人为 marker 缺失，非线上产品缺陷。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_runtime_probe.py::test_runtime_probe_requires_explicit_execution_approval",
+      "module_id": "build_runtime",
+      "scenario_id": "runtime_requires_execution_approval",
+      "assertion": "缺明确执行批准抛 RuntimeProbeError，在启动 subprocess 前拒绝。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "此节点本身不启动子进程。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_runtime_evidence.py::test_manual_runtime_evidence_rejects_partial_acceptance_contract",
+      "module_id": "build_runtime",
+      "scenario_id": "runtime_partial_contract",
+      "assertion": "只覆盖两项 acceptance 之一的 verified 手工证据被拒绝。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "manual evidence payload 合成，仅契约消费验证。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_runtime_deployment.py::test_temporary_plugin_deployment_restores_preexisting_bytes",
+      "module_id": "build_runtime",
+      "scenario_id": "runtime_deployment_restoration",
+      "assertion": "临时替换真实本地文件，退出后原 bytes/hash 恢复，备份 bytes 一致。",
+      "evidence_kind": "local_filesystem_unit",
+      "boundary": "tmp_path 假 DLL；无游戏目录或进程。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_runtime_deployment.py::test_temporary_plugin_deployment_blocks_destination_drift_after_admission",
+      "module_id": "build_runtime",
+      "scenario_id": "runtime_deployment_preimage",
+      "assertion": "admission 后 destination existence 不符即拒绝，目标 bytes 保留。",
+      "evidence_kind": "local_filesystem_unit",
+      "boundary": "人为改变临时目标，实际 preimage guard。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_runtime_evidence.py::test_bind_runtime_evidence_context_preserves_deployment_requirement",
+      "module_id": "build_runtime",
+      "scenario_id": "runtime_deployment_trust_binding",
+      "assertion": "Graph context 绑定保持 deployment_required，并合并既有 deployment/restoration checks 后才 trusted。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "checks 都由测试构造；不证明一次真实部署/恢复已发生。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_patch_recovery_ledger.py::test_graph_accepts_complete_recovery_ledger_at_exact_byte_limit",
+      "module_id": "repair_recovery",
+      "scenario_id": "recovery_full_ledger",
+      "assertion": "完整两段恢复在精确 observation byte limit 被 Graph 接纳，读取端保留两 revision/三 phases。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "合成 receipt；验证 Graph admission 与 read-side projection。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_patch_recovery_ledger.py::test_graph_rejects_truncated_or_inconsistent_recovery_ledger",
+      "module_id": "repair_recovery",
+      "scenario_id": "recovery_corrupt_ledger",
+      "assertion": "丢首段、序号、别名、字节数、调用数、usage 和 malformed 七类损坏均拒绝。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "人为破坏 receipt 作回归负例。",
+      "expected_pytest_cases": 7
+    },
+    {
+      "nodeid": "tests/unit/test_patch_recovery_ledger.py::test_prior_worker_usage_is_not_reset_at_same_plan_return",
+      "module_id": "repair_recovery",
+      "scenario_id": "recovery_prior_budget_not_reset",
+      "assertion": "先前 model/tool/observation 使用量必须计入 same-plan 恢复，额外超量不得重置。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "None 及三种累计费用变化，合成 receipt。",
+      "expected_pytest_cases": 4
+    },
+    {
+      "nodeid": "tests/unit/test_patch_recovery_worker.py::test_feedback_can_drive_new_inspection_without_losing_tested_draft_or_obligations",
+      "module_id": "repair_recovery",
+      "scenario_id": "recovery_inspect_after_failure",
+      "assertion": "失败后可重新 inspect；4 次模型调用/2 次 synthetic oracle，保留失败 draft、原义务和原源 bytes，回执累计预算。",
+      "evidence_kind": "scripted_worker_integration",
+      "boundary": "脚本 provider + synthetic static oracle；Ollama serializer 使用 request_sender 替身，无网络/模型/编译。",
+      "expected_pytest_cases": 2
+    },
+    {
+      "nodeid": "tests/unit/test_patch_recovery_worker.py::test_repeated_failed_materialized_code_uses_same_budget_and_only_explicit_reuse",
+      "module_id": "repair_recovery",
+      "scenario_id": "recovery_same_code_reuse",
+      "assertion": "五次调用到预算耗尽；相同 materialized code 仅在 deterministic reuse+相同环境时复用原 report，否则重新执行。",
+      "evidence_kind": "scripted_worker_integration",
+      "boundary": "实际执行的 synthetic 字符串检查；三种 reuse/environment 组合，非游戏行为验证。",
+      "expected_pytest_cases": 3
+    },
+    {
+      "nodeid": "tests/unit/test_patch_recovery_worker.py::test_passed_behavior_report_cannot_claim_incomplete_execution",
+      "module_id": "repair_recovery",
+      "scenario_id": "recovery_incomplete_execution",
+      "assertion": "explicit incomplete 的 passed report 被拒绝且不发布 proposal；Graph 也拒绝矛盾来源。legacy unknown 保留兼容。",
+      "evidence_kind": "scripted_worker_integration",
+      "boundary": "origin 三种变异；unknown 允许是现有兼容边界，不等于真实执行证明。",
+      "expected_pytest_cases": 3
+    },
+    {
+      "nodeid": "tests/unit/test_repair_loop.py::test_ownerless_runtime_failure_fails_closed_without_source_repair",
+      "module_id": "repair_recovery",
+      "scenario_id": "runtime_failure_owner_unknown",
+      "assertion": "无 owner 的 runtime 失败不授源码修复，minimal_changes=[]，retry_count 不增，要求收集证据。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "手工 RuntimeEvidence，只测 RepairPlanner 授权决策。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_repair_loop.py::test_non_product_runtime_owners_cannot_enter_source_repair",
+      "module_id": "repair_recovery",
+      "scenario_id": "runtime_failure_nonproduct_owner",
+      "assertion": "observation/environment/provider/permission 四类 owner 均不得进 source repair，不增 retry。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "同节点遍历四 owner；合成诊断。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_repair_loop.py::test_repair_proposal_reenters_review_gate",
+      "module_id": "repair_recovery",
+      "scenario_id": "repair_reenters_review",
+      "assertion": "编译失败得到 evidence-bound repair proposal 后必须通过 ProposalReviewer 才允许 dry_run_apply。",
+      "evidence_kind": "deterministic_integration",
+      "boundary": "合成失败编译记录；真实 planner/builder/reviewer 联合。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_repair_checkpoint_smoke.py::test_repair_review_checkpoint_resume_blocks_double_and_stale_resume",
+      "module_id": "repair_recovery",
+      "scenario_id": "repair_checkpoint_stale_duplicate",
+      "assertion": "第一次 resume allowed，第二次 DOUBLE_RESUME_REJECTED，proposal revision 漂移后 STALE_RESUME_REJECTED。",
+      "evidence_kind": "local_artifact_integration",
+      "boundary": "真实 ArtifactStore/checkpoint，手工 approval，无模型/编译。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_performance_budget.py::test_budget_check_blocks_over_budget_operation",
+      "module_id": "resources_trace",
+      "scenario_id": "resource_budget_exceeded",
+      "assertion": "API calls 与 duration 同时超限会 blocked，精确记录两个 exceeded_limits 和 perf.limit_exceeded。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "OperationUsage 数值人为给定；不证明实际 CPU/内存测量或调度限流。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_performance_budget.py::test_cache_policy_is_enforced_when_configured",
+      "module_id": "resources_trace",
+      "scenario_id": "resource_cache_policy",
+      "assertion": "要求 cache 时 missing/False 被 blocked，True 允许。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "只验证申报值；无真实 cache 效能测量。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_task_total_budget.py::test_task_total_passes_old_stage_zero_and_preserves_both_snapshot_forms",
+      "module_id": "resources_trace",
+      "scenario_id": "task_total_boundary",
+      "assertion": "总预算策略允许旧 stage 额度用尽后继续，历史快照不变；consumed=13/remaining=0 后拒绝新预约。",
+      "evidence_kind": "deterministic_integration",
+      "boundary": "真实 budget/reservation helpers；count_basis 为 reserved invocations，不是 transport 证明。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_workflow_route_trace.py::test_actual_conditional_selector_result_and_input_are_preserved",
+      "module_id": "resources_trace",
+      "scenario_id": "trace_conditional_branches",
+      "assertion": "实际 LangGraph invoke 才记录 edge；continue/repair/blocked/upstream 七分支选择与 selector 一致、不改输入、不泄露私密内容。",
+      "evidence_kind": "local_graph_integration",
+      "boundary": "真实 LangGraph，合成 state，selector 为生产函数；无 provider。",
+      "expected_pytest_cases": 7
+    },
+    {
+      "nodeid": "tests/unit/test_workflow_route_trace.py::test_real_graph_registration_records_selected_edge_only_when_invoked",
+      "module_id": "resources_trace",
+      "scenario_id": "trace_normal_graph_entry",
+      "assertion": "真实 build_graph entry 被阻止时仅记录 plan_request→blocked，不把注册或未执行 patch 节点算执行。",
+      "evidence_kind": "local_graph_integration",
+      "boundary": "正常 graph 入口但无有效业务输入，不证明成功路线。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_execution_trace.py::test_generation_exists_only_after_actual_transport_signal_and_is_idempotent",
+      "module_id": "resources_trace",
+      "scenario_id": "trace_transport_identity",
+      "assertion": "admission 未 transport 不产生 generation；显式 transport_started 重复调用只产生一次 generation，缺 usage 保持 unknown。",
+      "evidence_kind": "deterministic_unit",
+      "boundary": "transport_started 信号由测试触发，不是实际网络 transport。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_execution_trace.py::test_recorder_and_sink_failure_do_not_hide_baseexception_or_leak_its_message",
+      "module_id": "resources_trace",
+      "scenario_id": "trace_sink_failure",
+      "assertion": "recorder/sink 失败不掩盖原 SystemExit，context 复原、异常内容不泄漏且记录丢事件统计。",
+      "evidence_kind": "fault_injection_unit",
+      "boundary": "注入 sink/recorder 故障；回归测试，不计本轮新缺陷。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_patch_loop_execution_trace.py::test_actual_read_and_submission_have_live_timing_and_returned_payload_identity",
+      "module_id": "resources_trace",
+      "scenario_id": "trace_returned_payload_identity",
+      "assertion": "真实 inspect 回给 worker 的 payload hash/bytes 和 trace 相同，timing 非负；queued 不等于 consumption，submission 不冒充 behavior validation。",
+      "evidence_kind": "scripted_worker_integration",
+      "boundary": "脚本 model，真实临时文件 inspector。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_patch_loop_execution_trace.py::test_budget_rejection_records_preparation_and_admission_but_no_source_dispatch",
+      "module_id": "resources_trace",
+      "scenario_id": "trace_budget_rejection_no_dispatch",
+      "assertion": "预算拒绝保留 source.prepare/tool.admission，source.inspect 与 dispatch 均未发生。",
+      "evidence_kind": "scripted_worker_integration",
+      "boundary": "预留 reads 达到门禁；真实执行/观测路径，脚本 provider。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_patch_loop_execution_trace.py::test_visible_source_reuse_has_zero_read_cost_and_separate_tool_call_identity",
+      "module_id": "resources_trace",
+      "scenario_id": "trace_reuse_zero_cost",
+      "assertion": "同文件观测复用为 read_cost 1→0，但各 tool_call_id 独立且保留完整 trace。",
+      "evidence_kind": "scripted_worker_integration",
+      "boundary": "脚本 model + 临时 source；无真实模型 consumption 证明。",
+      "expected_pytest_cases": 1
+    },
+    {
+      "nodeid": "tests/unit/test_dsh_request_routing.py::test_natural_new_request_initializes_neutral_project_and_dispatches_literal_request",
+      "module_id": "routing",
+      "scenario_id": "routing.new_project_literal_and_budget",
+      "assertion": "Natural new-project selection creates the neutral scaffold, forwards the original literal request once, retains routing response/usage and reserves 9 product calls plus 1 routing call.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_dsh_request_routing.py::test_modify_uses_configured_source_and_original_permission_flags",
+      "module_id": "routing",
+      "scenario_id": "routing.modify_preserves_authority",
+      "assertion": "Modify dispatch selects the configured source; defer-approval remains and source-disclosure permission is not invented.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_dsh_request_routing.py::test_profile_drift_after_model_stops_before_task_allocation",
+      "module_id": "routing",
+      "scenario_id": "routing.context_drift",
+      "assertion": "Changing the execution profile during model selection produces TASK_INTENT_CONTEXT_CHANGED before product allocation.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_dsh_request_routing.py::test_resume_dispatches_selected_original_owner_without_allocating_new_budget",
+      "module_id": "routing",
+      "scenario_id": "routing.resume_original_owner",
+      "assertion": "Resume invokes the selected existing owner once with the original allocation config and never prepares another task or silently resets budget.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_dsh_request_routing.py::test_public_cli_selects_routing_without_rewriting_text_or_adding_authority",
+      "module_id": "routing",
+      "scenario_id": "routing.public_cli",
+      "assertion": "The normal CLI forwards stdin, active run and routing options exactly and reports needs_clarification without adding authority.",
+      "evidence_kind": "deterministic"
+    },
+    {
+      "nodeid": "tests/unit/test_clarification_routing.py::test_answer_dispatches_full_transcript_once_and_keeps_separate_cost",
+      "module_id": "routing",
+      "scenario_id": "routing.clarification_transcript_replay",
+      "assertion": "Clarification dispatch retains original and corrected requirements, counts both routing calls and replays an identical answer without a second product dispatch.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_clarification_routing.py::test_cross_session_clarification_cannot_bind",
+      "module_id": "routing",
+      "scenario_id": "routing.cross_session_rejection",
+      "assertion": "A clarification receipt from another conversation is rejected with NOT_IN_CONVERSATION.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_clarification_routing.py::test_role_conflict_question_names_target_without_inventing_user_conflict",
+      "module_id": "routing",
+      "scenario_id": "routing.s5_role_conflict_question",
+      "assertion": "reference_only plus modify_project does not dispatch; the question identifies the actual project without claiming the user named multiple projects, and native decision provenance is retained.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_clarification_routing.py::test_role_conflict_confirmation_reenters_normal_routing_once",
+      "module_id": "routing",
+      "scenario_id": "routing.s5_confirmation_reentry",
+      "assertion": "Explicit target confirmation returns through the normal owner once, retains the earlier receipt bytes and complete conversation, and replay remains idempotent.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_clarification_routing.py::test_role_conflict_stays_blocked_when_followup_model_still_contradicts",
+      "module_id": "routing",
+      "scenario_id": "routing.s5_persistent_model_conflict",
+      "assertion": "A follow-up model still labeling the selected project reference_only cannot bypass the role gate even after a confirming user answer.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_rg_live_evidence.py::test_rg_live_provider_returns_hashed_live_target_source",
+      "module_id": "evidence",
+      "scenario_id": "evidence.live_source_hash",
+      "assertion": "Actual rg and source read return the expected path, hash and excerpt while lexical evidence alone remains insufficient and cannot authorize a patch.",
+      "evidence_kind": "real_local_tool"
+    },
+    {
+      "nodeid": "tests/unit/test_rg_live_evidence.py::test_rg_live_provider_preserves_crlf_for_raw_exact_patch_binding",
+      "module_id": "evidence",
+      "scenario_id": "evidence.exact_crlf_bytes",
+      "assertion": "Live excerpts preserve CRLF bytes and remain an exact byte subsequence of the source preimage.",
+      "evidence_kind": "real_local_tool"
+    },
+    {
+      "nodeid": "tests/unit/test_rg_live_evidence.py::test_rg_live_provider_honors_one_exact_requested_source_filename",
+      "module_id": "evidence",
+      "scenario_id": "evidence.explicit_filename",
+      "assertion": "A single explicit Plugin.cs request selects its Load method instead of more tempting matches in another source file.",
+      "evidence_kind": "real_local_tool"
+    },
+    {
+      "nodeid": "tests/unit/test_rg_live_evidence.py::test_rg_live_provider_blocks_duplicate_exact_requested_source_filename",
+      "module_id": "evidence",
+      "scenario_id": "evidence.duplicate_filename",
+      "assertion": "Two live Plugin.cs files are rejected as an ambiguous exact filename with resolved_count=2 rather than arbitrarily selecting one.",
+      "evidence_kind": "real_local_tool"
+    },
+    {
+      "nodeid": "tests/unit/test_rg_live_evidence.py::test_rg_live_provider_blocks_search_root_outside_workspace",
+      "module_id": "evidence",
+      "scenario_id": "evidence.workspace_boundary",
+      "assertion": "A parent-directory search root returns no evidence, remains insufficient and carries an explicit workspace-escape blocker before rg dispatch.",
+      "evidence_kind": "deterministic"
+    },
+    {
+      "nodeid": "tests/unit/test_rg_live_material_budget.py::test_two_requirement_queries_keep_three_collaborating_sources",
+      "module_id": "evidence",
+      "scenario_id": "evidence.configmerge_material_count",
+      "assertion": "Two requirement queries retain all three collaborating source materials for Findings, using the four-item material floor and 32768-byte cap without granting semantic coverage.",
+      "evidence_kind": "deterministic"
+    },
+    {
+      "nodeid": "tests/unit/test_rg_live_material_budget.py::test_item_limit_discloses_already_read_but_omitted_sources",
+      "module_id": "evidence",
+      "scenario_id": "evidence.omitted_read_material",
+      "assertion": "An item-budget omission records the omitted source path, hash, reason and source_read=true while explicitly keeping omitted IDs non-citeable.",
+      "evidence_kind": "deterministic"
+    },
+    {
+      "nodeid": "tests/unit/test_rg_live_material_budget.py::test_byte_limit_preserves_complete_small_material_after_large_omission",
+      "module_id": "evidence",
+      "scenario_id": "evidence.material_byte_budget",
+      "assertion": "A too-large material is omitted with an explicit byte-limit reason and a later small material still fits; retained excerpts remain complete.",
+      "evidence_kind": "deterministic"
+    },
+    {
+      "nodeid": "tests/unit/test_rg_live_material_budget.py::test_findings_receives_omission_facts_without_new_citation_or_authority",
+      "module_id": "evidence",
+      "scenario_id": "evidence.findings_omission_visibility",
+      "assertion": "The actual Findings input receives omission facts but its source observations and citation enum contain only retained evidence IDs.",
+      "evidence_kind": "deterministic"
+    },
+    {
+      "nodeid": "tests/unit/test_small_project_context.py::test_real_lexical_miss_uses_context_and_real_match_does_not",
+      "module_id": "evidence",
+      "scenario_id": "evidence.small_project_lexical_miss",
+      "assertion": "A genuine rg lexical miss can supply bounded current source separately; a lexical hit uses the normal lane and preserves the same source identity.",
+      "evidence_kind": "real_local_tool"
+    },
+    {
+      "nodeid": "tests/unit/test_model_planning_selection.py::test_model_selection_is_consumed_by_production_planning_node",
+      "module_id": "planning",
+      "scenario_id": "planning.production_node_binding",
+      "assertion": "Production Planning uses exactly the scripted model-selected evidence IDs as edit bindings, retains response/usage/traces and forwards semantic feedback to Patch boundaries.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_model_planning_selection.py::test_compiled_graph_installs_model_selector_on_existing_node",
+      "module_id": "planning",
+      "scenario_id": "planning.normal_graph_wiring",
+      "assertion": "The runnable installed by build_graph invokes the configured model selector once and writes a successful implementation plan.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_model_planning_selection.py::test_model_selection_can_differ_from_findings_hints",
+      "module_id": "planning",
+      "scenario_id": "planning.independent_target_selection",
+      "assertion": "Planning can select an allowed source outside Findings target hints, and the resulting edit registry follows that selected evidence ID.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_model_planning_selection.py::test_model_response_must_remain_in_prepared_authoritative_enum",
+      "module_id": "planning",
+      "scenario_id": "planning.auxiliary_source_rejected",
+      "assertion": "A model-selected auxiliary source outside the prepared authoritative enum is rejected and its blocked receipt is retained.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_model_planning_selection.py::test_source_identity_sharing_is_lossless_for_complete_planning_input",
+      "module_id": "planning",
+      "scenario_id": "planning.lossless_source_identity_view",
+      "assertion": "Source identity sharing round-trips the complete Planning input, including repeated observations, features, semantic feedback and allowed edit IDs without mutating inputs.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_model_planning_selection.py::test_model_selection_checks_live_source_on_both_sides[before]",
+      "module_id": "planning",
+      "scenario_id": "planning.pre_model_source_drift",
+      "assertion": "Source drift before selection produces a blocked plan and receipt with zero model calls.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_model_planning_selection.py::test_model_selection_checks_live_source_on_both_sides[after]",
+      "module_id": "planning",
+      "scenario_id": "planning.post_model_source_drift",
+      "assertion": "Source drift during selection produces a blocked plan and receipt while retaining the one actual scripted model response.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_planning_candidate_scope.py::test_compiler_candidate_planning_preserves_insufficient_findings_and_exact_scope",
+      "module_id": "planning",
+      "scenario_id": "planning.compiler_candidate_scope",
+      "assertion": "Compiler-candidate planning uses exactly the bounded scope and preserves verification questions without rewriting the original insufficient Findings into semantic success.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_planning_candidate_scope.py::test_compiler_candidate_cannot_select_unrelated_observed_source",
+      "module_id": "planning",
+      "scenario_id": "planning.compiler_candidate_unrelated_source",
+      "assertion": "Selecting a genuinely observed source outside compiler-candidate scope blocks the plan and leaves proposed_changes empty.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_planning_policy_boundaries.py::test_custom_api_and_source_requirements_are_not_filtered_by_template_text",
+      "module_id": "planning",
+      "scenario_id": "planning.explicit_user_evidence_obligations",
+      "assertion": "Explicit custom API/source evidence requirements survive template-policy filtering and remain required before Patch.",
+      "evidence_kind": "deterministic"
+    },
+    {
+      "nodeid": "tests/unit/test_patch_agent_loop.py::test_source_inspector_rejects_path_escape_and_plan_hash_mismatch",
+      "module_id": "patch",
+      "scenario_id": "patch.plan_bound_source_boundary",
+      "assertion": "Patch source inspection rejects a path escaping the workspace and a preimage hash inconsistent with the bound plan.",
+      "evidence_kind": "deterministic"
+    },
+    {
+      "nodeid": "tests/unit/test_patch_agent_loop.py::test_loop_inspects_one_binding_then_records_final_termination",
+      "module_id": "patch",
+      "scenario_id": "patch.normal_tool_roundtrip",
+      "assertion": "The scripted worker performs one legal binding read then a final turn, preserving correlated tool result, two-turn usage, admitted observation hash and terminal reason.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_patch_submission_validation.py::test_explanation_followed_by_json_is_not_extracted_as_a_submission",
+      "module_id": "patch",
+      "scenario_id": "patch.structured_submission_rejection",
+      "assertion": "Leading prose plus JSON is rejected as malformed structured output without extracting a permissive payload or echoing implementation code.",
+      "evidence_kind": "deterministic"
+    },
+    {
+      "nodeid": "tests/unit/test_patch_behavior_feedback.py::test_behavior_failure_is_corrected_once_and_revalidated_before_proposal",
+      "module_id": "patch",
+      "scenario_id": "patch.behavior_failure_repair",
+      "assertion": "A scripted failing candidate receives one correction and a second bound evaluation before proposal creation; both reports persist and original source bytes remain unchanged.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_patch_behavior_feedback.py::test_source_drift_during_behavior_evaluation_stops_before_correction",
+      "module_id": "patch",
+      "scenario_id": "patch.behavior_source_drift",
+      "assertion": "Source drift during candidate evaluation stops before correction and before any proposal, review or dry-run artifact.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_patch_behavior_feedback.py::test_valid_report_hash_does_not_authorize_different_returned_content",
+      "module_id": "patch",
+      "scenario_id": "patch.forged_pass_report",
+      "assertion": "A valid persisted report hash cannot authorize a returned dictionary changed from failure to pass; the behavior evaluation is rejected before proposal.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_patch_behavior_feedback.py::test_evaluator_failure_keeps_initial_response_and_does_not_call_model_again",
+      "module_id": "patch",
+      "scenario_id": "patch.evaluator_environment_failure",
+      "assertion": "Evaluator OSError retains the initial model response, stops before proposal and does not spend an additional correction call.",
+      "evidence_kind": "stub_model"
+    },
+    {
+      "nodeid": "tests/unit/test_behavior_feedback_view.py::test_exact_td2_feedback_budget_failure_fits_without_changing_any_allowance",
+      "module_id": "patch",
+      "scenario_id": "patch.recorded_feedback_budget_replay",
+      "assertion": "A recorded feedback counterexample reproduces 36339 old combined bytes and projects to 28633 under the unchanged 30472-byte allowance; this is offline representation verification.",
+      "evidence_kind": "deterministic"
+    },
+    {
+      "nodeid": "tests/unit/test_behavior_feedback_view.py::test_structural_and_type_differences_preserve_actual_errors_and_inputs",
+      "module_id": "patch",
+      "scenario_id": "patch.public_feedback_typed_differences",
+      "assertion": "Public expected/observed projection preserves input, error arrays and boolean-versus-integer differences and reconstructs the original assertion exactly.",
+      "evidence_kind": "deterministic"
+    },
+    {
+      "nodeid": "tests/unit/test_observation_value_refs.py::test_preserves_every_check_input_and_typed_value_without_mutating_original",
+      "module_id": "patch",
+      "scenario_id": "patch.configmerge_lossless_observations",
+      "assertion": "Repeated observation values compress while every check, input, ordered result and typed value round-trips exactly and original feedback remains unchanged.",
+      "evidence_kind": "deterministic"
+    },
+    {
+      "nodeid": "tests/unit/test_observation_value_refs.py::test_recovery_budget_counts_the_same_projected_messages_sent_for_revision",
+      "module_id": "patch",
+      "scenario_id": "patch.recovery_budget_equals_sent_messages",
+      "assertion": "Recovery admission counts exactly the UTF-8 bytes of the projected correction messages that are sent, and the visible observations restore to the original feedback.",
+      "evidence_kind": "deterministic"
+    },
+    {
+      "nodeid": "tests/unit/test_observation_value_refs.py::test_cyclic_table_and_tampered_values_are_rejected",
+      "module_id": "patch",
+      "scenario_id": "patch.feedback_reference_corruption",
+      "assertion": "Cyclic or tampered observation reference tables fail restoration instead of silently changing verifier facts.",
+      "evidence_kind": "deterministic"
+    },
+    {
+      "nodeid": "tests/unit/test_incremental_ingestion_correctness.py::test_unchanged_file_second_submission_skips_embedding_and_keeps_entities",
+      "module_id": "ingestion",
+      "scenario_id": "ING-01",
+      "assertion": "Second identical submission reports unchanged_skip, adds no embedding calls, and keeps exact vector/BM25 IDs.",
+      "evidence_kind": "local_storage_integration",
+      "doubles": "CountingEmbedding; synthetic PdfLoader for .pdf fixtures. Real pipeline, Chroma, BM25, SQLite and temporary files.",
+      "external_dependencies": [
+        "chromadb local package"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_incremental_ingestion_correctness.py::test_same_source_path_replaces_old_chroma_and_bm25_version",
+      "module_id": "ingestion",
+      "scenario_id": "ING-02",
+      "assertion": "Changed source replaces old vector/BM25 versions and invalidates old successful hash; exact replacement IDs retained.",
+      "evidence_kind": "local_storage_integration",
+      "doubles": "CountingEmbedding; synthetic PdfLoader for .pdf fixtures. Real pipeline, Chroma, BM25, SQLite and temporary files.",
+      "external_dependencies": [
+        "chromadb local package"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_incremental_ingestion_correctness.py::test_shorter_replacement_removes_old_tail_chunks_from_both_indexes",
+      "module_id": "ingestion",
+      "scenario_id": "ING-03",
+      "assertion": "Shorter replacement removes old tail IDs from Chroma and old terms from BM25.",
+      "evidence_kind": "local_storage_integration",
+      "doubles": "CountingEmbedding; synthetic PdfLoader for .pdf fixtures. Real pipeline, Chroma, BM25, SQLite and temporary files.",
+      "external_dependencies": [
+        "chromadb local package"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_incremental_ingestion_correctness.py::test_mid_replacement_failure_invalidates_history_and_retry_converges[chroma]",
+      "module_id": "ingestion",
+      "scenario_id": "ING-04",
+      "assertion": "Injected partial Chroma upsert failure leaves no successful history; fresh retry converges to current source in both indexes.",
+      "evidence_kind": "local_fault_injection_integration",
+      "doubles": "CountingEmbedding; synthetic PdfLoader for .pdf fixtures. Real pipeline, Chroma, BM25, SQLite and temporary files. Chroma upsert writes one row then raises.",
+      "external_dependencies": [
+        "chromadb local package"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_incremental_ingestion_correctness.py::test_mid_replacement_failure_invalidates_history_and_retry_converges[bm25]",
+      "module_id": "ingestion",
+      "scenario_id": "ING-05",
+      "assertion": "Injected BM25 replacement failure invalidates history; restored pipeline retry removes stale sparse/dense data.",
+      "evidence_kind": "local_fault_injection_integration",
+      "doubles": "CountingEmbedding; synthetic PdfLoader for .pdf fixtures. Real pipeline, Chroma, BM25, SQLite and temporary files. BM25 replace_documents raises.",
+      "external_dependencies": [
+        "chromadb local package"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_incremental_ingestion_correctness.py::test_same_path_updates_are_isolated_between_collections",
+      "module_id": "ingestion",
+      "scenario_id": "ING-06",
+      "assertion": "Updating a common source in alpha leaves beta IDs/terms unchanged and vice versa.",
+      "evidence_kind": "local_storage_integration",
+      "doubles": "CountingEmbedding; synthetic PdfLoader for .pdf fixtures. Real pipeline, Chroma, BM25, SQLite and temporary files.",
+      "external_dependencies": [
+        "chromadb local package"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_ingestion_combination.py::test_real_text_loader_preserves_original_source[.xml]",
+      "module_id": "ingestion",
+      "scenario_id": "ING-07",
+      "assertion": "Real UTF-8 XML loader preserves CRLF/text bytes via source hash and declares utf8_text parser.",
+      "evidence_kind": "local_component_integration",
+      "doubles": "No loader/model double in this test; temporary XML only.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_ingestion_combination.py::test_actual_http_batch_size_and_legacy_comparison[batch-1]",
+      "module_id": "ingestion",
+      "scenario_id": "ING-08",
+      "assertion": "Three inputs produce one /api/embed request; truncate=false and transport trace count agree.",
+      "evidence_kind": "transport_stub_integration",
+      "doubles": "httpx.HTTPTransport.handle_request returns controlled embeddings; no Ollama server.",
+      "external_dependencies": [
+        "httpx"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_ingestion_combination.py::test_normal_pipeline_keeps_original_lineage_and_reindexes_profile_change",
+      "module_id": "ingestion",
+      "scenario_id": "ING-09",
+      "assertion": "Enhanced stored text retains verified original_text/hash; changing embedding revision forces reindex.",
+      "evidence_kind": "local_storage_integration",
+      "doubles": "CountingEmbedding; synthetic PdfLoader for .pdf fixtures. Real pipeline, Chroma, BM25, SQLite and temporary files. Chunk refinement is a controlled augmentation function.",
+      "external_dependencies": [
+        "chromadb local package"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_ingestion_combination.py::test_source_change_during_enhancement_is_not_committed",
+      "module_id": "ingestion",
+      "scenario_id": "ING-10",
+      "assertion": "Mutation during enhancement returns INGESTION_SOURCE_CHANGED_BEFORE_STORAGE and stores no vector IDs.",
+      "evidence_kind": "local_fault_injection_integration",
+      "doubles": "CountingEmbedding; synthetic PdfLoader for .pdf fixtures. Real pipeline, Chroma, BM25, SQLite and temporary files. Refiner mutates fixture source.",
+      "external_dependencies": [
+        "chromadb local package"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_ingestion_combination.py::test_image_cache_binds_content_model_and_prompt_with_real_completion_counts",
+      "module_id": "ingestion",
+      "scenario_id": "ING-11",
+      "assertion": "Cache hits avoid synthetic vision calls; prompt, model revision and actual image-byte changes invalidate cache.",
+      "evidence_kind": "local_component_contract",
+      "doubles": "Vision completion object is fake; Pillow and real image bytes/cache are used.",
+      "external_dependencies": [
+        "Pillow"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_ingestion_combination.py::test_failed_caption_is_not_cached_as_success",
+      "module_id": "ingestion",
+      "scenario_id": "ING-12",
+      "assertion": "Empty vision result fails on both attempts, never becomes cached success and performs two fake calls.",
+      "evidence_kind": "local_component_contract",
+      "doubles": "Vision completion is fake; image loading and caption cache logic are real.",
+      "external_dependencies": [
+        "Pillow"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_query_service.py::test_full_owner_parallel_retrieval_rrf_actual_rerank_answer_citations_and_events",
+      "module_id": "rag",
+      "scenario_id": "RAG-01",
+      "assertion": "Both lanes actually overlap through a barrier; RRF candidates reach reranker; ranked context reaches answer/citation; event and schema contracts hold.",
+      "evidence_kind": "component_chain_with_doubles",
+      "doubles": "Fake Dense/Sparse retrievers, reversing rerank backend and bounded Model; real QueryService/HybridSearch/RRF/CoreReranker/cache.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_query_service.py::test_model_cache_hit_has_no_new_model_ttft_and_invalidates_index_model_and_query",
+      "module_id": "rag",
+      "scenario_id": "RAG-02",
+      "assertion": "Warm answer/result cache adds no model/rerank calls or TTFT; index, model and query changes invalidate cache.",
+      "evidence_kind": "component_chain_with_doubles",
+      "doubles": "Fake Dense/Sparse retrievers, reversing rerank backend and bounded Model; real QueryService/HybridSearch/RRF/CoreReranker/cache.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_query_service.py::test_budgeted_rewrite_is_used_by_dense_and_sparse_and_cached",
+      "module_id": "rag",
+      "scenario_id": "RAG-03",
+      "assertion": "Rewrite result feeds both retrieval lanes and cached rewrite avoids a second rewrite call.",
+      "evidence_kind": "component_chain_with_doubles",
+      "doubles": "Fake Dense/Sparse retrievers, reversing rerank backend and bounded Model; real QueryService/HybridSearch/RRF/CoreReranker/cache.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_query_service.py::test_timeout_does_not_cache_a_late_complete_answer",
+      "module_id": "rag",
+      "scenario_id": "RAG-04",
+      "assertion": "A controlled slow completion becomes timed_out and does not populate cache.",
+      "evidence_kind": "component_chain_with_doubles",
+      "doubles": "Fake Dense/Sparse retrievers, reversing rerank backend and bounded Model; real QueryService/HybridSearch/RRF/CoreReranker/cache. Callback sleeps 20 ms locally; not a provider timeout measurement.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_query_service.py::test_request_id_replay_is_read_only_and_changed_input_is_rejected",
+      "module_id": "rag",
+      "scenario_id": "RAG-05",
+      "assertion": "Same request ID returns saved result with zero additional calls; changed input is rejected.",
+      "evidence_kind": "component_chain_with_doubles",
+      "doubles": "Fake Dense/Sparse retrievers, reversing rerank backend and bounded Model; real QueryService/HybridSearch/RRF/CoreReranker/cache.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_query_service.py::test_index_drift_during_generation_prevents_completion_and_cache",
+      "module_id": "rag",
+      "scenario_id": "RAG-06",
+      "assertion": "Index identity changed inside fake generation causes QUERY_INDEX_CHANGED_DURING_EXECUTION and no cache.",
+      "evidence_kind": "component_chain_with_doubles",
+      "doubles": "Fake Dense/Sparse retrievers, reversing rerank backend and bounded Model; real QueryService/HybridSearch/RRF/CoreReranker/cache.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_query_service.py::test_original_source_text_not_enhancement_is_given_to_answer_model",
+      "module_id": "rag",
+      "scenario_id": "RAG-07",
+      "assertion": "Answer generator receives metadata.original_text rather than generated enhancement.",
+      "evidence_kind": "deterministic_contract",
+      "doubles": "Fake Model records prompt; no real model quality.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_evidence_retrieval.py::test_deterministic_retriever_finds_exact_symbol",
+      "module_id": "rag",
+      "scenario_id": "RAG-08",
+      "assertion": "Incrementally indexed local C# Load symbol produces sufficient authoritative symbol_exact evidence.",
+      "evidence_kind": "local_retrieval_integration",
+      "doubles": "Local synthetic C# corpus; real KnowledgeDatabase/SourceRegistry/SymbolIndexer; dense disabled.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_evidence_retrieval.py::test_lane_local_budget_preserves_symbol_bm25_and_code_text_results",
+      "module_id": "rag",
+      "scenario_id": "RAG-09",
+      "assertion": "Bounded retrieval preserves symbol_exact, BM25 and live text lanes and their hit counts.",
+      "evidence_kind": "local_retrieval_integration",
+      "doubles": "Local synthetic corpus; no model or dense provider.",
+      "external_dependencies": [
+        "ripgrep for live-text route where selected"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_evidence_retrieval.py::test_required_dense_failure_blocks_even_when_deterministic_evidence_exists",
+      "module_id": "rag",
+      "scenario_id": "RAG-10",
+      "assertion": "Required dense failure cannot be masked by deterministic hits: insufficient readiness, no patch and named blocker.",
+      "evidence_kind": "local_fault_injection_integration",
+      "doubles": "FailingDenseRetrievalProvider double; real local SQLite/BM25 evidence.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/integration/test_mcp_strict_stdio.py::test_sdk_client_consumes_real_bm25_and_artifact_results_with_clean_stdout",
+      "module_id": "tools_mcp",
+      "scenario_id": "MCP-01",
+      "assertion": "Official SDK consumes a real server subprocess: 11 tools, BM25 result and document summary, invalid params, changed replay rejection, client cancellation, continued artifact read, timed_out result, clean protocol stdout, exited child and secret redaction.",
+      "evidence_kind": "real_mcp_stdio_offline",
+      "doubles": "Preparation uses CountingEmbedding and fixture loader; actual child server and persisted Chroma/BM25/ArtifactStore are real. answer=false and rewrite=false; configured model URL is unreachable loopback.",
+      "external_dependencies": [
+        "mcp SDK",
+        "chromadb local package",
+        "subprocess permission"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_mcp_strict_contract.py::test_internal_type_error_not_misclassified_or_exposed",
+      "module_id": "tools_mcp",
+      "scenario_id": "MCP-02",
+      "assertion": "Handler TypeError maps to INTERNAL_ERROR and canary is absent from result/log.",
+      "evidence_kind": "deterministic_contract",
+      "doubles": "Synthetic async failing handler; real MCP SDK response object and protocol handler.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_mcp_strict_contract.py::test_structured_content_and_log_redaction",
+      "module_id": "tools_mcp",
+      "scenario_id": "MCP-03",
+      "assertion": "Structured result replaces synthetic secret with REDACTED and logging never emits canary.",
+      "evidence_kind": "deterministic_contract",
+      "doubles": "Synthetic handler/log event; real redactor and protocol response.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_mcp_strict_contract.py::test_artifact_tools_registered_to_actual_sdk_contract",
+      "module_id": "tools_mcp",
+      "scenario_id": "MCP-04",
+      "assertion": "All 11 SDK tools have output schemas and strict inputs; mutation tools absent; list_features matches schema/text representation.",
+      "evidence_kind": "sdk_local_artifact_contract",
+      "doubles": "Real SDK schemas and temporary ArtifactStore; config is read but query/model is not called.",
+      "external_dependencies": [
+        "mcp SDK"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_mcp_strict_contract.py::test_cancelled_mcp_await_signals_inflight_owner_without_claiming_provider_stop",
+      "module_id": "tools_mcp",
+      "scenario_id": "MCP-05",
+      "assertion": "Cancelling async MCP call signals the executing query owner and owner exits; CancelledError propagates.",
+      "evidence_kind": "cooperative_cancellation_contract",
+      "doubles": "QueryService factory and collection listing replaced with event-driven owner; no real provider or termination proof.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_mcp_strict_contract.py::test_probe_rejects_nonprotocol_stdout",
+      "module_id": "tools_mcp",
+      "scenario_id": "MCP-06",
+      "assertion": "Probe rejects a real subprocess printing non-JSONRPC output and confirms all processes exit.",
+      "evidence_kind": "real_subprocess_negative_contract",
+      "doubles": "Child is Python print rather than product server.",
+      "external_dependencies": [
+        "mcp SDK",
+        "subprocess permission"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_patch_sft_training.py::test_prior_assistant_and_tool_text_are_context_only_and_complete_target_is_supervised",
+      "module_id": "learning",
+      "scenario_id": "LEARN-01",
+      "assertion": "Earlier assistant/tool text is entirely masked; only full final completion plus EOS is supervised without truncation.",
+      "evidence_kind": "training_data_contract",
+      "doubles": "CharacterTemplateTokenizer double; no optimizer/model.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_patch_sft_training.py::test_training_loader_opens_only_explicit_training_ref_not_validation_or_holdout",
+      "module_id": "learning",
+      "scenario_id": "LEARN-02",
+      "assertion": "Only explicit train file is opened; mismatched sample IDs and validation split are rejected.",
+      "evidence_kind": "training_data_contract",
+      "doubles": "Synthetic completion sample/files; no training or model.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_self_rag_reflection_training.py::test_labels_are_supervised_but_prompt_and_retrieved_body_are_masked[retrieve]",
+      "module_id": "learning",
+      "scenario_id": "LEARN-03",
+      "assertion": "Atomic reflection tokens and EOS are supervised; prompt and injected paragraph body are loss-masked.",
+      "evidence_kind": "training_data_contract",
+      "doubles": "Tiny locally built WordLevel tokenizer and synthetic labels.",
+      "external_dependencies": [
+        "tokenizers",
+        "transformers"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_self_rag_reflection_training.py::test_non_self_rag_or_invalid_labels_do_not_become_training_targets[holdout]",
+      "module_id": "learning",
+      "scenario_id": "LEARN-04",
+      "assertion": "Holdout split is rejected before it can become a Self-RAG training target.",
+      "evidence_kind": "training_data_contract",
+      "doubles": "Synthetic sample only; no model.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_self_rag_reflection_training.py::test_tiny_cpu_optimizer_trains_tied_reflection_rows_and_reloads_exactly",
+      "module_id": "learning",
+      "scenario_id": "LEARN-05",
+      "assertion": "One real tiny CPU optimizer step changes all four reflection families, preserves frozen base embeddings and exactly reproduces saved/reloaded weights/logits; token-ID tampering rejected.",
+      "evidence_kind": "tiny_cpu_optimizer_contract",
+      "doubles": "Random 1-layer Qwen3 (hidden_size=16), synthetic single sample; no pretrained language competence.",
+      "external_dependencies": [
+        "torch",
+        "transformers Qwen3",
+        "peft",
+        "tokenizers"
+      ]
+    },
+    {
+      "nodeid": "tests/unit/test_self_rag_inference.py::test_generated_sequence_matches_the_training_representation[retrieve]",
+      "module_id": "learning",
+      "scenario_id": "LEARN-06",
+      "assertion": "Scripted retrieve decision produces two model calls, one host retrieval and exact training-compatible prompt/completion representation.",
+      "evidence_kind": "inference_controller_contract",
+      "doubles": "ScriptedDecoder and fixed evidence; decision_origin explicitly offline_scripted_test.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_self_rag_inference.py::test_budget_stops_before_extra_generation_and_preserves_attempt_counts",
+      "module_id": "learning",
+      "scenario_id": "LEARN-07",
+      "assertion": "Single-call budget blocks continuation and retains the one attempted scripted call.",
+      "evidence_kind": "inference_controller_contract",
+      "doubles": "ScriptedDecoder; no real model.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_self_rag_inference.py::test_external_critic_feedback_is_separate_from_trained_tokens_and_counted",
+      "module_id": "learning",
+      "scenario_id": "LEARN-08",
+      "assertion": "External critic plus revision counts three total calls, retains revised_unreviewed status and independent_quality_measured=false.",
+      "evidence_kind": "inference_controller_contract",
+      "doubles": "ScriptedDecoder and critic callback; no semantic quality measurement.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_self_rag_critic_v2.py::test_calibration_expectations_stay_host_side_and_never_export_training",
+      "module_id": "learning",
+      "scenario_id": "LEARN-09",
+      "assertion": "Six mocked native critic calls never receive calibration expectations; passing calibration exports zero generator training samples.",
+      "evidence_kind": "transport_stub_training_filter_contract",
+      "doubles": "HTTP native completion responses and identity reader are mocked; fixture forbids sockets.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_member_repair_learning.py::test_automatic_candidate_and_version_bound_memory",
+      "module_id": "learning",
+      "scenario_id": "LEARN-10",
+      "assertion": "Repair extraction imports idempotently, retrieves only under matching DLL/model context and withdraws after DLL changes.",
+      "evidence_kind": "artifact_memory_contract",
+      "doubles": "Compiler/model/formal reports and DLL bytes are synthetic placeholders; real hashing/ArtifactStore/TaskMemory.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_member_repair_learning.py::test_candidate_tampering_cannot_be_imported_as_automatic_experience",
+      "module_id": "learning",
+      "scenario_id": "LEARN-11",
+      "assertion": "Changing extracted member substitution cannot be imported as reproducible observed experience.",
+      "evidence_kind": "artifact_memory_contract",
+      "doubles": "Synthetic bound reports/files; no compiler or model.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_member_repair_learning.py::test_planning_owner_adds_only_verified_dependency_context",
+      "module_id": "learning",
+      "scenario_id": "LEARN-12",
+      "assertion": "Normal planning owner adds memory only with a verified dependency snapshot and omits it after DLL mutation.",
+      "evidence_kind": "planning_memory_integration",
+      "doubles": "Synthetic candidate and inert model client; real selector/memory/hash verification; no transfer quality.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_evaluation_answer_generation.py::test_cli_generated_answer_reaches_judge_from_real_local_retrieval",
+      "module_id": "evaluation_ci",
+      "scenario_id": "EVAL-01",
+      "assertion": "Public evaluate CLI forwards exact BM25 context and actual returned answer to judge; reference answer never enters generator prompt; observed zero remains complete.",
+      "evidence_kind": "public_cli_transport_stub_integration",
+      "doubles": "Real BM25/HybridSearch/Ollama adapter; fake document store, HTTP transport and Ragas _run_ragas. No external judge.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_evaluation_answer_generation.py::test_cli_generated_rag_off_uses_same_generator_without_context_or_reference",
+      "module_id": "evaluation_ci",
+      "scenario_id": "EVAL-02",
+      "assertion": "Public --no-search arm uses same generator with empty contexts, no reference leakage and faithfulness not_applicable.",
+      "evidence_kind": "public_cli_transport_stub_integration",
+      "doubles": "Same fake storage/HTTP/judge fixture as EVAL-01.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_evaluation_answer_generation.py::test_generated_report_retains_native_answer_cost_and_failed_attempt[timeout]",
+      "module_id": "evaluation_ci",
+      "scenario_id": "EVAL-03",
+      "assertion": "Injected transport timeout keeps attempted call identity/timestamps and unknown usage, returns exit 1 without inventing response.",
+      "evidence_kind": "public_cli_transport_stub_integration",
+      "doubles": "HTTPTransport raises controlled ReadTimeout; no network.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_eval_runner.py::TestEvalRunner::test_evaluator_exception_keeps_metric_denominator",
+      "module_id": "evaluation_ci",
+      "scenario_id": "EVAL-04",
+      "assertion": "Judge exception remains failed_to_measure in applicable denominator and creates no aggregate score.",
+      "evidence_kind": "deterministic_measurement_contract",
+      "doubles": "SequenceEvaluator, fake search and answer lambda.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_eval_runner.py::TestEvalRunner::test_no_generator_marks_synthetic_and_excludes_answer_quality",
+      "module_id": "evaluation_ci",
+      "scenario_id": "EVAL-05",
+      "assertion": "Context fallback is labelled synthetic/not_applicable and cannot yield faithfulness although retrieval metric may remain observed.",
+      "evidence_kind": "deterministic_measurement_contract",
+      "doubles": "Fake search and SequenceEvaluator.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_eval_runner.py::TestEvalRunner::test_stop_on_failure_preserves_unattempted_cases_and_zero_scores_continue[answer]",
+      "module_id": "evaluation_ci",
+      "scenario_id": "EVAL-06",
+      "assertion": "Answer failure stops later calls while retaining both cases and failed/unattempted measurement denominator; no aggregate.",
+      "evidence_kind": "deterministic_measurement_contract",
+      "doubles": "MagicMock search/generator and SequenceEvaluator.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_eval_runner.py::TestEvalRunner::test_actual_case_timestamps_leave_unattempted_and_legacy_results_empty",
+      "module_id": "evaluation_ci",
+      "scenario_id": "EVAL-07",
+      "assertion": "Only actually attempted case receives bounded UTC timestamps; unattempted/legacy cases have none.",
+      "evidence_kind": "deterministic_measurement_contract",
+      "doubles": "Fake search/generator; SequenceEvaluator throws.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_agent_quality_eval.py::test_calibration_is_complete_but_not_gate_eligible",
+      "module_id": "evaluation_ci",
+      "scenario_id": "EVAL-08",
+      "assertion": "Complete calibration remains quality not_evaluated, gate_eligible=false and cannot pass transition gate.",
+      "evidence_kind": "deterministic_quality_gate_contract",
+      "doubles": "Fixed calibration observations, fake manifest/review/build dictionaries.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_agent_quality_eval.py::test_complete_zero_quality_benchmark_fails_quality_gate",
+      "module_id": "evaluation_ci",
+      "scenario_id": "EVAL-09",
+      "assertion": "Complete eligible benchmark with zero retrieval quality fails quality and transition gates.",
+      "evidence_kind": "deterministic_quality_gate_contract",
+      "doubles": "Synthetic observations and fake fresh manifest; not an actual benchmark.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_retrieval_regression.py::test_comparator_rejects_different_top_k",
+      "module_id": "evaluation_ci",
+      "scenario_id": "EVAL-10",
+      "assertion": "Different retrieval top_k populations cannot be compared.",
+      "evidence_kind": "deterministic_comparison_contract",
+      "doubles": "Fixed calibration fixture reports; no retrieval/model.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_retrieval_regression.py::test_promotion_comparison_rejects_smoke_scope",
+      "module_id": "evaluation_ci",
+      "scenario_id": "EVAL-11",
+      "assertion": "Smoke scope cannot be promoted as held-out quality evidence.",
+      "evidence_kind": "deterministic_comparison_contract",
+      "doubles": "Synthetic report field changes; not an actual promotion.",
+      "external_dependencies": []
+    },
+    {
+      "nodeid": "tests/unit/test_module_budget_finiteness.py::test_resource_usage_rejects_nonfinite_measurements",
+      "module_id": "resources_trace",
+      "scenario_id": "nonfinite_budget_admission",
+      "assertion": "test_resource_usage_rejects_nonfinite_measurements",
+      "evidence_kind": "deterministic_contract",
+      "origin": "new_counterexample"
+    },
+    {
+      "nodeid": "tests/unit/test_module_budget_finiteness.py::test_resource_limits_reject_nonfinite_ceilings",
+      "module_id": "resources_trace",
+      "scenario_id": "nonfinite_budget_admission",
+      "assertion": "test_resource_limits_reject_nonfinite_ceilings",
+      "evidence_kind": "deterministic_contract",
+      "origin": "new_counterexample"
+    },
+    {
+      "nodeid": "tests/unit/test_module_budget_finiteness.py::test_zero_usage_is_admitted_at_zero_resource_limits",
+      "module_id": "resources_trace",
+      "scenario_id": "nonfinite_budget_admission",
+      "assertion": "test_zero_usage_is_admitted_at_zero_resource_limits",
+      "evidence_kind": "deterministic_contract",
+      "origin": "new_counterexample"
+    },
+    {
+      "nodeid": "tests/unit/test_module_budget_finiteness.py::test_finite_duration_preserves_fractional_and_exact_boundary_semantics",
+      "module_id": "resources_trace",
+      "scenario_id": "nonfinite_budget_admission",
+      "assertion": "test_finite_duration_preserves_fractional_and_exact_boundary_semantics",
+      "evidence_kind": "deterministic_contract",
+      "origin": "new_counterexample"
+    },
+    {
+      "nodeid": "tests/unit/test_module_budget_finiteness.py::test_optional_unbounded_limit_uses_none_with_finite_usage",
+      "module_id": "resources_trace",
+      "scenario_id": "nonfinite_budget_admission",
+      "assertion": "test_optional_unbounded_limit_uses_none_with_finite_usage",
+      "evidence_kind": "deterministic_contract",
+      "origin": "new_counterexample"
+    },
+    {
+      "nodeid": "tests/unit/test_member_repair_artifact_binding.py::test_formal_checks_for_different_binary_cannot_back_compilation_success",
+      "module_id": "learning",
+      "scenario_id": "compiled_and_accepted_artifact_binding",
+      "assertion": "test_formal_checks_for_different_binary_cannot_back_compilation_success",
+      "evidence_kind": "deterministic_contract",
+      "origin": "new_counterexample"
+    },
+    {
+      "nodeid": "tests/unit/test_member_repair_artifact_binding.py::test_formal_checks_for_byte_identical_copy_can_back_compilation_success",
+      "module_id": "learning",
+      "scenario_id": "compiled_and_accepted_artifact_binding",
+      "assertion": "test_formal_checks_for_byte_identical_copy_can_back_compilation_success",
+      "evidence_kind": "deterministic_contract",
+      "origin": "new_counterexample"
+    },
+    {
+      "nodeid": "tests/unit/test_module_evaluation_measurement.py::test_missing_and_partial_execution_cannot_be_success",
+      "module_id": "evaluation_ci",
+      "scenario_id": "measurement_integrity",
+      "assertion": "test_missing_and_partial_execution_cannot_be_success",
+      "evidence_kind": "deterministic_contract",
+      "origin": "new_measurement_check"
+    },
+    {
+      "nodeid": "tests/unit/test_module_evaluation_measurement.py::test_nonpass_preserved_in_denominator",
+      "module_id": "evaluation_ci",
+      "scenario_id": "measurement_integrity",
+      "assertion": "test_nonpass_preserved_in_denominator",
+      "evidence_kind": "deterministic_contract",
+      "origin": "new_measurement_check"
+    },
+    {
+      "nodeid": "tests/unit/test_module_evaluation_measurement.py::test_teardown_error_does_not_earn_case_pass",
+      "module_id": "evaluation_ci",
+      "scenario_id": "measurement_integrity",
+      "assertion": "test_teardown_error_does_not_earn_case_pass",
+      "evidence_kind": "deterministic_contract",
+      "origin": "new_measurement_check"
+    },
+    {
+      "nodeid": "tests/unit/test_module_evaluation_measurement.py::test_duplicate_execution_and_overlapping_ownership_rejected",
+      "module_id": "evaluation_ci",
+      "scenario_id": "measurement_integrity",
+      "assertion": "test_duplicate_execution_and_overlapping_ownership_rejected",
+      "evidence_kind": "deterministic_contract",
+      "origin": "new_measurement_check"
+    },
+    {
+      "nodeid": "tests/unit/test_module_evaluation_measurement.py::test_repeats_add_attempts_not_unique_cases",
+      "module_id": "evaluation_ci",
+      "scenario_id": "measurement_integrity",
+      "assertion": "test_repeats_add_attempts_not_unique_cases",
+      "evidence_kind": "deterministic_contract",
+      "origin": "new_measurement_check"
+    },
+    {
+      "nodeid": "tests/unit/test_module_evaluation_measurement.py::test_manifest_rejects_duplicate_or_escaped_selection",
+      "module_id": "evaluation_ci",
+      "scenario_id": "measurement_integrity",
+      "assertion": "test_manifest_rejects_duplicate_or_escaped_selection",
+      "evidence_kind": "deterministic_contract",
+      "origin": "new_measurement_check"
+    },
+    {
+      "nodeid": "tests/unit/test_member_repair_artifact_binding.py::test_formal_case_for_different_binary_cannot_back_matching_top_level_dll",
+      "module_id": "learning",
+      "scenario_id": "compiled_and_accepted_artifact_binding",
+      "assertion": "Raw probe request and stdout must name compiled binary bytes",
+      "evidence_kind": "deterministic_contract",
+      "origin": "independent_review_counterexample"
+    }
+  ]
+}

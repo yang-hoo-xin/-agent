@@ -12,7 +12,7 @@ from src.mod_agent.build import build_fake_build_result
 from src.mod_agent.knowledge import IDENTITY_FIELD_MAPPING, IDENTITY_SCHEMA_VERSION
 from src.mod_agent.runtime import build_fake_runtime_evidence_payload
 
-from .state import ModAgentState, StageName
+from .state import ModAgentState, StageName, _copy_mod_agent_state
 
 NodeName = str
 
@@ -522,26 +522,4 @@ class StubNodeRunner:
 
     @staticmethod
     def _copy_state(state: ModAgentState) -> ModAgentState:
-        return ModAgentState(
-            run_id=state["run_id"],
-            request_id=state["request_id"],
-            feature_id=state["feature_id"],
-            user_request=state["user_request"],
-            target_domain=state["target_domain"],
-            target_mod=state["target_mod"],
-            execution_path=state["execution_path"],
-            risk_level=state["risk_level"],
-            current_stage=state["current_stage"],
-            next_stage=state["next_stage"],
-            artifacts=dict(state["artifacts"]),
-            artifact_hashes=dict(state["artifact_hashes"]),
-            approvals=dict(state["approvals"]),
-            blockers=list(state["blockers"]),
-            warnings=list(state["warnings"]),
-            evidence_summary=dict(state["evidence_summary"]),
-            review_summary=dict(state["review_summary"]),
-            build_summary=dict(state["build_summary"]),
-            runtime_summary=dict(state["runtime_summary"]),
-            trace_events=list(state["trace_events"]),
-            retry_count=state["retry_count"],
-        )
+        return _copy_mod_agent_state(state)

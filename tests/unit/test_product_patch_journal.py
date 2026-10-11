@@ -244,7 +244,7 @@ def test_product_upstream_second_request_stops_without_new_assessment(tmp_path, 
     from tests.unit.test_mod_agent_cli import _public_patch_upstream_scenario
 
     observed = _public_patch_upstream_scenario(tmp_path, monkeypatch, capsys,
-        owner="planning", repeat_upstream=True)
+        owner="planning", repeat_upstream=True, model_call_budget_policy="stage_and_total")
     assert "PATCH_UPSTREAM_CONTINUATION_BUDGET_EXHAUSTED" in json.dumps(observed.result), observed.result
     assert observed.roles == ["product_requirement_projection", "product_requirement_findings",
         "planning", "patch", "planning", "patch"]

@@ -90,6 +90,18 @@ def _observation_input(check, *, case_id):
             "execution_context_status": "unknown"}
 
 
+def _check_definition_signature(checks):
+    if (not isinstance(checks, list) or not checks
+            or any(not isinstance(row, dict) or not isinstance(row.get("check"), str)
+                   or not row["check"] or not isinstance(row.get("group"), str)
+                   or not row["group"] for row in checks)):
+        raise ValueError("SFT_EVAL_CHECK_SET_INVALID")
+    signature = [(row["check"], row["group"]) for row in checks]
+    if len({check for check, _ in signature}) != len(signature):
+        raise ValueError("SFT_EVAL_CHECK_SET_DUPLICATE")
+    return signature
+
+
 def _teacher_parent(request, task, output):
     admitted, generator, contract = _contract(request)
     raw_request = read_bound_json(task["raw_request_ref"])
@@ -184,7 +196,7 @@ class OwnedSftOracle:
         matrix_verified = False
         try:
             matrix = execute_version(run / "execution", next(iter(materialized.files.values())).decode("utf-8"), self.program, self.tools)
-            if [(row["check"], row["expected"], row["group"]) for row in matrix["checks"]] != [(row["check"], row["expected"], row["group"]) for row in self.expected]:
+            if _check_definition_signature(matrix["checks"]) != _check_definition_signature(self.expected):
                 raise ValueError("SFT_EVAL_CHECK_SET_CHANGED")
             matrix_verified = True
             failed = [row for row in matrix["checks"] if not row["passed"]]

@@ -97,6 +97,13 @@ class FileIntegrityChecker(ABC):
         pass
 
     @abstractmethod
+    def begin_ingestion(
+        self, file_hash: str, file_path: str, collection: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Invalidate older successes for this path/scope and record an in-progress attempt."""
+        pass
+
+    @abstractmethod
     def remove_record(self, file_hash: str, collection: Optional[str] = None) -> bool:
         """Remove an ingestion record by its file hash.
 
@@ -212,6 +219,7 @@ class SQLiteIntegrityChecker(FileIntegrityChecker):
                 ON ingestion_history(file_hash, collection IS NULL, IFNULL(collection, ''))
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_status ON ingestion_history(status)")
+            conn.execute("CREATE TABLE IF NOT EXISTS ingestion_profile_receipts (file_hash TEXT, file_path TEXT, collection TEXT, fingerprint TEXT)")
             conn.commit()
         except Exception:
             conn.rollback()
@@ -261,7 +269,8 @@ class SQLiteIntegrityChecker(FileIntegrityChecker):
         
         return sha256_hash.hexdigest()
     
-    def should_skip(self, file_hash: str, collection: Optional[str] = None) -> bool:
+    def should_skip(self, file_hash: str, collection: Optional[str] = None,
+                    *, processing_fingerprint: Optional[str] = None, source_path: Optional[str] = None) -> bool:
         """Skip only a success for this exact collection; None is unscoped."""
         self._validate_collection(collection)
         conn = sqlite3.connect(self.db_path)
@@ -270,18 +279,79 @@ class SQLiteIntegrityChecker(FileIntegrityChecker):
                 "SELECT status FROM ingestion_history WHERE file_hash = ? AND collection IS ?",
                 (file_hash, collection),
             ).fetchone()
+            if processing_fingerprint is not None:
+                receipt = conn.execute("SELECT 1 FROM ingestion_profile_receipts WHERE file_hash=? AND file_path=? AND collection IS ? AND fingerprint=?",
+                    (file_hash, source_path, collection, processing_fingerprint)).fetchone()
+                if receipt is None:
+                    return False
         finally:
             conn.close()
         return row is not None and row[0] == "success"
 
-    def mark_success(self, file_hash: str, file_path: str, collection: Optional[str] = None) -> None:
+    def mark_success(self, file_hash: str, file_path: str, collection: Optional[str] = None,
+                     *, processing_fingerprint: Optional[str] = None) -> None:
         """Mark success only in the supplied scope, retaining its first timestamp."""
         self._mark(file_hash, file_path, collection, status="success", error_msg=None)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM ingestion_profile_receipts WHERE file_hash=? AND collection IS ?", (file_hash, collection))
+            if processing_fingerprint is not None:
+                conn.execute("INSERT INTO ingestion_profile_receipts VALUES (?,?,?,?)", (file_hash, file_path, collection, processing_fingerprint))
 
     def mark_failed(self, file_hash: str, file_path: str, error_msg: str,
                     collection: Optional[str] = None) -> None:
         """A failed target ingestion never changes another collection's success."""
         self._mark(file_hash, file_path, collection, status="failed", error_msg=error_msg)
+
+    def begin_ingestion(self, file_hash: str, file_path: str,
+                        collection: Optional[str] = None) -> Dict[str, Any]:
+        """Atomically invalidate stale path versions before any store mutation.
+
+        Failed rows are retained so a retry can still discover every older
+        source hash whose images or store records may require cleanup.
+        """
+        self._validate_collection(collection)
+        if type(file_hash) is not str or not file_hash or type(file_path) is not str or not file_path:
+            raise ValueError("file_hash and file_path must be nonempty strings.")
+        now = datetime.now(timezone.utc).isoformat()
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                "SELECT file_hash,status FROM ingestion_history "
+                "WHERE file_path = ? AND collection IS ? ORDER BY processed_at",
+                (file_path, collection),
+            ).fetchall()
+            conn.execute("DELETE FROM ingestion_profile_receipts WHERE collection IS ? AND (file_path=? OR file_hash=?)",
+                         (collection, file_path, file_hash))
+            prior_hashes = [row[0] for row in rows if row[0] != file_hash]
+            same_hash_status = next((row[1] for row in rows if row[0] == file_hash), None)
+            conn.execute(
+                "UPDATE ingestion_history SET status = 'failed', error_msg = ?, updated_at = ? "
+                "WHERE file_path = ? AND collection IS ? AND status = 'success'",
+                ("Superseded by an ingestion replacement attempt.", now, file_path, collection),
+            )
+            existing = conn.execute(
+                "SELECT processed_at FROM ingestion_history WHERE file_hash = ? AND collection IS ?",
+                (file_hash, collection),
+            ).fetchone()
+            if existing is None:
+                conn.execute("""
+                    INSERT INTO ingestion_history
+                    (file_hash, file_path, status, collection, error_msg, processed_at, updated_at)
+                    VALUES (?, ?, 'failed', ?, ?, ?, ?)
+                """, (file_hash, file_path, collection, "Ingestion storage commit pending.", now, now))
+            else:
+                conn.execute("""
+                    UPDATE ingestion_history SET file_path = ?, status = 'failed', error_msg = ?, updated_at = ?
+                    WHERE file_hash = ? AND collection IS ?
+                """, (file_path, "Ingestion storage commit pending.", now, file_hash, collection))
+            conn.commit()
+            return {"prior_hashes": prior_hashes, "same_hash_previous_status": same_hash_status}
+        except sqlite3.Error as exc:
+            conn.rollback()
+            raise RuntimeError(f"Failed to begin ingestion for {file_path}: {exc}") from exc
+        finally:
+            conn.close()
 
     def _mark(self, file_hash: str, file_path: str, collection: Optional[str],
               *, status: str, error_msg: Optional[str]) -> None:

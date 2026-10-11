@@ -250,7 +250,7 @@ class ExternalQwenPatchAdapter(LocalOllamaInitialPatchAdapter):
                 continue
             if message.get("role") == "assistant" and isinstance(value.get("changes"), list):
                 extra.add("generated_patch")
-            if isinstance(value.get("validator_feedback"), dict):
+            if isinstance(value.get("validator_feedback"), dict) or isinstance(value.get("baseline_compilation_failure"), dict):
                 extra.add("verification_feedback")
             if message.get("role") == "user" and value.get("message_type") == "patch_submission_feedback":
                 # An unadmitted generated response is returned for format repair;

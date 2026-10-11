@@ -17,7 +17,7 @@ try:
 except ImportError:
     CHROMADB_AVAILABLE = False
 
-from src.core.settings import resolve_path
+from src.core.settings import require_storage_path
 from src.libs.vector_store.base_vector_store import BaseVectorStore
 
 if TYPE_CHECKING:
@@ -97,7 +97,7 @@ class ChromaStore(BaseVectorStore):
             'persist_directory',
             getattr(vector_store_config, 'persist_directory', './data/db/chroma')
         )
-        self.persist_directory = resolve_path(persist_dir_str)
+        self.persist_directory = require_storage_path(settings, persist_dir_str)
         
         # Ensure persist directory exists
         self.persist_directory.mkdir(parents=True, exist_ok=True)

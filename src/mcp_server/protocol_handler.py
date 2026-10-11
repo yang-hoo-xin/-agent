@@ -9,6 +9,15 @@ This module provides the ProtocolHandler class that encapsulates:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from copy import deepcopy
+import json
+import asyncio
+from uuid import uuid4
+from jsonschema import Draft202012Validator, validators
+from src.mcp_server.safety import Redactor
+
+StrictInputValidator = validators.extend(Draft202012Validator,
+    type_checker=Draft202012Validator.TYPE_CHECKER.redefine("integer", lambda checker, value: type(value) is int))
 from typing import Any, Callable, Dict, List, Optional
 
 from mcp import types
@@ -36,6 +45,8 @@ class ToolDefinition:
     description: str
     input_schema: Dict[str, Any]
     handler: Callable[..., Any]
+    output_schema: Optional[Dict[str, Any]] = None
+    annotations: Optional[Dict[str, Any]] = None
 
 
 @dataclass
@@ -56,6 +67,7 @@ class ProtocolHandler:
     server_name: str
     server_version: str
     tools: Dict[str, ToolDefinition] = field(default_factory=dict)
+    redactor: Any = field(default_factory=Redactor)
 
     def __post_init__(self) -> None:
         """Initialize logger after dataclass initialization."""
@@ -67,6 +79,8 @@ class ProtocolHandler:
         description: str,
         input_schema: Dict[str, Any],
         handler: Callable[..., Any],
+        output_schema: Optional[Dict[str, Any]] = None,
+        annotations: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Register a tool with the protocol handler.
 
@@ -82,11 +96,16 @@ class ProtocolHandler:
         if name in self.tools:
             raise ValueError(f"Tool '{name}' is already registered")
 
+        input_schema = deepcopy(input_schema)
+        input_schema.setdefault("additionalProperties", False)
+        Draft202012Validator.check_schema(input_schema)
+        if output_schema is not None:
+            Draft202012Validator.check_schema(output_schema)
         self.tools[name] = ToolDefinition(
             name=name,
             description=description,
             input_schema=input_schema,
-            handler=handler,
+            handler=handler, output_schema=output_schema, annotations=annotations,
         )
         self._logger.info("Registered tool: %s", name)
 
@@ -101,6 +120,8 @@ class ProtocolHandler:
                 name=tool.name,
                 description=tool.description,
                 inputSchema=tool.input_schema,
+                outputSchema=tool.output_schema,
+                annotations=types.ToolAnnotations(**tool.annotations) if tool.annotations is not None else None,
             )
             for tool in self.tools.values()
         ]
@@ -121,62 +142,42 @@ class ProtocolHandler:
             ValueError: If tool is not found.
         """
         if name not in self.tools:
-            self._logger.warning("Tool not found: %s", name)
-            return types.CallToolResult(
-                content=[
-                    types.TextContent(
-                        type="text",
-                        text=f"Error: Tool '{name}' not found",
-                    )
-                ],
-                isError=True,
-            )
-
+            return self.error_result("UNKNOWN_TOOL", "Tool not found")
         tool = self.tools[name]
+        if not isinstance(arguments, dict) or not StrictInputValidator(tool.input_schema).is_valid(arguments):
+            return self.error_result("INVALID_PARAMS", "Invalid parameters")
         try:
-            self._logger.info("Executing tool: %s", name)
             result = await tool.handler(**arguments)
-
-            # Handle different return types
             if isinstance(result, types.CallToolResult):
-                return result
-            if isinstance(result, str):
-                return types.CallToolResult(
-                    content=[types.TextContent(type="text", text=result)],
-                    isError=False,
-                )
-            if isinstance(result, list):
-                return types.CallToolResult(content=result, isError=False)
-            # Default: convert to string
-            return types.CallToolResult(
-                content=[types.TextContent(type="text", text=str(result))],
-                isError=False,
-            )
+                raw = result.model_dump(mode="json", exclude_none=True)
+                payload = self.redactor(raw)
+                structured = payload.get("structuredContent", {})
+                if raw != payload and structured.get("schema_version") == "query_response_v1":
+                    structured["warnings"].append("MCP_SECRET_REDACTION_APPLIED")
+                    payload["content"] = [{"type": "text", "text": json.dumps(structured, ensure_ascii=False)}]
+                normalized = types.CallToolResult.model_validate(payload)
+            elif isinstance(result, dict):
+                payload = self.redactor(result)
+                normalized = types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(payload, ensure_ascii=False))],
+                                                  structuredContent=payload, isError=False)
+            elif isinstance(result, str):
+                normalized = types.CallToolResult(content=[types.TextContent(type="text", text=self.redactor(result))], isError=False)
+            else:
+                normalized = types.CallToolResult(content=result, isError=False)
+            if tool.output_schema is not None and not Draft202012Validator(tool.output_schema).is_valid(normalized.structuredContent):
+                return self.error_result("OUTPUT_CONTRACT_INVALID", "Tool output contract failed")
+            return normalized
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self._logger.error("Tool execution failed: %s (%s)", name, type(error).__name__)
+            return self.error_result("INTERNAL_ERROR", "Internal server error")
 
-        except TypeError as e:
-            # Invalid parameters
-            self._logger.error("Invalid params for tool %s: %s", name, e)
-            return types.CallToolResult(
-                content=[
-                    types.TextContent(
-                        type="text",
-                        text=f"Error: Invalid parameters - {e}",
-                    )
-                ],
-                isError=True,
-            )
-        except Exception as e:
-            # Internal error - don't leak stack trace
-            self._logger.exception("Internal error executing tool %s", name)
-            return types.CallToolResult(
-                content=[
-                    types.TextContent(
-                        type="text",
-                        text=f"Error: Internal server error while executing '{name}'",
-                    )
-                ],
-                isError=True,
-            )
+    def error_result(self, code, message):
+        payload = {"schema_version": "mcp_error_v1", "status": "error", "request_id": uuid4().hex,
+                   "error": {"code": code, "message": message}}
+        return types.CallToolResult(content=[types.TextContent(type="text", text=json.dumps(payload))],
+                                    structuredContent=payload, isError=True)
 
     def get_capabilities(self) -> Dict[str, Any]:
         """Get server capabilities for initialize response.
@@ -195,17 +196,8 @@ def _register_default_tools(protocol_handler: ProtocolHandler) -> None:
     Args:
         protocol_handler: ProtocolHandler instance to register tools with.
     """
-    # Import and register query_knowledge_hub tool
-    from src.mcp_server.tools.query_knowledge_hub import register_tool as register_query_tool
-    register_query_tool(protocol_handler)
-    
-    # Import and register list_collections tool
-    from src.mcp_server.tools.list_collections import register_tool as register_list_tool
-    register_list_tool(protocol_handler)
-    
-    # Import and register get_document_summary tool
-    from src.mcp_server.tools.get_document_summary import register_tool as register_summary_tool
-    register_summary_tool(protocol_handler)
+    from src.mcp_server.registered_tools import register_tools
+    register_tools(protocol_handler)
 
 
 def create_mcp_server(
@@ -213,6 +205,8 @@ def create_mcp_server(
     server_version: str,
     protocol_handler: Optional[ProtocolHandler] = None,
     register_tools: bool = True,
+    settings=None,
+    artifact_store=None,
 ) -> Server:
     """Create and configure an MCP server with the protocol handler.
 
@@ -237,7 +231,8 @@ def create_mcp_server(
 
     # Register default tools if requested
     if register_tools:
-        _register_default_tools(protocol_handler)
+        from src.mcp_server.registered_tools import register_tools as register_selected_tools
+        register_selected_tools(protocol_handler, settings=settings, artifact_store=artifact_store)
 
     # Create low-level server
     server = Server(server_name)
@@ -249,7 +244,7 @@ def create_mcp_server(
         return protocol_handler.get_tool_schemas()
 
     # Register tools/call handler
-    @server.call_tool()
+    @server.call_tool(validate_input=False)
     async def handle_call_tool(
         name: str, arguments: Dict[str, Any]
     ) -> types.CallToolResult:

@@ -9145,6 +9145,39 @@ def test_metadata_search_truncates_inside_tool_observation_budget(
     assert search_fact["canonical_claim"].endswith("results_truncated=true.")
 
 
+def test_metadata_budget_prunes_assembly_inventory_before_exact_methods(
+    tmp_path: Path,
+) -> None:
+    assembly_names = tuple(f"Assembly-{index:03d}.dll" for index in range(80))
+    for name in assembly_names:
+        (tmp_path / name).write_bytes(name.encode("utf-8"))
+    source = replace(
+        _request(tmp_path).sources[0],
+        assembly_relative_paths=assembly_names,
+    )
+    executor = LocalAssemblyEvidenceToolExecutor(
+        metadata_runner=_MetadataRunner(),
+        il_runner_factory=_ILRunner,
+        max_model_observation_bytes=4_096,
+    )
+    executor.begin_run(run_id="run-large-assembly-inventory")
+
+    observation = executor.execute(
+        action={
+            "tool": "search_dotnet_metadata",
+            "arguments": _metadata_arguments("Move", limit_per_kind=3),
+        },
+        source=source,
+        observation_id="obs-001",
+    )
+
+    assert observation.data["matched_counts"]["methods"] == len(assembly_names)
+    assert observation.data["returned_counts"]["methods"] == 3
+    assert len(observation.data["methods"]) == 3
+    assert len(observation.data["assemblies"]) < len(assembly_names)
+    assert observation.data["results_truncated"] is True
+
+
 def test_repeated_il_targets_keep_distinct_instruction_facts() -> None:
     observation = ToolObservation(
         observation_id="obs-duplicate-call",

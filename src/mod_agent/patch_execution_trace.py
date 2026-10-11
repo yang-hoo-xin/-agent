@@ -72,6 +72,7 @@ def product_trace_identity(trace, run_root):
             else "artifact_store_and_feature_legacy"),
         **({"logical_request_id": trace.context.metadata["logical_request_id"]}
            if "logical_request_id" in trace.context.metadata else {}),
+        **trace.context.metadata.get("frozen_execution_binding", {}),
         "local_observation_source": ({
             "path": str(Path(run_root) / "run_manifest.json"),
             "json_pointer": "/execution_observations",
@@ -122,6 +123,7 @@ def product_execution_trace(*, run_root, run_id, request_id, artifact_store_root
         document = read_manifest()
         document["execution_observations"] = dict(observations)
         document["execution_trace"] = product_trace_identity(trace, run_root)
+        document.update(trace.context.metadata.get("frozen_execution_binding", {}))
         write_manifest(document)
 
     try:
@@ -129,9 +131,23 @@ def product_execution_trace(*, run_root, run_id, request_id, artifact_store_root
             feature_id=None, artifact_store_root=artifact_store_root,
             recorder=record, root_name="product.execution")
         trace.context.metadata["local_manifest_ready"] = not buffer_until_manifest
+        # Keep the body destination in local context; sinks receive only observation metadata.
+        # 为什么要有它：工具原件需要准确的运行目录，但路径和内容不应随遥测外发。
+        trace.context.metadata["local_body_root"] = str(Path(run_root).resolve())
     except Exception:
         yield None
         return
+    frozen_execution = None
+    try:
+        from src.mod_agent.platform_execution_snapshot import current_frozen_execution
+
+        frozen_execution = current_frozen_execution()
+        if frozen_execution is not None:
+            trace.context.metadata["frozen_execution_binding"] = frozen_execution.record_run_check(
+                run_root, run_id, request_id, trace.context.trace_id, "started")
+    except Exception as error:
+        trace.context.metadata["frozen_execution_binding"] = {
+            "execution_version_status": "unknown", "execution_version_error_type": type(error).__name__}
     business_error = None
     try:
         with trace.activate():
@@ -164,11 +180,19 @@ def product_execution_trace(*, run_root, run_id, request_id, artifact_store_root
                     pass
     finally:
         report = {}
+        if frozen_execution is not None:
+            try:
+                trace.context.metadata["frozen_execution_binding"] = frozen_execution.record_run_check(
+                    run_root, run_id, request_id, trace.context.trace_id, "finished")
+            except Exception as error:
+                trace.context.metadata["frozen_execution_binding"].update(
+                    execution_version_status="unknown", execution_version_error_type=type(error).__name__)
         try:
             report = configuration.finish(trace)
             if trace.context.metadata["local_manifest_ready"]:
                 document = read_manifest()
                 document["execution_trace"] = {**product_trace_identity(trace, run_root), **report}
+                document.update(trace.context.metadata.get("frozen_execution_binding", {}))
                 write_manifest(document)
         except Exception:
             pass
@@ -223,7 +247,9 @@ def preserve_product_trace_projection(manifest, run_root):
         document = json.loads((Path(run_root) / "run_manifest.json").read_text(encoding="utf-8"))
         if any(document.get(key) != manifest.get(key) for key in ("run_id", "request_id")):
             return manifest
-        return {**manifest, **{key: document[key] for key in ("execution_observations", "execution_trace")
+        return {**manifest, **{key: document[key] for key in ("execution_observations", "execution_trace",
+                              "execution_version_ref", "execution_version_check_ref",
+                              "execution_version_status", "execution_version_error_type")
                               if key in document}}
     except Exception:
         return manifest

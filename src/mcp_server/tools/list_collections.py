@@ -14,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from mcp import types
@@ -162,12 +161,13 @@ class ListCollectionsTool:
                 "Install it with: pip install chromadb"
             )
         
-        persist_path = Path(self.config.persist_directory).resolve()
+        from src.core.settings import require_storage_path
+        persist_path = require_storage_path(self.settings, self.config.persist_directory)
         
         if not persist_path.exists():
             logger.warning(f"ChromaDB directory does not exist: {persist_path}")
             # Return client anyway - it will just have no collections
-            persist_path.mkdir(parents=True, exist_ok=True)
+            raise ValueError("KNOWLEDGE_STORE_NOT_FOUND")
         
         try:
             client = chromadb.PersistentClient(

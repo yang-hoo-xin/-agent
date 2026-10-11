@@ -15,9 +15,9 @@ Design Principles:
 
 import json
 import math
-import os
+from copy import deepcopy
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 
 class BM25Indexer:
@@ -212,7 +212,7 @@ class BM25Indexer:
             
             # Validate structure
             if "metadata" not in data or "index" not in data:
-                raise ValueError(f"Invalid index file structure: missing metadata or index")
+                raise ValueError("Invalid index file structure: missing metadata or index")
             
             self._metadata = data["metadata"]
             self._index = data["index"]
@@ -338,9 +338,11 @@ class BM25Indexer:
         if not self._index:
             self.load(collection)
 
-        # Remove stale postings for this document (re-ingest case)
-        if doc_id and self._index:
-            self.remove_document(doc_id, collection)
+        # A document ID is not a posting prefix after VectorUpserter replaces
+        # SparseEncoder IDs with exact vector IDs. Silent prefix deletion would
+        # retain stale postings. Replacement callers must supply exact IDs.
+        if doc_id:
+            raise ValueError("Exact existing chunk IDs are required; use replace_documents().")
 
         # Reconstruct existing term_stats from current index postings
         existing_stats: Dict[str, Dict[str, Any]] = {}  # chunk_id -> stat
@@ -360,6 +362,50 @@ class BM25Indexer:
 
         # Rebuild full index from combined stats
         self.build(combined, collection, trace)
+
+    def replace_documents(
+        self,
+        existing_chunk_ids: List[str],
+        term_stats: List[Dict[str, Any]],
+        collection: str = "default",
+        trace: Optional[Any] = None,
+    ) -> None:
+        """Atomically replace exact postings while retaining unrelated documents."""
+        if (not isinstance(existing_chunk_ids, list)
+                or any(type(value) is not str or not value for value in existing_chunk_ids)):
+            raise ValueError("existing_chunk_ids must be exact nonempty string identifiers.")
+        if not term_stats:
+            raise ValueError("Replacement term_stats cannot be empty.")
+        self._validate_term_stats(term_stats)
+
+        # Always reload the selected collection. In-memory state may describe a
+        # different collection or a failed prior save.
+        if not self.load(collection):
+            self._index, self._metadata = {}, {}
+        before_index, before_metadata = deepcopy(self._index), deepcopy(self._metadata)
+        selected = frozenset(existing_chunk_ids)
+        current = self._term_stats_from_loaded_index()
+        combined = {chunk_id: stat for chunk_id, stat in current.items() if chunk_id not in selected}
+        for stat in term_stats:
+            combined[stat["chunk_id"]] = deepcopy(stat)
+        try:
+            self.build(list(combined.values()), collection, trace)
+        except Exception:
+            self._index, self._metadata = before_index, before_metadata
+            raise
+
+    def _term_stats_from_loaded_index(self) -> Dict[str, Dict[str, Any]]:
+        """Reconstruct exact per-chunk statistics from the currently loaded index."""
+        stats: Dict[str, Dict[str, Any]] = {}
+        for term, term_data in self._index.items():
+            for posting in term_data["postings"]:
+                chunk_id = posting["chunk_id"]
+                row = stats.setdefault(chunk_id, {
+                    "chunk_id": chunk_id, "term_frequencies": {},
+                    "doc_length": posting["doc_length"],
+                })
+                row["term_frequencies"][term] = posting["tf"]
+        return stats
 
     def remove_document(
         self,
@@ -553,7 +599,7 @@ class BM25Indexer:
             # Atomic rename
             temp_path.replace(index_path)
             
-        except Exception as e:
+        except Exception:
             # Clean up temp file if write failed
             if temp_path.exists():
                 temp_path.unlink()

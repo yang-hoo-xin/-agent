@@ -51,6 +51,37 @@ def _reject_non_finite_numbers(value: Any) -> None:
         raise ValueError("REQUIREMENT_COVERAGE_MODEL_NON_FINITE_JSON")
 
 
+def requirement_coverage_messages(payload: Mapping[str, Any]) -> list[Message]:
+    """Serialize the unchanged model contract for both preparation and invocation."""
+    return [
+            Message(
+                role="system",
+                content=(
+                    "Return one strict JSON object matching the native response "
+                    "schema. Do not return reasoning, markdown, stable identities, "
+                    "sufficiency, edit authority, or execution authority."
+                ),
+            ),
+            Message(
+                role="user",
+                content=json.dumps(
+                    dict(payload),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            ),
+        ]
+
+
+def requirement_coverage_messages_match(payload, observed_messages):
+    """Match current input or its exact pre-deduplication serialization for historical replay."""
+    from src.mod_agent.evidence.model_view import expand_findings_input_text
+    candidates = (payload, expand_findings_input_text(payload))
+    return any([{"role": message.role, "content": message.content}
+                for message in requirement_coverage_messages(candidate)] == observed_messages
+               for candidate in candidates)
+
+
 def request_requirement_coverage_model(
     *,
     llm: Any,
@@ -69,7 +100,8 @@ def request_requirement_coverage_model(
 
     def record_provider_request(value: dict[str, Any]) -> None:
         provider_request.update(
-            {key: item for key, item in value.items() if key != "body_utf8"}
+            {key: item for key, item in value.items()
+             if key not in {"body_utf8", "headers"}}
         )
 
     chat_options: dict[str, Any] = {
@@ -84,35 +116,25 @@ def request_requirement_coverage_model(
         chat_options["stream_response"] = True
         if stream_activity_recorder is not None:
             chat_options["stream_activity_recorder"] = stream_activity_recorder
-    messages = [
-            Message(
-                role="system",
-                content=(
-                    "Return one strict JSON object matching the native response "
-                    "schema. Do not return reasoning, markdown, stable identities, "
-                    "sufficiency, edit authority, or execution authority."
-                ),
-            ),
-            Message(
-                role="user",
-                content=json.dumps(
-                    dict(payload),
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ),
-            ),
-        ]
+    messages = requirement_coverage_messages(payload)
     if trace_role is None:
         response = llm.chat(messages, **chat_options)
     else:
         from src.mod_agent.upstream_model_trace import trace_upstream_model_call
+        def invoke_with_provider_request(trace_recorder):
+            def durable_recorder(value):
+                record_provider_request(value)
+                trace_recorder(value)
+            return llm.chat(messages, **{**chat_options,
+                "provider_request_recorder": durable_recorder})
         response = trace_upstream_model_call(
             role=trace_role, provider=type(llm).__name__, model=getattr(llm, "model", None),
             input_payload=payload,
             request_document={"messages": [{"role": m.role, "content": m.content} for m in messages],
                               "response_format": dict(schema), "temperature": 0.0,
                               "max_tokens": max_output_tokens, "stream_response": stream_response},
-            body_root=trace_body_root, invoke=lambda: llm.chat(messages, **chat_options))
+            body_root=trace_body_root,
+            invoke_with_provider_request=invoke_with_provider_request)
     if not isinstance(response, ChatResponse):
         raise ValueError("REQUIREMENT_COVERAGE_MODEL_RESPONSE_INVALID")
     return response, provider_request

@@ -26,6 +26,9 @@ def _register_vision_providers() -> None:
     Vision LLM provider registry. Add new providers here as they
     are implemented.
     """
+    from src.libs.llm.ollama_vision_llm import OllamaVisionLLM
+    from src.libs.llm.llm_factory import LLMFactory
+    LLMFactory.register_vision_provider("ollama", OllamaVisionLLM)
     try:
         from src.libs.llm.azure_vision_llm import AzureVisionLLM
         from src.libs.llm.llm_factory import LLMFactory

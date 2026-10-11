@@ -75,6 +75,24 @@ class GTFOProcessHandle:
     diagnostics: Any = None
 
 
+class GTFOProcessLaunchError(RuntimeError):
+    """Retain ownership when process creation succeeds but launch setup fails."""
+
+    def __init__(
+        self,
+        process_handle: GTFOProcessHandle,
+        original_error: BaseException,
+        cleanup_error: BaseException | None,
+    ) -> None:
+        self.process_handle = process_handle
+        self.original_error = original_error
+        self.cleanup_error = cleanup_error
+        detail = f"{type(original_error).__name__}: {original_error}"
+        if cleanup_error is not None:
+            detail += f"; cleanup {type(cleanup_error).__name__}: {cleanup_error}"
+        super().__init__(f"GTFO launch setup failed after starting PID {process_handle.pid}: {detail}")
+
+
 @dataclass(frozen=True)
 class GTFOLogSnapshot:
     """Collected persistent runtime log content."""
@@ -614,6 +632,8 @@ class GTFORealRuntimeAutomationRunner:
             failure_stage = "screenshot_capture"
             screenshot = capturer(profile, feature_id)
         except Exception as exc:
+            if isinstance(exc, GTFOProcessLaunchError):
+                process_handle = exc.process_handle
             failure = exc
         finally:
             if process_handle is not None and profile.terminate_after_capture:
@@ -1169,16 +1189,27 @@ def _launch_gtfo_process(
         stderr=subprocess.PIPE,
         text=False,
     )
-    diagnostics = _GTFOProcessDiagnosticsCapture(
-        output_directory=output_directory,
-        output_limit_chars=profile.output_limit_chars,
-    )
-    diagnostics.start(process)
-    return GTFOProcessHandle(
-        pid=int(process.pid),
-        process=process,
-        diagnostics=diagnostics,
-    )
+    handle = GTFOProcessHandle(pid=int(process.pid), process=process)
+    try:
+        diagnostics = _GTFOProcessDiagnosticsCapture(
+            output_directory=output_directory,
+            output_limit_chars=profile.output_limit_chars,
+        )
+        handle = GTFOProcessHandle(pid=handle.pid, process=process, diagnostics=diagnostics)
+        diagnostics.start(process)
+        return handle
+    except BaseException as exc:
+        # Scope: post-Popen setup failures. 为什么要有它：诊断故障不能遗失真实进程句柄，
+        # 导致调用方在游戏仍活着时恢复 DLL 或配置；清理失败保留所有权供调用方继续恢复。
+        cleanup_error = None
+        try:
+            if process.poll() is None:
+                _terminate_process(handle)
+            if process.poll() is None:
+                raise RuntimeError("GTFO_LAUNCH_FAILED_PROCESS_STILL_ALIVE")
+        except BaseException as cleanup_exc:
+            cleanup_error = cleanup_exc
+        raise GTFOProcessLaunchError(handle, exc, cleanup_error) from exc
 
 
 def _unavailable_process_diagnostics() -> dict[str, Any]:

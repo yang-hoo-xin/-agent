@@ -1,0 +1,16 @@
+**
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!src/**
+!scripts/
+!scripts/**
+!deployment/
+!deployment/service/
+!deployment/service/Dockerfile
+**/__pycache__/**
+**/bin/**
+**/obj/**
+**/.env
+**/*.pyc

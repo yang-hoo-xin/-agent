@@ -6,8 +6,8 @@ Usage:
     python package_skill.py <path/to/skill-folder> [output-directory]
 
 Example:
-    python package_skill.py .github/skills/my-skill
-    python package_skill.py .github/skills/my-skill ./dist
+    python package_skill.py .agents/skills/my-skill
+    python package_skill.py .agents/skills/my-skill ./dist
 """
 
 import sys
@@ -17,6 +17,26 @@ from pathlib import Path
 # Ensure sibling modules can be imported when run from any working directory
 sys.path.insert(0, str(Path(__file__).parent))
 from quick_validate import validate_skill
+
+
+EXCLUDED_DIRECTORIES = {"__pycache__", ".pytest_cache"}
+EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".tmp", ".bak", ".swp"}
+
+
+def _include_in_package(
+    file_path: Path,
+    skill_path: Path,
+    archive_path: Path,
+) -> bool:
+    """Return whether a source file is a durable skill input."""
+    if file_path.resolve() == archive_path.resolve():
+        return False
+    relative = file_path.relative_to(skill_path)
+    if any(part in EXCLUDED_DIRECTORIES for part in relative.parts):
+        return False
+    if file_path.suffix.lower() in EXCLUDED_SUFFIXES or file_path.name.endswith("~"):
+        return False
+    return True
 
 
 def package_skill(skill_path, output_dir=None):
@@ -71,7 +91,9 @@ def package_skill(skill_path, output_dir=None):
         with zipfile.ZipFile(skill_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
             # Walk through the skill directory
             for file_path in skill_path.rglob('*'):
-                if file_path.is_file():
+                if file_path.is_file() and _include_in_package(
+                    file_path, skill_path, skill_filename
+                ):
                     # Calculate the relative path within the zip
                     arcname = file_path.relative_to(skill_path.parent)
                     zipf.write(file_path, arcname)
@@ -89,8 +111,8 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: python package_skill.py <path/to/skill-folder> [output-directory]")
         print("\nExample:")
-        print("  python package_skill.py .github/skills/my-skill")
-        print("  python package_skill.py .github/skills/my-skill ./dist")
+        print("  python package_skill.py .agents/skills/my-skill")
+        print("  python package_skill.py .agents/skills/my-skill ./dist")
         sys.exit(1)
 
     skill_path = sys.argv[1]

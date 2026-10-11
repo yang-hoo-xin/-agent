@@ -19,17 +19,23 @@ from xml.etree import ElementTree
 
 from src.core.trace.execution_trace import trace_operation
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
+from src.mod_agent.build import baseline_repair
+from src.mod_agent.build import dependencies as dependency_build
+from src.mod_agent.build import nuget as nuget_build
 from src.mod_agent.build.adapter import BuildAdapter, BuildCommandResult, BuildProfile
-from src.mod_agent.execution.patch_apply import materialize_exact_text_patch
-from src.mod_agent.local_entry import (
+from src.mod_agent.build.baseline_repair import classify_source_compilation_failure
+from src.mod_agent.build.dependencies import (
     RunLocalGameFolderBindingV1,
     _binary_tree_snapshot,
     _binary_tree_snapshot_sha256,
-    _create_nuget_isolated_build_profile,
     _materialize_game_folder_build_dependency,
-    _run_nuget_isolated_build,
     _validate_game_folder_build_binding,
 )
+from src.mod_agent.build.nuget import (
+    _create_nuget_isolated_build_profile,
+    _run_nuget_isolated_build,
+)
+from src.mod_agent.execution.patch_apply import materialize_exact_text_patch
 from src.mod_agent.model_qualification import canonical_hash, read_bound_json
 
 _COPY_IGNORES = ("bin", "obj", ".git", ".idea")
@@ -69,11 +75,31 @@ def _capture_targets():
     return ElementTree.tostring(project, encoding="utf-8", xml_declaration=True)
 
 
+def _compile_input_rows(path, isolated_source):
+    rows = []
+    if path.is_file():
+        for value in path.read_text(encoding="utf-8-sig").splitlines():
+            source = Path(value).resolve(strict=True)
+            relative = source.relative_to(isolated_source).as_posix()
+            rows.append({"path": relative, "sha256": _ref(source)["sha256"]})
+    return rows
+
+
+def _source_compilation_errors(*, execution, output, isolated_source, project_root, source_inputs):
+    expected = {}
+    for relative, digest in source_inputs.items():
+        path = _within(isolated_source, relative)
+        if path.suffix == ".cs" and path.is_relative_to(project_root):
+            expected[path.relative_to(project_root).as_posix()] = digest
+    return classify_source_compilation_failure(execution=execution, output=output,
+        project_root=project_root, expected_sources=expected)
+
+
 class FullProjectCompilationChecker:
     """One fresh baseline followed by separately isolated exact source versions."""
 
     def __init__(self, *, source_root, project_relative_path, artifact_store_root,
-                 dependency_binding: RunLocalGameFolderBindingV1, nuget_config_ref,
+                 dependency_binding: RunLocalGameFolderBindingV1 | None, nuget_config_ref,
                  output_root, expected_artifact, timeout_seconds=120, build_runner=None,
                  workspace_root=None):
         self.source_root = Path(source_root).resolve(strict=True)
@@ -111,25 +137,49 @@ class FullProjectCompilationChecker:
             raise ValueError("FULL_COMPILE_BASELINE_ALREADY_SELECTED")
         report = read_bound_json(report_ref)
         current = self.verification_identity()
-        if (report.get("version_role") != "baseline" or report.get("status") != "passed"
+        if (report.get("version_role") != "baseline" or report.get("status") not in {"passed", "compilation_failed"}
                 or report.get("all_required_files_compiled") is not True
                 or any(report["verification_identity"].get(key) != current[key]
                        for key in ("inputs_sha256", "environment_sha256"))
                 or Path(report["isolated_source_root"]).parent.parent != self.output_root):
             raise ValueError("FULL_COMPILE_BASELINE_REUSE_IDENTITY_MISMATCH")
-        for name in ("built_artifact_ref", "source_inputs_ref", "compile_inputs_ref"):
+        names = ("source_inputs_ref", "compile_inputs_ref", "stdout_ref", "stderr_ref")
+        for name in (*names, *(("built_artifact_ref",) if report["status"] == "passed" else ())):
             if _ref(report[name]["path"]) != report[name]:
                 raise ValueError("FULL_COMPILE_BASELINE_REUSE_FILE_CHANGED")
+        if report.get("dependency_binding") != (self.dependency_binding.to_dict() if self.dependency_binding else None):
+            raise ValueError("FULL_COMPILE_BASELINE_DEPENDENCY_BINDING_MISMATCH")
         self._dependency = deepcopy(report["dependency_copy"])
         self._targets_path = self.output_root / "record-compile-inputs.targets"
         if self._targets_path.read_bytes() != _capture_targets():
             raise ValueError("FULL_COMPILE_BASELINE_TARGETS_CHANGED")
         if _source_snapshot(Path(report["isolated_source_root"])) != self._source_identity:
             raise ValueError("FULL_COMPILE_BASELINE_COPY_CHANGED")
+        isolated_source = Path(report["isolated_source_root"])
+        copied = {row["path"]: row["sha256"] for row in self._source_identity}
+        required = {path: digest for path, digest in copied.items() if path.endswith(".cs")}
+        rows = _compile_input_rows(Path(report["compile_inputs_ref"]["path"]), isolated_source)
+        actual = {row["path"]: row["sha256"] for row in rows}
+        project_root = _within(isolated_source, self.project_relative_path).parent
+        if (read_bound_json(report["source_inputs_ref"]) != copied
+                or report["project_root"] != str(project_root)
+                or rows != report["compile_inputs"]
+                or not rows or any(actual.get(path) != digest for path, digest in required.items())):
+            raise ValueError("FULL_COMPILE_BASELINE_REUSE_INPUT_MISMATCH")
+        if report["status"] == "compilation_failed":
+            diagnostics = _source_compilation_errors(execution=report["build_execution"],
+                output="\n".join(Path(report[name]["path"]).read_text(encoding="utf-8")
+                    for name in ("stdout_ref", "stderr_ref")),
+                isolated_source=isolated_source, project_root=project_root, source_inputs=copied)
+            build = report.get("build_result") or {}
+            if (not diagnostics or list(diagnostics) != report.get("source_compilation_errors")
+                    or build.get("status") != "failed" or build.get("real_build_performed") is not True
+                    or build.get("claims_real_build_success") is not False
+                    or report.get("built_artifact_ref") is not None):
+                raise ValueError("FULL_COMPILE_BASELINE_REUSE_FAILURE_MISMATCH")
         if _ref(self.output_root / "nuget.config")["sha256"] != self.nuget_config_ref["sha256"]:
             raise ValueError("FULL_COMPILE_BASELINE_CONFIG_CHANGED")
-        if _binary_tree_snapshot_sha256(_binary_tree_snapshot(Path(self._dependency["isolated_copy"]))) != self.dependency_binding.snapshot_sha256:
-            raise ValueError("FULL_COMPILE_DEPENDENCY_COPY_CHANGED")
+        self._validate_dependency_copy()
         self._baseline = {**report, "report_ref": dict(report_ref)}
         return deepcopy(self._baseline)
 
@@ -142,18 +192,24 @@ class FullProjectCompilationChecker:
                       if self.workspace_root != self.source_root else {})
         return {"validator_sha256": canonical_hash({"checker": _ref(__file__),
                     "build_adapter": _ref(Path(__file__).parents[1] / "build/adapter.py"),
-                    "build_execution_owner": _ref(Path(__file__).parents[1] / "local_entry.py")}),
+                    "baseline_failure_classifier": _ref(baseline_repair.__file__),
+                    "build_execution_owner": _ref(nuget_build.__file__),
+                    "dependency_copy_owner": _ref(dependency_build.__file__)}),
                 "inputs_sha256": canonical_hash({"sources": self._source_identity,
                     "project": self.project_relative_path, "expected_artifact": self.expected_artifact,
                     "nuget_config": self.nuget_config_ref, **coordinate}),
-                "environment_sha256": canonical_hash(self.dependency_binding.to_dict()),
-                "environment_identity_scope": "exact_game_dependency_tree_and_declared_build_profile_not_entire_host",
+                "environment_sha256": canonical_hash(self.dependency_binding.to_dict() if self.dependency_binding else None),
+                "environment_identity_scope": ("exact_game_dependency_tree_and_declared_build_profile_not_entire_host"
+                    if self.dependency_binding else "no_external_dependency_binding_declared_build_profile_not_entire_host"),
                 "deterministic_reuse_allowed": False}
 
     def _prepare(self):
-        identity = _validate_game_folder_build_binding(self.dependency_binding, canonical_source_root=self.source_root)
+        # 为什么要有它：仅使用 BCL 的工程没有游戏依赖，不能伪造游戏目录来满足编译接口。
+        identity = (_validate_game_folder_build_binding(self.dependency_binding, canonical_source_root=self.source_root)
+                    if self.dependency_binding is not None else None)
         self.output_root.mkdir(parents=True, exist_ok=False)
-        self._dependency = _materialize_game_folder_build_dependency(identity, run_root=self.output_root)
+        self._dependency = (_materialize_game_folder_build_dependency(identity, run_root=self.output_root)
+                            if identity is not None else None)
         config = self.output_root / "nuget.config"
         with config.open("xb") as stream:
             stream.write(Path(self.nuget_config_ref["path"]).read_bytes())
@@ -161,6 +217,16 @@ class FullProjectCompilationChecker:
         self._targets_path = self.output_root / "record-compile-inputs.targets"
         with self._targets_path.open("xb") as stream:
             stream.write(_capture_targets())
+
+    def _validate_dependency_copy(self):
+        # 为什么要有它：无依赖声明和复制回执必须一致，避免恢复旧基线时偷偷继承另一棵依赖树。
+        if self.dependency_binding is None:
+            if self._dependency is not None:
+                raise ValueError("FULL_COMPILE_DEPENDENCY_COPY_UNEXPECTED")
+        elif (self._dependency is None or
+                _binary_tree_snapshot_sha256(_binary_tree_snapshot(Path(self._dependency["isolated_copy"])))
+                != self.dependency_binding.snapshot_sha256):
+            raise ValueError("FULL_COMPILE_DEPENDENCY_COPY_CHANGED")
 
     def _compile(self, *, label, files, code_identity, plan_ref=None, response_ref=None):
         identity = self.verification_identity()
@@ -187,7 +253,8 @@ class FullProjectCompilationChecker:
         compile_inputs = phase_root / "compile-inputs.txt"
         profile = _create_nuget_isolated_build_profile(run_root=self.output_root,
             working_directory=project.parent, config_file=self.output_root / "nuget.config", bepinex_dir=None,
-            timeout_seconds=self.timeout_seconds, game_folder_dir=Path(self._dependency["isolated_copy"]))
+            timeout_seconds=self.timeout_seconds,
+            game_folder_dir=Path(self._dependency["isolated_copy"]) if self._dependency is not None else None)
         extra = (f"-p:CustomBeforeMicrosoftCommonTargets={self._targets_path}",
                  f"-p:ControlledCompileInputsFile={compile_inputs}")
         profile = replace(profile, build_command=(*profile.build_command, *extra))
@@ -221,25 +288,23 @@ class FullProjectCompilationChecker:
                 for field in ("stdout", "stderr"):
                     value = getattr(exc, field, None) or b""
                     (phase_root / f"{field}.txt").write_bytes(value if isinstance(value, bytes) else value.encode("utf-8"))
-            rows = []
-            if compile_inputs.is_file():
-                for value in compile_inputs.read_text(encoding="utf-8-sig").splitlines():
-                    path = Path(value).resolve(strict=True)
-                    relative = path.relative_to(isolated_source).as_posix()
-                    rows.append({"path": relative, "sha256": _ref(path)["sha256"]})
+            rows = _compile_input_rows(compile_inputs, isolated_source)
             actual_inputs = {row["path"]: row["sha256"] for row in rows}
             required = {path: digest for path, digest in copied.items() if path.endswith(".cs")}
             covered = bool(rows) and all(actual_inputs.get(path) == digest for path, digest in required.items())
             execution = observed["execution"]
-            compiler_errors = [row for row in build.diagnostics if row.severity == "error"
-                               and isinstance(row.code, str) and row.code.startswith("CS")] if build is not None else []
+            compiler_errors = (_source_compilation_errors(execution=execution,
+                output="\n".join((phase_root / f"{field}.txt").read_text(encoding="utf-8", errors="replace")
+                    for field in ("stdout", "stderr")),
+                isolated_source=isolated_source, project_root=project.parent, source_inputs=copied)
+                if build is not None else ())
             if interrupted is not None or execution["restore_exit_code"] != 0:
                 status, owner = "environment_failed", "environment"
             elif build.claims_real_build_success and covered:
                 status, owner = "passed", None
             elif execution["build_exit_code"] != 0:
                 status = "compilation_failed" if compiler_errors else "environment_failed"
-                owner = "patch_implementation" if compiler_errors and label != "baseline" else "environment"
+                owner = "patch_implementation" if compiler_errors else "environment"
             else:
                 status, owner = "verification_incomplete", "validator"
             span.update(verification_status=status, compiled_input_count=len(rows), all_required_files_compiled=covered)
@@ -247,17 +312,18 @@ class FullProjectCompilationChecker:
             raise ValueError("FULL_COMPILE_VERIFIER_IDENTITY_CHANGED")
         if {row["path"]: row["sha256"] for row in _source_snapshot(isolated_source)} != expected:
             raise ValueError("FULL_COMPILE_ISOLATED_INPUT_CHANGED")
-        if _binary_tree_snapshot_sha256(_binary_tree_snapshot(Path(self._dependency["isolated_copy"]))) != self.dependency_binding.snapshot_sha256:
-            raise ValueError("FULL_COMPILE_DEPENDENCY_COPY_CHANGED")
+        self._validate_dependency_copy()
         record = {"status": status, "version_role": label, "execution_origin": "executed",
             "failure_owner": owner,
             "verification_scope": "full_project_compilation_not_behavior_or_formal_build_or_runtime",
             "verification_identity": identity, "source_inputs_ref": copied_ref,
             "isolated_source_root": str(isolated_source), "project_root": str(project.parent),
-            "dependency_binding": self.dependency_binding.to_dict(), "dependency_copy": self._dependency,
+            "dependency_binding": self.dependency_binding.to_dict() if self.dependency_binding else None,
+            "dependency_copy": self._dependency,
             "nuget_config_input_ref": self.nuget_config_ref, "measurement_targets_ref": _ref(self._targets_path),
             "build_profile": profile.to_dict(), "build_result": build.to_artifact_payload() if build is not None else None,
             "build_execution": observed["execution"], "compile_inputs": rows,
+            "source_compilation_errors": list(compiler_errors),
             "compile_inputs_ref": _ref(compile_inputs) if compile_inputs.is_file() else None,
             "all_required_files_compiled": covered, "required_files": sorted(required), "changed_files": sorted(files),
             "materialized_code_identity": code_identity, "implementation_plan_ref": plan_ref,
@@ -279,7 +345,11 @@ class FullProjectCompilationChecker:
     def __call__(self, context):
         baseline_preexisting = self._baseline is not None
         baseline = self.verify_baseline()
-        if baseline["status"] != "passed":
+        # 为什么要有它：已定位的原源码错误是候选要修复的事实；允许编译候选不把失败baseline伪装成成功，也不绕过完整输入验证。
+        source_failure = (baseline["status"] == "compilation_failed"
+            and baseline["all_required_files_compiled"] is True
+            and bool(baseline.get("source_compilation_errors")))
+        if baseline["status"] != "passed" and not source_failure:
             return {"status": "environment_failed", "failure_owner": "environment",
                     "baseline": baseline, "changed_compilation_performed": False}
         ref = ArtifactRef(**context["implementation_plan_ref"])
@@ -310,7 +380,17 @@ class FullProjectCompilationChecker:
         for row in changes:
             original = materialized.baseline_files[bindings[row["edit_binding_id"]]["canonical_target_path"]]
             after = row["patch"]["after_text"]
-            returned = by_id[row["edit_binding_id"]]["after_text"]
+            raw_change = by_id[row["edit_binding_id"]]
+            returned = raw_change["after_text"]
+            # 为什么要有它：相同after可写在错误位置；raw局部前像必须与canonical补丁相同，省略则仍代表完整绑定。
+            if "before_text" in raw_change:
+                if (raw_change["before_text"] != row["patch"]["before_text"] or returned != after):
+                    raise ValueError("FULL_COMPILE_MODEL_SELECTION_CHANGED")
+            else:
+                span = bindings[row["edit_binding_id"]]["target_span"]
+                expected_before = b"".join(original.splitlines(keepends=True)[span["start_line"]-1:span["end_line"]]).decode("utf-8")
+                if row["patch"]["before_text"] != expected_before:
+                    raise ValueError("FULL_COMPILE_MODEL_SELECTION_CHANGED")
             if after != returned and not (
                 original.startswith(codecs.BOM_UTF8) and after == "\ufeff" + returned
                 or not original.startswith(codecs.BOM_UTF8) and returned == "\ufeff" + after

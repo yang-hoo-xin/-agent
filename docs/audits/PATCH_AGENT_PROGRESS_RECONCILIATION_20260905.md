@@ -6,6 +6,271 @@
 
 ## 0. 最新状态快照
 
+### 0.42 五包联合接收、正常入口与最终版本（2026-09-21）
+
+本节是五个工作包的最终联合接收记录。主树HEAD仍为
+`3381143790b52b0be7fa8ba32b59f5d10fa6a89a`，整合发生在现有未提交WIP上；没有
+reset、全量stage、commit或push。WP5按包内冻结hash和主树前像逐项接收，没有把旧WIP
+重新归因给本轮，也没有把受控测试、真实模型行为和业务完成混为一谈。
+
+| 接收部分 | 已核实结果 | 仍未证明 |
+| --- | --- | --- |
+| Findings v3与原生provider Trace | v3 wire、后端schema损失拦截、原生provider request保存、3/11历史续接及DSH命令接线已整合；Python 13项、Node 2项通过 | v3真实纠正尚未发送，模型能否产出合法Findings未知 |
+| Product Trace下钻 | CLI、Dashboard Trace页、实际页面点击接通；同一真实run显示3/11、Findings 2/3及`schema_required_property_missing` | Cloud未发布/读回，页面查询不表示任务完成 |
+| RAG on/off | 保留现有judge/output/stop元数据，新增明确rag_on/rag_off、生成输入引用与空检索N/A语义；合并接缝12项通过 | 未运行真实answer/judge/embedding；Tier0/1公开集不替代独立Mod评测 |
+| 独立评测发布与release消费 | 主任务在直接授权上下文发布3个answer-free release；3个B0均编译exit0，可信C1均`behavior_failed`、可信C2均`passed`，模型调用0；release consumer使用文件hash匹配profile身份 | 这是内部judge判别校准，不是Agent成绩；受保护不可信投稿执行句柄仍blocked，Agent任务执行0、成功率null |
+| 冻结fixture换行 | 测试装载时只将checkout CRLF规范化为LF后按原hash核验；fixture及期望hash未改，单项通过 | 不扩展任何业务能力 |
+
+Findings包源在接收后再次核对，11个主责文件的当前hash与冻结接收记录全部一致。
+补齐的`ollama_llm.py`与`upstream_model_trace.py`也一致。各包接收回执位于
+`C:/Users/10160/.codex/visualizations/2026/09/20/01a0bcfe-0f51-7472-9cc4-8488db07d3a9/wp5/`
+下的`package1-merge`、`package2-trace`、`package3-merge`、`package4-independent`、
+`release-boundary`和`frozen-fixture-eol`。测试组有重叠，不相加为业务成功率。
+
+包4随后交付6文件稳定增量及实际公开回执。唯一公开summary为
+`published-answer-free-v3/public/publication-summary.json`，SHA256
+`fe4f10946228c7bfec9c822bf82d72448f962aca81060774a396cc87e6a4d9e4`；三题release SHA依次为
+`36b0f5d0…d7ebd`、`d3c192b0…59e1f`、`a94da09e…dc8dc`。隐藏正文、私有zip和正确修法
+没有进入WP5上下文。包4原相邻选择为35 passed / 2 failed；WP5精确复现两项
+`fixed_failure`均在`generate_patch_proposal`报`KeyError`，原因是测试transport仍读取已移除的
+literal `source_excerpt`，而当前协议要求先调用`inspect_plan_binding_source`并读取返回的B0
+`tool.excerpt`。修正fixture及fixed-failure C1/C2评测计数后，两反例2 passed / 5.45s；
+publisher、release consumer和完整patch_sft_eval联合37 passed / 16.85s，Ruff与六文件
+`git diff --check`通过。该分类是测试fixture兼容缺口，不是publisher/check helper生产失败；
+原失败及两次中间未通过结果均保留在`wp5/package4-material-v3`接收回执中。
+
+**真实任务与正常页面：** `/mod-status dsh_df9865b86c3a4cc7b5a43d7a39d6bc29`
+从原会话查回最新续接结果
+`continuations/14ec74c59f2014bab04693b9/run_result.json`，SHA256为
+`d075af7722803ffb575fbdfd5a95ab3f7dd9b46f609d40d2d6205e0e784d4514`；
+累计3/11、剩余8，Findings 2/3，当前失败为
+`REQUIREMENT_COVERAGE_FINDINGS_SCHEMA_INVALID`，路径
+`$.findings[0].evidence_ids`。原父结果仍为2/11，未改写。
+
+第一次v3页面预览失败并非输入或预算漂移。直接调用同一backend得到精确原因：受限启动的
+DSH子进程读取安装目录`ollama.exe`时收到`WinError 5`。核对原启动命令和可执行文件hash后，
+使用原`DSH_HOME`、原工作目录、同一Node与v3 overlay重启为PID 19360。正常页面随后执行
+`/mod-continue`成功，返回`awaiting_continuation_approval`、blockers空、原预算3/11/8、
+有效分配1/4/1/1/4、`historical_version=2`、`selected_version=3`，provider三项二进制
+hash及dependency inspector均通过当前读取。scope hash为
+`edbb366a534ff3f541eb6746434027b24fe99b4e49cab032e277007897f32cb8`。
+该预览`model_calls_performed=0`且`model_invocation_authorized=false`；没有执行
+`/mod-resume`，没有新Graph、Mod写入、Planning、Patch、Apply、Build或游戏。
+
+包含包4后到增量的最终可复现版本位于本任务证据根的`wp5/version-r4`。`runtime-source.zip`与逐文件manifest
+绑定当前实际源码/配置/测试字节，`entry-config-snapshot.zip`保存入口overlay与已消费配置
+副本，`version.json`记录base HEAD、dirty边界、包回执、真实结果、页面预览和DSH启动身份。
+外部Mod工程、模型权重、密钥、游戏目录与封存题不打包；绝对路径只作来源，不授予搬迁或
+执行权限。该版本是未提交WIP的本机可复现快照，不是业务完成、发布版或独立评测结果。
+
+本轮停止在可审查预览：快捷键任务仍无新Mod代码；RAG真实评分、Cloud Trace发布/读回、
+三道独立任务的产品Agent执行及未来8–15题扩展都没有执行。后续若继续真实纠正，须以页面展示的v3
+scope和新的明确审批为起点，不能继承v2审批、重置预算或自动连续重试。
+
+### 0.41 WP5 首批整合接收与可复现版本（2026-09-20）
+
+这是已交付稳定包的接收检查点，不是全项目完成或共同诊断Cloud链验收。
+WP5未覆盖9890旧树到主树，未改业务owner语义、提交全部dirty或清理WIP。
+主树HEAD仍为`3381143790b52b0be7fa8ba32b59f5d10fa6a89a`。
+
+| 已接收部分 | 本次核实与已有实际证据 | 未证明边界 |
+| --- | --- | --- |
+| 调查/记忆与状态 | 0.39.1原3088页面已验收；本轮不重复 | 模型采用经验后的决策和收益未验证 |
+| RAG入口与评分接缝 | 14个入口文件、2份本地配置与主树回执SHA256一致；评分7路径原字节或仅CRLF差异核对通过；原SDK受控传输修复有失败/修后证据 | 真实answer/judge/embedding及Cloud评分尚无结果 |
+| 独立评测准备 | 已整合9文件逐字节一致；公开C#错误版被拒绝、两合法版通过；165个当前工具链引用哈希仍一致 | 公开校准不是封存任务；未读/执行sealed，真实成功率null |
+| 新任务/观察接线 | 0.40已记录工程与页面结果；PID47124实际监听3088，启动命令及原overlay已只读核对 | 同任务Findings原因链/续接新delta仍由ca25修改，运行模块字节待该包稳定后验收 |
+
+证据根为
+`C:/Users/10160/.codex/visualizations/2026/09/20/01a0bcfe-0f51-7472-9cc4-8488db07d3a9/wp5`。
+`received-package-identities.json`、`scoring-package-identities.json`绑定接收身份；
+`python-runtime.json`确认原主树.venv、实际模块路径及依赖版本，
+`dsh-process-observation.json`仅证明进程/参数，不冒充加载字节的运行时证明。
+
+**可复现r1**：`version-r1/runtime-source.zip`保存689个实际源码/配置/测试及必要文件，
+逐个SHA256在`runtime-source-manifest.json`；归档SHA256为
+`4c5775f2289dd6454dfa2d82d9ad0217acc592a19652c17ef6c24517d146ed78`。
+包含72个明确继承和已整合WIP项，不能全部算WP5新写。
+`entry-config-snapshot.zip`保存9份原入口/已消费配置，精确原路径和哈希在`version.json`；
+外部Mod工程、模型、历史、密钥和依赖不打包，原绝对路径不是可搬迁执行授权。
+尚未交付的ca25/c64f原因链增量不在r1。源文件未改写，未创建Git提交。
+
+已在短临时目录恢复上述字节，并只执行三个针对组合/恢复的检查：
+
+```powershell
+<主树.venv/python.exe> -X utf8 -B -m pytest tests/unit/test_independent_product_adapter.py::test_evaluation_adapter_invokes_full_graph_and_simple_from_equal_public_inputs tests/unit/test_ragas_evaluator_transport_lifecycle.py::test_evaluate_three_metrics_twice_closes_clients_on_their_request_loop tests/unit/test_evaluation_langfuse_report.py::test_readback_requires_same_inputs_hashes_scores_and_trace_binding -q --tb=short -o cache_dir=<短临时cache> --basetemp=<短临时check>
+```
+
+原Graph产品配对、原Ragas SDK同循环生命周期、报告与读回绑定均通过；3 passed / 19.72s。
+准确argv/cwd、stdout/stderr见`version-r1/reconstruction-check.json`及同名日志。
+provider/compiler/Cloud均为明确受控替身；本次检查不等于真实模型、产品Build或Cloud读回。
+没有重复此前130/91项宽选集，也没有重跑002或公开C#校准。
+
+**共同链仍待交付**：真实快捷键run保留原11/2/9，当前只记录最后预算错误，首次Findings
+拒绝须关联明确离线回放，不能回填伪造实时事件。ca25负责生产事件与同任务准备；c64f负责
+本地导出/Cloud读回；WP5在稳定增量交付后核对同run与准备/发送事实及实际入口。
+RAG真实评分、封存独立执行、三项记忆收益仍未完成；没有新增模型、外发、产品Apply/Build、
+游戏或push。后续新增稳定增量另作精确版本，不使r1自动获得新能力或新授权。
+
+#### 0.41.1 稳定r2：同任务原因链、本地诊断联合链与原页面
+
+在首批接收后，WP5按精确前像/hash整合ca25冻结13文件、b9ab记忆对照3新增文件、
+c64f诊断投影/查询4文件。前两包见`r2-integration-receipt.json`，诊断包见
+`diagnostic-integration-receipt.json`；没有使用9890旧树覆盖主树，也未应用阶段预算提议。
+唯一WP5接缝修正为`continuation.test.mjs`创建空`scripts/__init__.py`：
+原fixture缺少包标记，主树venv的editable install把模块解析到了真实业务脚本，导致
+`STATUS_CONTRACT_INVALID`。`find_spec`已证明实际解析路径；只修测试包隔离，未放宽生产契约。
+精确一行patch为`continuation-fixture-seam.patch`，已向原owner同步。
+
+**实际入口**：原3088宿主以原home/overlay和固定Node重启为PID47876。刷新原页面后，
+`cmd-2381170f-1`执行`/mod-continue dsh_df9865b86c3a4cc7b5a43d7a39d6bc29`，
+显示`prepared_blocked`、11/2/9与Findings阶段1/1/0、原实时audit=null、
+`offline_exact_input_replay`和`history_rewritten=false`；模型调用0，无新Graph或写入。
+完整页面command/run、command/done来自原会话，保存为`dsh-r2-command-events.json`。
+这次证明正常入口查回原因与合法续接准备；不表示真实纠正发送、额度调整或Mod代码生成。
+
+**跨包本地联合链**：从这次原Graph受控验收真正产生的journal提取
+`requirement_findings_attempt_audit`，通过主树实际`build_patch_live_otlp`和
+`summarize_execution`消费，首次语义拒绝、纠正payload已准备、预留失败和未调用模型事实
+完整保留并往返一致。证据`cross-package-diagnostic-local.json`明确标为受控运行，
+不是旧真实运行中原本不存在的事件，也不是Cloud读回。
+另用已整合主树mapper执行c64f的纯prepare函数，真实旧运行42个原生事件、原时刻与ID保留，
+没有补造历史span或分数；补充回放只放明确metadata。输出为`real-history-diagnostic-preview.json`，
+canonical OTLP SHA256仍为`e23a469ea0e6d6e953090698291e0e3edaedfdf080c7d52fb95ee6ee2b9e72e0`。
+旧manifest `5566de1d…e413`、result `b1a492ec…7f02`字节未改。
+
+必要检查集中执行，未重跑各页宽选集：
+
+```powershell
+<主树.venv/python.exe> -X utf8 -B -m pytest tests/unit/test_initial_findings_continuation.py tests/unit/test_memory_comparison.py tests/unit/test_planning_task_memory.py tests/unit/test_requirement_coverage.py::test_findings_provider_rejects_frozen_duplicate_relation_indexes -q --tb=short -n 2 --dist=loadfile --basetemp=<短临时目录> -o cache_dir=<临时cache>
+# 32 passed / 23.56s，源文件hash不变；冻结fixture分类单项在主树通过，未改冻结字节。
+node --test integrations/dsh-mod-agent/tests/continuation.test.mjs integrations/dsh-mod-agent/tests/task-status.test.mjs
+# 原状态12项通过；续接fixture1项失败。仅上述测试包标记修正后，原失败单项passed / 0.37s。
+<主树.venv/python.exe> -X utf8 -B -m pytest tests/unit/test_product_trace_langfuse_import.py -q --tb=short --basetemp=<短临时目录> -o cache_dir=<临时cache>
+# 后到诊断包仅跑6个新增接缝，passed / 0.83s；不重复69项。
+```
+
+准确Python联合argv、受测hash与日志在`r2-joint-python.json`/stdout/stderr；
+Node使用同一主树venv和固定Node。查询/映射均没有真实网络模型、产品Apply/Build或游戏。
+记忆on/off新增能力仅为固定相同实例库与输入条件、验证漂移及首次任务结局计量；
+本次不执行真实对照，成功率及收益仍未证明。
+
+**可复现r2**：`version-r2/runtime-source.zip`与`runtime-source-manifest.json`保存整合后的
+实际字节（含必要继承WIP），`r1-to-r2.patch`只列相对已接收r1的增量；
+`entry-config-snapshot.zip`和清单保留原路径/hash，`support-tools.zip`保留明确验收辅助脚本。
+这是一份未提交的本机代码/配置快照，不是可直接迁移所有历史绝对引用、模型或游戏依赖的
+自包含部署。后续正在开发的真实纠正执行段不在该版本，须新delta单独验收。
+
+**具体未完成**：c64f的Cloud发布在CreateProcess前被自动审批拒绝，原因是该准确payload、
+目的地和写入的明确用户批准未建立；其原回执仍`prepared_no_cloud`、请求0。
+WP5没有重试或旁路，真实Langfuse读回及Cloud页面仍未验收，由原owner一次申请原范围。
+快捷键尚无Mod代码，RAG真实模型+judge、封存独立执行和三项记忆收益均未证明；
+后续从零新Mod、SFT/DPO未启动。工程通过、页面通过和真实业务结果按以上证据分别保留。
+
+#### 0.41.2 r3执行接线接收：受控验证通过，页面仍有缺口
+
+ca25冻结r3的11文件已由WP5逐项核对主树前像与新字节后整合，未覆盖r2回执或其它WIP。
+原入口/Graph累计预算续接及同会话`/mod-continue`→`/mod-resume`的主责验证见
+[原verification.json](C:/Users/10160/.codex/visualizations/2026/09/20/01a0bd34-d434-7961-89c6-af25c6973d77/findings-execution-r3/verification.json)。
+WP5只补主树新增执行/准入选择与命令接缝；准确命令、受测身份及结果在
+[接收目录](C:/Users/10160/.codex/visualizations/2026/09/20/01a0bcfe-0f51-7472-9cc4-8488db07d3a9/wp5/r3/integration-receipt.json)
+及同目录`main-check.json`，未重复主责宽选集。增量源码、配置前置条件与验证只证明受控
+provider/compiler下的执行接线，不表示真实快捷键纠正、产品Apply、正式Build或游戏已发生。
+
+原3088没有重启，也未在原页面触发命令。仅尝试已启动、明确禁止真实网络/编译的
+ca25受控fixture `http://127.0.0.1:64834/`，浏览器仍返回`ERR_BLOCKED_BY_CLIENT`；
+没有进入页面、没有fixture run_id、没有页面执行，详见同目录`browser-boundary.json`。
+真实旧manifest/result哈希未变，预算仍11/2/9，新的阶段分配未应用。
+可复现增量为同目录`source-increment.zip`/`source-increment.patch`，须叠加于已核对前像；
+源码zip SHA256为`18872e7c3459d0badbc34b4ee0841506146d794ea7ed7c113ee38f9b62b7e165`。
+
+### 0.40 DSH 新任务、观察与部署接线（2026-09-20）
+
+本包隔离树 `ca25` 从 `3381143790b52b0be7fa8ba32b59f5d10fa6a89a`
+及主树WIP开始；不将继承改动计为新增成果。16个明确文件以主树原哈希为前置条件
+整合，随后3个聚焦文件补充整合；没有整体reset、提交其他WIP或push。
+精确增量/原文件备份在
+[increment.json](C:/Users/10160/.codex/visualizations/2026/09/20/01a0bd34-d434-7961-89c6-af25c6973d77/increment.json)。
+
+- `/mod-new` 生成独立任务/请求身份与持久配置，显式JSON位置绑定验证器路径，
+  复用原`run-request`、Graph和预算。`/mod-tasks`和重启后状态查询读取原记录；
+  新任务交付读取其实际配置。旧`/mod-run`单次配置和002记录保留。
+- `/mod-observe`把同会话明确判定直接交给原Runtime validator及hash-confirmed reader。
+  普通部署分支原先漏传reader，精确复现后已修复。无日志marker、明确采用operator
+  completion的普通玩法可预检，所有行为条件仍需独立观察；原有marker规则不变。
+- `/mod-deployment`、`/mod-deploy`包装原`preflight_local_runtime`和
+  `resume_local_runtime`，展示并核验Build/DLL/安装状态/设置，复用原临时部署和恢复。
+  已运行游戏时阻断；未知执行不自动重试。这部分通过受控owner结果的工程测试，
+  **尚无真实DLL部署、加载或玩法验收**。
+- 新通用compiler反馈适配器复用`FullProjectCompilationChecker`，明确只判编译，
+  原错误诊断可进入现有worker；不把旧配置五项检查用作快捷键行为判据。
+
+主要验证（范围重叠，不相加为业务成功率）：
+
+| 命令/范围 | 本轮结果 |
+| --- | --- |
+| `python -B -m pytest tests/unit/test_dsh_run_request.py tests/unit/test_dsh_observe_run.py -q --tb=short -n 2 --dist=loadfile --basetemp=<短临时目录>` | 51 passed，24.21s；含双独立任务经原Graph至awaiting_approval；provider/compiler为受控替身 |
+| `python -B -m pytest tests/unit/test_dsh_deliver_run.py -q --tb=short` | 20 passed，22.35s；真实原Graph/Applier、compiler替身 |
+| `python -B -m pytest tests/unit/test_dsh_runtime_run.py tests/unit/test_dsh_observe_run.py tests/unit/test_compilation_feedback.py -q --tb=short` | 17 passed，1.53s；在后续manual-profile用例加入之前 |
+| `test_manual_gameplay_profile_does_not_require_fabricated_product_log_marker`及原runtime_profile_preflight选择 | 新用例先复现marker阻断，修复后单项passed；原4项passed；测试异常类型修正后未把分次执行合称同次全绿 |
+| `node --test integrations/dsh-mod-agent/tests/*.test.mjs`，配置实际DSH node_modules | ca25为56 passed、1 failed，失败仅缺少本地历史013文件；主树单独重跑`real product query reads retained 013`通过（2.11s） |
+| 已改新Python文件的主树venv Ruff检查 | 通过；未全仓清理历史告警 |
+
+**实际页面**：主树原3088主机重启后执行`/mod-new`配置预览；`/mod-submit`保存
+快捷键需求，原owner返回`feature_970d065a4299`、`ready_for_feature_spec`。
+页面显示工程观察`engineering_only_no_game`，提交“未观察”后原reader结束，
+保存[accepted-engineering-result.json](C:/Users/10160/.codex/visualizations/2026/09/20/01a0bd34-d434-7961-89c6-af25c6973d77/observation-engineering-exchange/accepted-engineering-result.json)，
+状态为`not_observed`，没有手工填写响应文件，没有游戏或模型调用。
+
+**当前真实任务**：用户选择AccurateCrosshair新增可配置快捷键切换Follow Recoil并
+短暂显示状态。以已交付002完整工程作为只读输入（不重跑002），核对14个工程文件
+和165个依赖文件。请求/源哈希/模型与新预算草案在
+[hotkey-preparation.json](C:/Users/10160/.codex/visualizations/2026/09/20/01a0bd34-d434-7961-89c6-af25c6973d77/hotkey-preparation.json)。
+仅本地`qwen3-coder:30b`，最多11次/60分钟的独立执行预算已提交用户确认，
+真实生成尚未开始。发现旧`OLLAMA_MODELS=D:\OllamaModels`无可用设备；按用户要求
+找到`C:\Users\10160\.ollama\models`并仅在本次进程覆盖路径，服务0.34.2已起，
+模型digest与原记录相同，查询时`/api/ps`为空。未修改系统环境或下载模型。
+
+**仍未完成**：任意“仍有问题”自然语言到原任务调查/代码修订的完整续接；真实快捷键
+实现、Build/部署/加载/玩法验收；模型主动memory工具、真实经验决策和开关记忆对照。
+页面观察提交不等于以上能力已完成。无SFT/DPO、无First Shot重跑、无新增Mod成功结论。
+
+
+
+### 0.40.1 快捷键首个真实Actual及精确离线复现
+
+用户明确批准本次11次/60分钟后，从原3088页面`/mod-new`执行
+`dsh_df9865b86c3a4cc7b5a43d7a39d6bc29`，Feature为`feature_970d065a4299`。
+为匹配原owner的`source.name`目录约定，执行前在批准根目录的
+`input/AccurateCrosshair`准备交付工程14文件的逐字节副本；这是明确的环境准备，
+不是Agent生成代码。运行目录、原请求/响应/trace及本次核对集中在
+[actual-001-result.json](C:/Users/10160/.codex/visualizations/2026/09/20/01a0bd34-d434-7961-89c6-af25c6973d77/actual-001-result.json)。
+
+- 原基线restore/build退出均0，产出DLL；这是未修改工程的基线，不是功能Build。
+- 两次真实`qwen3-coder:30b`请求均HTTP200：Projection约121.54s，2256输入/1091输出tokens；
+  Findings约61.56s，4752输入/887输出tokens。原预算11/2/9；Planning/Patch/Repair均0。
+- Findings返回的relation 1有2个edit hints与7个unresolved gaps；relation 2为
+  `pre_patch_evidence`却有13个edit hints及7个gaps，二者均标`support`。
+  原一致性检查正确拒绝`REQUIREMENT_COVERAGE_EDIT_TARGET_SELECTION_INVALID`。
+  既有纠错循环随后申请第二次Findings调用，但本次配置给该阶段的上限为1，
+  因而最终显示`PRODUCT_MODEL_CALL_BUDGET_EXHAUSTED`；总额度没有耗尽。
+  本次工程配置没有为已有Findings纠错留出阶段余量，是本次准备的限制。
+- 使用原FeatureSpec、原Projection响应和当前同字节源码，重新调用原确定性查询及
+  Findings provider，**逐字段重建了完全相同的首次Findings模型payload**。
+  离线复现相同语义拒绝及后续预算错误，0新模型、0产品写入；证据为
+  [first-failure-offline-replay.json](C:/Users/10160/.codex/visualizations/2026/09/20/01a0bd34-d434-7961-89c6-af25c6973d77/first-failure-offline-replay.json)。
+  未把模型声称“缺证据”直接判为实际材料不存在，也未提供正确API/修法。
+- 原交付输入、准备副本、运行生成源码各14文件均与准备哈希一致。
+  无新Mod代码、Proposal、Apply、功能Build或游戏Runtime；没有进入模型Planning，
+  因而无记忆实际决策或收益结论。DSH真实显示`partial`及2/11用量，经验存档记录为空，
+  原记录未改写。GPU窗口已释放。
+
+首Actual关闭，不自动重跑。下一处具体阻断是初始Findings纠错的同任务续接与
+累计预算继承；剩余9次不能被重新声明为一个全新11次任务。本次未放宽原判据、
+修改模型prompt或通过人为改写Findings将失败转为通过。
+
+
+**2026-09-20 调查与任务经验收尾（0.39及0.39.1）：** 三项修复及真实blocked receipt投影修正已整合主树。原3088页面实际查回001/002、调查历史、保存/重复复用经验并检索来源与未知项；前轮隔离宿主页面阻断已被本次验收取代。002已交付事实不变，未新增产品执行；经验进入Planning的工程证据不等于模型收益。
+
 **首轮修码 SFT 与冻结 A/B 均已完成，未观察到任务完成收益，本轮不采用训练版本（0.35）。** checkpoint、全部失败和代码差异均保留；不追加训练/DPO。First Shot仍未修好。前四次真实SFT运行的原生时序/用量已获授权导入Cloud并回查；当前GitHub CI仍有13项新整合失败待原owner核对（0.36）。以下较早段落保留其当时快照含义，不覆盖最新完成状态。
 
 **2026-09-08 完整验证与操作续接（0.32）：014 原模型代码的完整项目编译通过（10 个源文件全部进入编译），真实配置 13/13 通过；旧 First Shot 三项失败仍保留。**
@@ -1553,6 +1818,189 @@ A/B采用独立冻结工作树 `sft-ab-frozen` 的 `ebfb466`，避开另页整�
 `f976a59`真实CI原8全部PASS，但包含新产品入口整合的整体结果为950passed/13failed/2skipped。新13为ProductExecution恢复生命周期10、外部profile前置1、CLI场景2。首项 `test_owner_produced_terminal_repair_shapes_use_exact_attempt_transition[review_max-expected_tail1]` 预期尾部轮次2/2/2，实际0/1/1提前blocked；未证明是生产route还是scenario缺前置，已交整链owner，本页不继续擅改其生产路径。不能宣称CI全绿，也不能以此解释产品模型语义失败。
 
 三次后续真实CI的命令/完整原日志/节点对应统一在本任务输出根 `scratch/github_ci_4d493c7_001` 的 `verification-6d03556-result.json`、`verification-99a3c5a-result.json`、`verification-f976a59-result.json`。最后运行：https://github.com/yang-hoo-xin/-agent/actions/runs/34213085996/job/102018412091 。原失败日志保留，没有把后来的通过改写进旧运行。
+
+### 0.37 DSH 实际执行、原入口首失败与同窗口复验（2026-09-14）
+
+本轮由用户选择 DSH 作为较小范围的 Agent 应用窗口，Codex 作为开发者和实际操作者；Mod 调查、改码和验证仍由原 `run-request`/Graph/共享 worker 承担。没有启用第二套 DSH 模型循环。运行基于 `3381143` 加本轮未提交修改，原7项文档WIP保留。完整绑定、UI事件快照、模型/验证/产物引用及工程备份见单份[执行收据](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/dsh-runtime/execution-acceptance.json)。
+
+- 新增 `/mod-run`：空输入显示固定部署配置，需求通过UTF-8 stdin交给原CLI；本地模型、总/阶段预算、隔离准备/编译许可及defer-approval均显式配置。`/mod-submit`仍是准备稿，不冒充执行。管理员固定ID配置一次消费后拒绝重放，不自动换ID或补预算。
+- `/mod-status`现在能读取原public任务manifest/result，包括Patch建立前的失败；Patch子ID由原查询实际返回并绑定所属Store，不猜后缀。宿主重启后已实际从DSH查回原失败和成功Patch审查视图。当前界面结果只投影原状态、阻断、次数、产物及diff；完整原结果保留原路径。
+- 第一次从真实DSH页面发起 `dsh_cfg_20260914_001`，使用3次真实本地30B调用完成上游，进入Patch前被 `PATCH_CONTINUATION_SEMANTIC_IDENTITY_MISMATCH` 阻断，无Patch调用。原RequestPlanner规范化了外层空白，而Evidence取了原始字符串；本次仅一个前导空格造成171/172字符不一致。修复 `local_entry.py` 的原Evidence factory，复用本次FeatureSpec的规范请求；原严格身份检查未放宽，旧Artifacts离线重验仍拒绝，未把历史失败改为成功。
+- 第二次从同一DSH窗口发起 `dsh_cfg_20260914_002`，上限由原剩余额度固定为11，各阶段只使用前次剩余量。实际使用5次调用（上游3、共享worker2），产品模型自行选择`BindAll`，`operator_target_ids_supplied=false`。生成一行默认值修改，经完整工程验证编译和真实配置5/5（3个配置进程）通过，抵达原 `awaiting_approval`/`isolated_apply` 前边界。两次合计8/14，余6不强制用完；无第三次运行。
+- 模型修改只把`Follow Recoil`的Bind默认参数改成`false`，保留已保存true/false及其他配置。对应验证DLL SHA256为`ff14938e58dabdf0b29d4d8cb5fdb9d10d3f8f87b654dcd02903c85e55961df8`，与报告当前字节一致。当前diff身份`sha256:059a1e947e279b7faac5262a3a7ad3befa8fbe63519b55a4c6e64496eaf40268`；DSH读取自己的Proposal/Review/Dry-run，源码当前性匹配。没有人工给正确文件/Hook/修法或由Codex代改Mod。
+- 工程回归：Python桥接/原准备与deferred检查45项（15.41s）；新增public状态及受影响选择15项（5.45s）；语义身份回归先1项red（4.24s），再3项green（12.15s），caller checkpoint22项（33.72s）；最终Node集成32项、0skip（22.16s）。选择有重叠，不能相加为任务数。新Python文件Ruff通过；触及旧文件与HEAD诊断集合相同，新增0。没有为这次改变放宽测试或扩大矩阵。
+- 已安装DSH 0.1.2-rc.1/Node24.19.0继续复用；最终localhost:3088部署移除未使用的`ui-settings-models`和`ui-model-selection`，实际重载后不再显示DeepSeek Key引导/选择器。没有删除或修改千问密钥。当前进程仍有`DASHSCOPE_API_KEY`，用户/系统级未设置；该环境检查不证明密钥有效性。
+
+界限：这是一次真实界面到原批准边界的集成验收，不是新的Repair能力提升对照、First Shot修复、热切换或游戏交付。成功修改首次行为验证即通过，未强造失败。没有实际批准、产品Apply、正式交付Build、游戏操作、Cloud上传或Git推送。任务材料在临时运行根，另保留742文件的字节备份ZIP；备份不等于引用迁移或任意恢复保障。持续阶段展示、同任务补充/观察回复、fresh任务配置自动准备、持久默认工作目录及本部署的批准后Build/Runtime接续仍未完成，不能宣称完整Codex式应用。
+
+本节已执行的主要命令（对应上述32、45、22项结果；不是待执行清单）：
+
+```powershell
+$env:MOD_AGENT_PYTHON=(Resolve-Path '.venv/Scripts/python.exe').Path
+$env:DSH_RUNTIME_NODE_MODULES='C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/dsh-runtime/node_modules'
+node --test integrations/dsh-mod-agent/tests/*.test.mjs
+$env:PYTHONUTF8='1'
+.venv/Scripts/python.exe -B -m pytest tests/unit/test_dsh_run_request.py tests/unit/test_dsh_prepare_request.py tests/unit/test_deferred_product_approval.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP/dsh-check-$PID"
+.venv/Scripts/python.exe -B -m pytest tests/unit/test_mod_agent_cli.py::test_cli_run_request_preserves_feature_request_identity_with_outer_whitespace tests/unit/test_mod_agent_cli.py::test_cli_run_request_patch_evidence_return_executes_new_search_and_reaches_original_review tests/unit/test_mod_agent_cli.py::test_cli_run_request_initial_findings_gap_searches_before_first_plan_and_patch tests/unit/test_product_patch_journal.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\dsh-sem-check"
+```
+
+### 0.38 DSH 批准到构建交付续接（2026-09-14）
+
+用户选择续接已有 `dsh_cfg_20260914_002`，不重跑需求或模型，不返回游戏。当前真实终点仍为精确批准前；本节的工程验证不能写成真实Mod已交付。
+
+- 当前源码、隔离源码、165份GameFolder依赖和原8份Artifact身份只读核对通过，原diff重算一致。此任务没有旧`nlcfg_002`的源码缺失。旧reviewed-copy入口实际拒绝`APPLY_RETAINED_RUN_NOT_READY`，因为本次是public `awaiting_approval`；没有改历史终态去强行复用。选择原`resume_deferred_approval` → `continue_reviewed_patch`，原Graph/Applier/BuildAdapter不变。
+- 新增薄适配`scripts/dsh_deliver_run.py`及DSH命令：`/mod-delivery <public_run_id>`展示原checkpoint、完整diff、原Review警告/语义待审、当前哈希匹配的历史验证报告、原NuGet restore/build配置及持久交付范围；`/mod-deliver <reviewer>`明确批准该scope；`/mod-decline <reviewer>`走原拒绝。旧`/mod-approve`的隔离复制后停Build语义未改。正常续接无模型client/再生成入口。
+- 批准范围同时绑定原checkpoint/diff、源码/依赖身份、原构建profile和交付位置。进程内同任务单flight，初始回执排他认领，原resume记录继续防止重复消费；重开只查回，不自动重放。旧预览晚返回不再删除新预览的绑定；缺少Build/交付引用的`delivered`响应拒绝显示成功。部分写入和owner调用后未知结果保留原事实，不映射成零副作用。这不是任意中断后自动恢复或跨文件事务承诺。
+- 正式Build适配复用原NuGet隔离环境与restore/build，日志保存到本run的`build_environment/dsh_delivery/{stdout.log,stderr.log,phases.json}`并由BuildResult引用。仅原Build与产物检查成功后，才保留完整修改工程、依赖、构建环境、原Artifact字节、验证报告和正式DLL；复制后再次核对原Apply源码/Build产物。交付manifest保留原引用，副本不冒充checkpoint迁移；旧配置5/5标`historical_not_rerun=true`。
+- 最终工程验证：`tests/unit/test_dsh_deliver_run.py` **20 passed / 26.24s**；DSH全部集成 **42 passed / 0 skipped / 23.69s**。此前原deferred/reviewed owner caller checkpoint39项通过30.79s；选择有重叠，不相加。Python新文件Ruff通过，git diff检查通过。临时测试经过原Graph、真实临时文件Applier和原BuildAdapter，编译子进程是替身，不冒充正式Mod Build。
+- 原localhost:3088宿主重启加载新命令，真实界面执行并展开`/mod-delivery dsh_cfg_20260914_002`。原DSH事件`cmd-b708a38a-1`返回`awaiting_approval`、`approval_ready=true`，新增模型/Build/写入均0。已展示scope为`sha256:d24f6d558a844e5cbb64cdf4ac878f0559b4dc35e0730b8b0ee90057bab3da64`，计划交付目录为`C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/deliveries/dsh_cfg_20260914_002`。真实UI快照及本次关键状态追加在原[执行收据](C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/dsh-runtime/execution-acceptance.json)，不另建宏观文档。
+
+准备阶段止于明确批准前。随后用户在本对话对完整范围明确回答“批准上述修改、构建与交付保存”，实际交付如下；没有把先前含糊的“做002？”或首次被自动审查阻止的点击视为实际批准。
+
+- 实际DSH命令`mod-deliver`，事件`cmd-b708a38a-2`，在原scope `d24f6d…3da64`下完成原隔离Apply一次、正式Build一次，返回`delivered`。Apply ref `f43e12d13d7891045632dd1db8d68ed6dcc74f69ec068c98c0a32610144e3086`，Build ref `3abeada2f56961d8a336be147ab452427e9ab39cbb9ad697e6db04e7d7c62f15`。NuGet restore/build均退出0，原记录耗时4276ms；不是测试编译替身。
+- 正式DLL在交付目录`project/bin/Debug/net6/AccurateCrosshair.dll`，22528字节，SHA256 `0b23e5f434c08fa42e8dd3b9f7efa93a2d45b26e6af394d9105b7f9b2b4b5710`。交付manifest `delivery.json` SHA256 `a5c30bc56e701b8f7c275aca7bc2e3380387698b025d8d6a7d297c6dcdae5599`；列入240文件/94890497字节全部独立哈希核验通过。原Apply/Build及resume/checkpoint引用核验通过，原canonical13文件及001/002原结果、002journal/response均未改。模型总账仍3+5=8/14，续接新增0。
+- 浏览器首次执行后读取snapshot超时；后端已完成，先只读查回而未重复提交。重开窗口查回`delivered`，暴露展示仍将旧`awaiting_approval`称为当前阶段；仅修DSH投影分开`recorded_stage`与已完成Build的`current_stage`。定向`node --test integrations/dsh-mod-agent/tests/task-status.test.mjs integrations/dsh-mod-agent/tests/delivery.test.mjs` **13 passed / 6.83s**。宿主再重启，真实DSH命令`cmd-5c0a225d-1`查回`current_status=delivered`、`current_stage=build`及原构建/交付引用；没有再Apply或Build。
+- 实际UI快照`product-ui-delivery-final.zstd` SHA256 `17ca22549c783df7499f7df36235022fcdfbe13100b7d959fcca42df055b6638`，实际批准/Apply/Build/交付/查回引用统一追加在原`execution-acceptance.json#/delivery_continuation/actual`。原历史5/5保留为历史验证，不冒充本次重新执行。Apply/Build本地trace延续原logical request；未进行Cloud上传查回、游戏部署/Runtime或Git推送。
+
+本任务抵达“窗口内批准→隔离Apply→正式Build→完整工程与DLL持久交付”终点。原Temp记录仍保留，交付副本不改写其引用或宣称任意中断恢复。自主调查/Repair增强保持独立，不自动重跑本任务。
+
+本节最终检查命令：
+
+```powershell
+$env:MOD_AGENT_PYTHON=(Resolve-Path '.venv/Scripts/python.exe').Path
+$env:DSH_RUNTIME_NODE_MODULES='C:/Users/10160/.codex/visualizations/2026/09/05/01a07014-bccb-7420-bbcd-38defc72fecb/dsh-runtime/node_modules'
+& 'C:/Users/10160/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe' --test integrations/dsh-mod-agent/tests/*.test.mjs
+$env:PYTHONUTF8='1'
+.venv/Scripts/python.exe -B -m pytest tests/unit/test_dsh_deliver_run.py -q --tb=short --basetemp="$env:TEMP/dsh-delivery-final-$PID"
+.venv/Scripts/python.exe -m ruff check scripts/dsh_deliver_run.py tests/unit/test_dsh_deliver_run.py
+```
+
+### 0.39 调查与任务经验三个缺陷修复（2026-09-20）
+
+本轮仅处理用户指定的A/B/C、受影响回归及DSH操作检查。工作树为
+`C:/Users/10160/.codex/worktrees/9890/rag_capability_mainline`，detached HEAD
+`3381143790b52b0be7fa8ba32b59f5d10fa6a89a`。进入时继承39个工作树状态项；
+逐项与原主树比较后，文本内容一致，21个tracked文件仅有换行差异。
+原有WIP未被当作本轮新增实现，未整体提交、重置或整合另一First Shot工作树。
+
+本轮证据目录为
+`C:/Users/10160/.codex/visualizations/2026/09/20/01a0bcfe-0f51-7472-9cc4-8488db07d3a9`，
+下文文件名均相对该目录。`baseline/`保存继承修改的原字节，
+`task-only.patch`只表示本轮增量，`task-only-files.json`列出文件和哈希。
+主树、原部署配置、原记忆库与历史记录均未更新。
+
+| 缺陷 | 修前复现 | 修后证据 |
+| --- | --- | --- |
+| A：缺失阶段 | 真实001及原`_persist_graph_terminal_result`写入后，原查询报`product_terminal_stage_mismatch`；缺字段写入也未形成一致投影 | writer在新记录中统一缺省阶段为`unknown`；reader只读兼容旧null/缺字段。原writer→query、旧记录不改写、明确不同阶段仍拒绝均通过。真实001返回`verified_terminal_bytes`、`partial`、`unknown`，查询模型/验证/Graph/源码写入均0，见`historical-001-after.json` |
+| B：DSH状态覆盖 | 同时配置execution与delivery时，admitted及partial被交付查询的blocked覆盖，Node两项失败 | 仅原结果为`awaiting_approval`时查询交付；不适用时单列`not_applicable`及原原因。交付查询blocked也单列，保留原任务状态；真实002仍读回delivered/build |
+| C：跨Store身份碰撞 | 两个临时Store的同名`execution-one`进入同一lesson，最终仅召回一条 | 新identity绑定已解析的source Store root SHA256及原run_id，DSH查询同一owner生成的ID。两Store分别召回、各自revision 1、重复导入幂等、同来源更新仍形成revision；旧run-only lesson的原字节、历史引用与检索均保留 |
+
+旧`execution:<run_id>`不静默迁移。其首次显式重新导入创建一个独立的来源限定lesson；
+旧、新经验可能同时召回。Store迁移到另一物理目录也会得到新身份；本次未新增跨目录
+身份推断、检索算法、数据库或自动迁移。事实仍为`planning_only`，不改变编辑/批准/路由权限。
+
+**执行过的定向检查。** 当前命令中的`python`为
+`C:/Users/10160/miniforge3/python.exe`（3.10.20）；Node为交接包指定的
+`C:/Users/10160/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node.exe`
+（24.19.0）。没有安装依赖或运行全仓测试。
+
+```powershell
+python -B -m pytest tests/unit/test_product_execution_query.py tests/unit/test_task_memory.py -q --tb=short --basetemp="$env:TEMP\tm-first-$PID"
+# 修前：4 failed, 32 passed，4.65s；恰为缺失阶段和跨Store复现。
+python -B -m pytest tests/unit/test_product_execution_query.py tests/unit/test_task_memory.py -q --tb=short --lf --basetemp="$env:TEMP\tm-fix-$PID"
+# 修后原失败选择：4 passed, 32 deselected，2.23s。
+python -B -m pytest tests/unit/test_product_execution_query.py tests/unit/test_task_memory.py tests/unit/test_dsh_task_memory.py tests/unit/test_planning_task_memory.py tests/unit/test_patch_investigation.py tests/unit/test_product_trace_lifecycle.py -q --tb=short -n 2 --dist=loadfile --basetemp="$env:TEMP\tm-check-$PID"
+# 最终有界checkpoint：90 passed，13.23s；含新增旧经验兼容、DSH跨来源幂等。
+python -B -m pytest tests/unit/test_local_entry.py::test_graph_terminal_result_updates_same_run_manifest tests/unit/test_product_execution.py::test_graph_terminal_persistence_preserves_owner_result_strict_roundtrip -q --tb=short --basetemp="$env:TEMP\tm-owner-$PID"
+# 两个原writer契约：2 passed，1.54s。
+$env:MOD_AGENT_PYTHON=(Get-Command python).Source
+node --test integrations/dsh-mod-agent/tests/task-status.test.mjs
+# 修前2 failed/6 passed，6.24s；修后8 passed，5.68s。
+node --test integrations/dsh-mod-agent/tests/investigation-memory.test.mjs integrations/dsh-mod-agent/tests/delivery.test.mjs
+# 10 passed，3.32s。
+node --test --test-name-pattern="a blocked delivery lookup" integrations/dsh-mod-agent/tests/task-status.test.mjs
+# 后补交付查询blocked分离检查：1 passed，0.44s；生产代码未再变。
+git diff --check
+# 通过；Git仅提示LF/CRLF策略。python -m ruff --version确认当前解释器未装ruff，不安装/扩展清理。
+```
+
+最终验证覆盖92个不同Python检查和19个不同Node检查；修前/重跑数字不重复相加，
+测试成绩不作为模型能力成绩。未触发交接中提及的旧MCP、随机ID顺序或GBK测试修正。
+
+**真实历史与DSH边界。** 已读取交接包当前任务/入口说明及原
+`tm-acceptance/planning-capture-result.json`，并对
+`planning-provider-request.json`核对其绑定SHA256。原捕获摘要为2953字符，
+发送前截停、可编辑证据ID未扩张；本轮未重跑模型，也未宣称模型有效使用了经验。
+
+原3088页面访问返回`net::ERR_CONNECTION_REFUSED`，原overlay仍指向主树。
+用同一已安装官方DSH 0.1.2-rc.1、隔离home、隔离memory root及
+`mod-memory-acceptance.patch.yml`在3089启动，未复制原凭据或修改原配置。
+官方`--dump-config`的`controlled-mod-agent`输出保存于`dsh-composed-plugin.json`，
+确认模块和repositoryRoot指向9890。宿主stdout显示3089监听，但内置浏览器打开它
+返回`net::ERR_BLOCKED_BY_CLIENT`，未进入页面、未点击命令。本轮不继续排查浏览器工具。
+
+```powershell
+node C:/Users/10160/.codex/visualizations/2026/09/20/01a0bcfe-0f51-7472-9cc4-8488db07d3a9/dsh-command-acceptance.mjs
+```
+
+此命令真实加载9890的原插件handler并执行原Python子进程，按顺序完成：
+`mod-investigate`选定First Shot历史、`mod-remember`首次保存、同命令重复返回
+`no_new_revision/reused`及相同ArtifactRef、`mod-memory First Shot timeout`显示来源/
+适用条件/未知项、`mod-status dsh_cfg_20260914_002`查回delivered/build。
+五个原始返回分别保存为`dsh-1-mod-investigate.json`至`dsh-5-mod-status.json`，
+汇总为`dsh-command-acceptance-result.json`。它们是**后台插件/子进程验收，非页面验收**。
+查询0模型、0验证、0Graph任务；仅首次保存写入隔离经验库。原001目录、原tm和原overlay
+共50个文件的前后哈希一致，见`protected-history-hashes.json`。
+
+本轮平台修复与后台纵向验收完成；剩余阻断为浏览器页面操作，主树整合/部署尚未发生。
+002为已交付历史；001与First Shot失败仍保留；经验工程接通，真实模型修复收益/完成率
+提升未验证。没有新增真实模型、外部披露、训练、产品Apply、正式Build、游戏或推送。
+
+#### 0.39.1 真实交付阻断保留、主树整合与页面补验
+
+独立复核发现首轮B修复无条件忽略`delivery.status=blocked`，会把原backend已验证的
+执行阻断退回历史`awaiting_approval`；带Build结果时甚至形成`awaiting_approval/build`。
+先用原状态命令复现Apply调用后异常、Build后保存失败两个反例及错run receipt反例，
+三项均失败。修复仅让**无execution receipt**的查询失败保留原任务状态；原backend
+已核验且run/status/scope/path一致的receipt保持真实blocked。deliveryBackend的现有
+receipt一致性检查复用于全部带receipt返回。未改变Python业务结果或历史文件。
+
+后续增量为`index.mjs`、`tests/task-status.test.mjs`、README及本审计/Active Contract/
+Project State，共六文件。逐文件核对主树现有文本后，先`git apply --check`再应用精确
+后续增量；并行RAG路径不在补丁内。本小节证据均位于前述目录的`followup/`。
+
+执行命令与结果：
+
+```powershell
+$env:MOD_AGENT_PYTHON=(Get-Command python).Source
+node --test --test-name-pattern="blocked receipt" integrations/dsh-mod-agent/tests/task-status.test.mjs
+# 修前3 failed；两种执行阻断均误显示awaiting_approval，错run未拒绝。
+node --test integrations/dsh-mod-agent/tests/task-status.test.mjs integrations/dsh-mod-agent/tests/delivery.test.mjs
+# 修后19 passed，7.19s；mod-status/mod-runs、无receipt查询失败、真实receipt、delivered均覆盖。
+python -B -m pytest tests/unit/test_dsh_deliver_run.py::test_owner_exception_after_effect_preserves_unknown_instead_of_zero tests/unit/test_dsh_deliver_run.py::test_copy_cannot_deliver_changed_source_or_dll_as_approved_product -q --tb=short --basetemp="$env:TEMP\dsh-receipt-$PID"
+# 原backend故障保存路径4 passed，6.85s；临时fixture与编译替身，不是新增产品Apply/正式Build。
+node C:/Users/10160/.codex/visualizations/2026/09/20/01a0bcfe-0f51-7472-9cc4-8488db07d3a9/followup/main-entry-acceptance.mjs
+# 主树原模块、原部署配置及原.venv：001 partial，002和mod-runs delivered/build，历史调查与原tm检索成功。
+```
+
+原3088最初无监听，按现有`dsh-demo-home`、`mod-product.patch.yml`及固定Node启动后，
+本次内置浏览器成功进入原页面。实际提交并查看六条命令，DSH持久会话事件
+`cmd-64b5eed4-1`至`cmd-64b5eed4-6`分别为001状态、002状态、历史调查、首次记忆保存、
+重复保存、经验检索。001显示partial及原失败；002显示delivered/build，查询费用0，
+历史Apply/Build未重跑。六段调查显示保留材料、请求引用及未知项。首次保存新来源限定
+lesson，第二次返回`no_new_revision/reused`和相同ArtifactRef。检索展开结果展示原
+legacy revision 2、六个来源引用、AccurateCrosshair/qwen3-coder:30b适用条件及两个未知项；
+受既有字符上限影响，本次页面检索只展示该旧经验，不宣称新旧副本都进入同一结果。
+
+输入自动化中一次多余`/mod-remembera`被普通消息入口拒绝，事件52–55为inbox与
+`turn/end reason=blocked`，无模型事件。改用准确textbox填充及提交后，上述重复保存
+成功。它是操作插曲，不作为正确命令或模型试验。证据保留完整该段事件，未删改会话。
+
+`main-entry-result.json`保存后台入口结果；`ui-command-events.json`保存六对真实页面
+command事件，`ui-event-span.json`保留包括上述拒绝在内的事件段，
+`ui-acceptance-result.json`保存来源会话路径、序号、返回哈希与幂等核验。
+页面经验卡已展开。原保护清单50个文件前后哈希仍一致；原tm仅新增来源限定lesson，
+旧经验与历史引用未迁移或覆盖。页面操作阻断已解除；模型使用经验后的修复收益仍未验证。
 
 ## 1. 结论与范围
 

@@ -1681,7 +1681,9 @@ class EvidenceDiscoverySpecialist:
                     discovery_message_bytes_by_turn
                 ),
                 "model_turn_usage": list(usage_records),
-                "model_usage_totals": _usage_totals(usage_records),
+                "model_usage_totals": _usage_totals(
+                    usage_records, expected_model_steps=model_steps_used + self._planning_model_steps_used,
+                ),
             },
             trace_refs=tuple(observation.observation_id for observation in observations),
             run_status=run_status,
@@ -5405,7 +5407,9 @@ def _model_usage_records(model: EvidenceDiscoveryModel) -> tuple[dict[str, objec
     return tuple(dict(item) for item in records if isinstance(item, dict))
 
 
-def _usage_totals(records: tuple[dict[str, object], ...]) -> dict[str, int]:
+def _usage_totals(
+    records: tuple[dict[str, object], ...], *, expected_model_steps: int | None = None,
+) -> dict[str, int | None]:
     fields = (
         "input_tokens",
         "output_tokens",
@@ -5413,15 +5417,13 @@ def _usage_totals(records: tuple[dict[str, object], ...]) -> dict[str, int]:
         "cached_input_tokens",
         "total_tokens",
     )
-    return {
-        field: sum(
-            int(record.get(field, 0))
-            for record in records
-            if isinstance(record.get(field, 0), int)
-            and not isinstance(record.get(field, 0), bool)
-        )
-        for field in fields
-    }
+    # 为什么要有它：请求原件不含服务端用量；缺失回合或计数只能保留未知，不能用部分小计冒充完整成本。
+    if ((expected_model_steps is not None and len(records) != expected_model_steps)
+            or (not records and expected_model_steps != 0)):
+        return dict.fromkeys(fields, None)
+    return {field: (sum(record[field] for record in records)
+                    if all(type(record.get(field)) is int and record[field] >= 0 for record in records)
+                    else None) for field in fields}
 
 
 def _json_sha256(value: object) -> str:

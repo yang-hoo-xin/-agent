@@ -531,7 +531,29 @@ def resolve_requirement_coverage(
                 )
             )
         ):
-            raise ValueError("REQUIREMENT_COVERAGE_EDIT_TARGET_SELECTION_INVALID")
+            error = ValueError("REQUIREMENT_COVERAGE_EDIT_TARGET_SELECTION_INVALID")
+            # Diagnostic projection only: keep the original rejection and fields unchanged.
+            error.diagnostic = {
+                "relation_index": relation_index,
+                "relationship": relationship,
+                "parent_roles": [requirement["role"] for requirement in materialized_projection["requirements"]
+                                 if requirement["requirement_id"] in relation["parent_requirement_ids"]],
+                "edit_target_evidence_ids": edit_target_ids,
+                "evidence_ids": evidence_ids,
+                "unresolved_gaps": unresolved_gaps,
+                "rule": "Nonempty edit hints require support, a change parent, no unresolved gaps, and a unique subset of cited evidence.",
+                "relation": dict(relation),
+                "violated_rules": [name for name, violated in (
+                    ("edit_targets_must_be_an_array", not isinstance(edit_target_ids, list)),
+                    ("edit_targets_must_be_unique", isinstance(edit_target_ids, list) and len(edit_target_ids) != len(set(edit_target_ids))),
+                    ("edit_targets_must_be_known_evidence", isinstance(edit_target_ids, list) and any(value not in item_by_id for value in edit_target_ids)),
+                    ("edit_targets_must_be_cited_evidence_subset", isinstance(edit_target_ids, list) and not set(edit_target_ids).issubset(evidence_ids)),
+                    ("nonempty_edit_targets_require_support", bool(edit_target_ids) and relationship != "support"),
+                    ("nonempty_edit_targets_require_change_parent", bool(edit_target_ids) and not relation_has_change_requirement),
+                    ("nonempty_edit_targets_require_no_unresolved_gaps", bool(edit_target_ids) and bool(unresolved_gaps)),
+                ) if violated],
+            }
+            raise error
         normalized_edit_target_ids = sorted(
             str(value) for value in (edit_target_ids or [])
         )
@@ -641,7 +663,11 @@ def resolve_requirement_coverage(
         item = item_by_id[evidence_id]
         exact_target_identity = is_exact_edit_target_evidence(item)
         if explicit_edit_targets and not exact_target_identity:
-            raise ValueError("REQUIREMENT_COVERAGE_EDIT_TARGET_IDENTITY_INVALID")
+            error = ValueError("REQUIREMENT_COVERAGE_EDIT_TARGET_IDENTITY_INVALID")
+            error.diagnostic = {"evidence_id": evidence_id,
+                "violated_rules": ["edit_targets_require_exact_target_source_identity"],
+                "rule": "Edit hints must satisfy is_exact_edit_target_evidence; API or incomplete source identities cannot be edit targets."}
+            raise error
         if exact_target_identity:
             edit_target_evidence_ids.append(evidence_id)
     if legacy_v3_semantics:
@@ -1151,6 +1177,12 @@ def _input_obligations(
 ) -> list[dict[str, object]]:
     _reject_feature_spec_derived_fields(feature_data)
     feature_hash = feature_spec_payload_sha256(feature_data)
+    interpretation = feature_data.get("request_interpretation")
+    decomposable = (isinstance(interpretation, Mapping)
+                    and interpretation.get("schema_version") == "request_interpretation_v2")
+    # Versioned role expansion preserves historical input-obligation identities.
+    # 为什么要有它：修后的完整需求可做语义分解，旧产物仍按原契约读取。
+    semantic_roles = ("change", "preservation", "pre_patch_evidence")
     sources: list[
         tuple[str, int, str, tuple[str, ...], bool, tuple[str, ...]]
     ] = [
@@ -1158,7 +1190,7 @@ def _input_obligations(
             "user_request",
             0,
             _required_string(feature_data, "user_request"),
-            ("change", "preservation"),
+            semantic_roles if decomposable else ("change", "preservation"),
             True,
             (),
         ),
@@ -1166,11 +1198,21 @@ def _input_obligations(
             "target_behavior",
             0,
             _required_string(feature_data, "target_behavior"),
-            ("change",),
+            semantic_roles if decomposable else ("change",),
             True,
             (),
         ),
     ]
+    from src.mod_agent.planning.clarified_request import ANCHORED_VERSION, projection_context
+    clarified = projection_context(_required_string(feature_data, "user_request"))
+    if clarified is not None and clarified["schema_version"] == ANCHORED_VERSION:
+        if _required_string(feature_data, "target_behavior") != _required_string(feature_data, "user_request"):
+            raise ValueError("CLARIFIED_PRODUCT_TARGET_BEHAVIOR_CHANGED")
+        eligible = {anchor["unit_id"] for anchor in clarified["eligible_context_anchors"]}
+        # 为什么要有它：逐原文单元承接业务义务；仅已验证路由范围允许显式context处置，不把整wrapper重复当Mod行为。
+        sources = [("clarified_user_unit", index, unit["text"], semantic_roles, True,
+                    ("scope_boundary",) if unit["unit_id"] in eligible else ())
+                   for index, unit in enumerate(clarified["user_units"], 1)]
     sources.extend(
         (
             "evidence_requirements",

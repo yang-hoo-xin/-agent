@@ -1,0 +1,52 @@
+# Prepared local judge profile, not a real scoring acceptance or run approval.
+# provider=openai selects the existing OpenAI-compatible wrapper.
+# api_key=ollama is a non-secret SDK placeholder ignored by the local server.
+# Context capacity metadata does not establish the server effective num_ctx.
+# Ragas additionally supplies its current default top_p=0.1.
+llm:
+  provider: openai
+  model: qwen3-coder:30b
+  base_url: http://127.0.0.1:11434/v1
+  api_key: ollama
+  azure_endpoint: null
+  deployment_name: null
+  api_version: null
+  temperature: 0.0
+  max_tokens: 4096
+embedding:
+  provider: openai
+  model: bge-m3:latest
+  base_url: http://127.0.0.1:11434/v1
+  api_key: ollama
+  azure_endpoint: null
+  deployment_name: null
+  api_version: null
+  dimensions: 1024
+evaluation:
+  enabled: true
+  provider: ragas
+  metrics:
+  - faithfulness
+  - answer_relevancy
+  - context_precision
+vector_store:
+  provider: chroma
+  persist_directory: ./artifacts/ragas_provider_acceptance/unused_vector_store
+  collection_name: unused_judge_collection
+retrieval:
+  dense_enabled: false
+  dense_provider: disabled
+  dense_top_k: 3
+  sparse_top_k: 3
+  fusion_top_k: 3
+  rrf_k: 60
+rerank:
+  enabled: false
+  provider: none
+  model: unused
+  top_k: 3
+observability:
+  log_level: INFO
+  trace_enabled: false
+  trace_file: ./artifacts/ragas_provider_acceptance/unused_trace.jsonl
+  structured_logging: true

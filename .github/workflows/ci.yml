@@ -38,16 +38,65 @@ jobs:
       - name: Ruff fatal errors
         run: uv run --frozen ruff check --select E9,F63,F7 src tests scripts main.py
 
+      # 为什么要有它：缺项和失败不能变成评测成绩，真实临时文件的治理边界需要在每次变更后回归。
+      - name: Offline governance scenario gate
+        run: |
+          uv run --frozen pytest tests/unit/test_governance_scenario_measurement.py -k 'measurement_' -q -o addopts=
+          uv run --frozen python -B scripts/run_governance_scenarios.py --output "${{ runner.temp }}/governance-${{ github.run_id }}-${{ github.run_attempt }}"
+
+      # 为什么要有它：本轮真实失败的需求解释、检索、反馈与委托执行反例进入现有离线回归，避免再次阻断交付。
+      # 为什么要有它：新增覆盖模型猜想误成约束、公开反馈隔离、重复反馈预算、真实检索类型和Critic误标，复用本检查而不新增流水线。
+      # 为什么要有它：同源复用、逐次调用预算、失败 stdout 和回答实际用量的反例进入同一检查，防止丢失原因、成本或重复预留。
+      # 为什么要有它：续接校准、嵌入用量和固定起点定位计时已有真实测量用途，相关反例需随现有选集回归。
+      # 为什么要有它：可选失败诊断须守住共享额度、真实候选和原验收，重复候选夹具也须确实重复代码。
+      # 为什么要有它：接手编译失败工程须同时守住诊断、保存续跑、候选编译和交付，相关反例随入口回归。
       - name: Supported internal-alpha checkpoint (not full unit suite)
+        # 为什么要有它：完整组合新增的成本、存储隔离、查询、真实 stdio 合同和 Reload 反例进入现有检查；离线 CI 不冒充真实模型验收。
+        # 为什么要有它：模块评测发现的非有限预算与编译/验收 DLL 错绑，以及统计缺测和去重检查随 PR 回归。
         run: >-
           uv run --frozen pytest -n 2
+          tests/unit/test_module_budget_finiteness.py
+          tests/unit/test_member_repair_artifact_binding.py
+          tests/unit/test_module_evaluation_measurement.py
           tests/unit/test_fresh_coverage_cli.py
           tests/unit/test_requirement_coverage.py
+          tests/unit/test_projection_missing_obligation_feedback.py
+          tests/unit/test_projection_conflict_feedback.py
+          tests/unit/test_planning_evidence_requirements.py
+          tests/unit/test_planning_target_correction.py
+          tests/unit/test_runtime_exclusion_interpretation.py
+          tests/unit/test_upstream_model_view.py
+          tests/unit/test_rg_live_identifier_ranking.py
+          tests/unit/test_noop_submission_feedback.py
+          tests/unit/test_upstream_diagnostic_authority.py
+          tests/unit/test_public_development_feedback.py
+          tests/unit/test_behavior_feedback_view.py
+          tests/unit/test_patch_visible_revision_context.py
+          tests/unit/test_repair_diagnosis.py
+          tests/unit/test_behavior_diagnosis_loop.py
+          tests/unit/test_patch_recovery_worker.py
+          tests/unit/test_unchanged_evidence_reuse.py
+          tests/unit/test_context_calibration_transfer.py
+          tests/unit/test_reassessment_source_reobservation.py
+          tests/unit/test_product_trial_batch.py
+          tests/unit/test_evaluation_answer_generation.py
+          tests/unit/test_embedding_usage_observation.py
+          tests/unit/test_localization_timing.py
+          tests/unit/test_custom_evaluator.py
+          tests/unit/test_self_rag_critic.py
+          tests/unit/test_self_rag_critic_v2.py
+          tests/unit/test_task_delegation.py
           tests/unit/test_product_execution.py
           tests/unit/test_product_execution_projection_v2.py
+          tests/unit/test_task_measurement.py
+          tests/unit/test_frozen_product.py
+          tests/unit/test_source_query_local_bodies.py
+          tests/unit/test_planning_transport_body_capture.py
+          tests/unit/test_patch_transport_body_capture.py
           tests/unit/test_artifact_contract.py
           tests/unit/test_artifact_store.py
           tests/unit/test_workflow_graph.py
+          tests/unit/test_workflow_cleanup.py
           tests/unit/test_trace_context.py
           tests/unit/test_trace_service.py
           tests/unit/test_composite_evaluator.py
@@ -55,8 +104,69 @@ jobs:
           tests/unit/test_ragas_evaluator.py
           tests/unit/test_mod_agent_cli.py
           tests/unit/test_local_entry.py
+          tests/unit/test_baseline_source_repair.py
+          tests/unit/test_compilation_candidate_entry.py
+          tests/unit/test_compilation_candidate_continuation.py
+          tests/unit/test_planning_candidate_scope.py
+          tests/unit/test_full_project_compilation.py
+          tests/unit/test_compilation_feedback.py
+          tests/unit/test_dependency_documentation.py
+          tests/unit/test_dsh_request_routing.py
+          tests/unit/test_clarification_routing.py
+          tests/unit/test_empty_findings_schema.py
+          tests/unit/test_clarified_requirement_projection.py
+          tests/unit/test_findings_planning_basis.py
+          tests/unit/test_dependency_api_config.py
+          tests/unit/test_query_relation_contract.py
+          tests/unit/test_small_project_context.py
+          tests/unit/test_clarification_state_paths.py
+          tests/unit/test_ingestion_combination.py
+          tests/unit/test_ingestion_model_cost.py
+          tests/unit/test_storage_root.py
+          tests/unit/test_query_service.py
+          tests/unit/test_query_native_rewrite.py
+          tests/unit/test_llm_reranker_native.py
+          tests/unit/test_document_knowledge.py
+          tests/unit/test_native_findings_contract.py
+          tests/unit/test_dense_collection_scope.py
+          tests/unit/test_query_real_counterexamples.py
+          tests/unit/test_api_document_refinement.py
+          tests/unit/test_member_repair_learning.py
+          tests/unit/test_query_stream_entry.py
+          tests/unit/test_mcp_strict_contract.py
+          tests/integration/test_mcp_strict_stdio.py
+          tests/unit/test_dsh_clarification_entry.py
+          tests/unit/test_dsh_followup_project.py
+          tests/unit/test_startup_notice_verification.py
+          tests/unit/test_startup_notice_evaluator.py
+          tests/unit/test_startup_notice_reload_evaluator.py
+          tests/unit/test_reload_trial_drivers.py
+          tests/unit/test_memory_trial_driver.py
+          tests/unit/test_logging_transfer_evaluator.py
+          tests/unit/test_clarification_delivery_gate.py
+          tests/unit/test_spread_api_evaluator.py
+          tests/unit/test_config_merge_evaluator.py
+          tests/unit/test_optional_compile_dependencies.py
+          tests/unit/test_interrupted_patch_admission.py
+          tests/unit/test_interrupted_product_graph.py
+          tests/unit/test_interrupted_patch_entry.py
+          tests/unit/test_tool_effects.py
+          tests/unit/test_request_identifier_retrieval.py
+          tests/unit/test_rg_live_multiword_identifiers.py
+          tests/unit/test_findings_input_text_refs.py
+          tests/unit/test_findings_input_history_compatibility.py
+          tests/unit/test_saved_candidate_reverification.py
+          tests/unit/test_candidate_reverification_graph.py
+          tests/unit/test_candidate_verification_continuation.py
+          tests/unit/test_new_mod_project.py
+          tests/unit/test_dsh_new_project.py
+          tests/unit/test_initial_findings_continuation.py
+          tests/unit/test_saved_reassessment.py
+          tests/unit/test_isolated_delivery_adapter.py
           tests/unit/test_codex_context_hooks.py
           tests/unit/test_project_skill_scripts.py
+          tests/unit/test_project_skill_maintenance.py
+          tests/unit/test_project_skill_safety.py
           tests/unit/test_build_adapter.py
           tests/unit/test_runtime_deployment.py
           tests/unit/test_repair_loop.py

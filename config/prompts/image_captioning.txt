@@ -16,6 +16,10 @@ For charts or data visualizations:
 1. **Extract key data points** - Specific numbers, trends, comparisons
 2. **State conclusions** - What does the data show?
 
+For tables and repeated observations, preserve each visible row label and its corresponding column values, including repeated values; mark unreadable cells as unknown rather than guessing. 为什么要有它：逐行对应关系决定数字属于哪次观察，重复值也不能被省略成一次观察。
+Distinguish per-row measurements from totals. If calculating an aggregate, name the rows and column being aggregated and state that it is calculated; never describe one repeated row value as the total. Avoid an aggregate when the row meanings do not support addition. 为什么要有它：每行相同的计数不等于全部行的合计，明确计算范围才能避免把局部数值误当总体。
+Preserve visible provenance, captions and scope limitations. Identify a rendered report or derived observation as such, and keep observed data separate from inferred conclusions or claims about an unobserved environment. 为什么要有它：图像摘要须保留资料的派生来源和适用范围，不能把报告数据扩大成未经观察的运行结论。
+
 CRITICAL: Do NOT just say "This is a screenshot of a document" - you must EXTRACT the actual content.
 Output a comprehensive summary in the same language as the image content (e.g., Chinese text should be summarized in Chinese).
 Output as PLAIN TEXT only. Do NOT use any Markdown formatting such as headings (#, ##, ###), bold (**), italic (*), horizontal rules (---), or bullet markers (- or *).

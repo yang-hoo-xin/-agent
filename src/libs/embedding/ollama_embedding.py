@@ -8,7 +8,9 @@ nomic-embed-text, mxbai-embed-large, etc. on local hardware.
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, List, Optional
+import math
+import time
+from typing import Any, List, Optional
 
 from src.libs.embedding.base_embedding import BaseEmbedding
 
@@ -67,12 +69,17 @@ class OllamaEmbedding(BaseEmbedding):
         # Base URL: explicit > env var > default
         self.base_url = (
             base_url 
+            or getattr(settings.embedding, "base_url", None)
             or os.environ.get("OLLAMA_BASE_URL") 
             or self.DEFAULT_BASE_URL
         )
         
         # Timeout: explicit > default
-        self.timeout = timeout or self.DEFAULT_TIMEOUT
+        self.timeout = timeout or getattr(settings.embedding, "timeout", self.DEFAULT_TIMEOUT)
+        self.transport = getattr(settings.embedding, "transport", "legacy")
+        if self.transport not in {"batch", "legacy"}:
+            raise ValueError("OLLAMA_EMBEDDING_TRANSPORT_INVALID")
+        self.last_observation = None
         
         # Dimension: settings > default
         self.dimension = getattr(settings.embedding, 'dimensions', self.DEFAULT_DIMENSION)
@@ -107,6 +114,22 @@ class OllamaEmbedding(BaseEmbedding):
         """
         # Validate input
         self.validate_texts(texts)
+        if self.transport == "batch":
+            return self._embed_batch(texts, trace)
+        started = time.perf_counter()
+        self.last_observation = {"transport": "legacy", "endpoint": "/api/embeddings", "request_count": 0,
+                                 "input_count": len(texts), "model": self.model, "status": "failed"}
+        try:
+            result = self._embed_legacy(texts)
+            self.last_observation["status"] = "succeeded"
+            return result
+        finally:
+            self.last_observation["elapsed_ms"] = (time.perf_counter() - started) * 1000
+            if trace is not None:
+                trace.record_stage("embedding_transport", dict(self.last_observation),
+                                   elapsed_ms=self.last_observation["elapsed_ms"])
+
+    def _embed_legacy(self, texts):
         
         try:
             import httpx
@@ -130,6 +153,7 @@ class OllamaEmbedding(BaseEmbedding):
             
             try:
                 with httpx.Client(timeout=self.timeout) as client:
+                    self.last_observation["request_count"] += 1
                     response = client.post(url, json=payload)
                     response.raise_for_status()
                     
@@ -174,6 +198,40 @@ class OllamaEmbedding(BaseEmbedding):
                 ) from e
         
         return embeddings
+
+    def _embed_batch(self, texts, trace):
+        import httpx
+
+        started = time.perf_counter()
+        observation = {"transport": "batch", "endpoint": "/api/embed", "request_count": 0,
+                       "input_count": len(texts), "model": self.model, "status": "failed"}
+        self.last_observation = observation
+        try:
+            with httpx.Client(timeout=self.timeout, trust_env=False) as client:
+                observation["request_count"] = 1
+                response = client.post(self.base_url.rstrip("/") + "/api/embed",
+                    json={"model": self.model, "input": texts, "truncate": False})
+                response.raise_for_status()
+                result = response.json()
+            vectors = result.get("embeddings")
+            if result.get("model") is not None and result["model"] != self.model:
+                raise OllamaEmbeddingError("OLLAMA_EMBEDDING_MODEL_CHANGED")
+            if (not isinstance(vectors, list) or len(vectors) != len(texts)
+                    or any(not isinstance(vector, list) or len(vector) != self.dimension
+                           or any(type(value) not in (int, float) or not math.isfinite(value) for value in vector)
+                           for vector in vectors)):
+                raise OllamaEmbeddingError("OLLAMA_EMBEDDING_SHAPE_INVALID")
+            observation.update(status="succeeded", response_model=result.get("model"),
+                prompt_eval_count=result.get("prompt_eval_count"),
+                total_duration_ns=result.get("total_duration"), load_duration_ns=result.get("load_duration"))
+            return vectors
+        except (httpx.HTTPError, ValueError, TypeError) as error:
+            observation["error_type"] = type(error).__name__
+            raise OllamaEmbeddingError("OLLAMA_BATCH_EMBEDDING_FAILED: " + type(error).__name__) from error
+        finally:
+            observation["elapsed_ms"] = (time.perf_counter() - started) * 1000
+            if trace is not None:
+                trace.record_stage("embedding_transport", dict(observation), elapsed_ms=observation["elapsed_ms"])
     
     def get_dimension(self) -> int:
         """Get the dimensionality of embeddings produced by this provider.

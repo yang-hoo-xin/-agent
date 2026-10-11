@@ -190,13 +190,14 @@ class HybridSearch:
         if retrieval_config is None:
             return HybridSearchConfig()
         
+        dense_enabled = bool(getattr(retrieval_config, "dense_enabled", False))
         return HybridSearchConfig(
             dense_top_k=getattr(retrieval_config, 'dense_top_k', 20),
             sparse_top_k=getattr(retrieval_config, 'sparse_top_k', 20),
             fusion_top_k=getattr(retrieval_config, 'fusion_top_k', 10),
-            enable_dense=True,
+            enable_dense=dense_enabled,
             enable_sparse=True,
-            parallel_retrieval=True,
+            parallel_retrieval=dense_enabled,
             metadata_filter_post=True,
         )
     
@@ -207,6 +208,7 @@ class HybridSearch:
         filters: Optional[Dict[str, Any]] = None,
         trace: Optional[Any] = None,
         return_details: bool = False,
+        processed_query: Optional[ProcessedQuery] = None,
     ) -> List[RetrievalResult] | HybridSearchResult:
         """Perform hybrid search combining Dense and Sparse retrieval.
         
@@ -240,9 +242,10 @@ class HybridSearch:
         
         # Step 1: Process query
         _t0 = time.monotonic()
-        processed_query = self._process_query(query)
+        processing_performed = processed_query is None
+        processed_query = processed_query or self._process_query(query)
         _elapsed = (time.monotonic() - _t0) * 1000.0
-        if trace is not None:
+        if trace is not None and processing_performed:
             trace.record_stage("query_processing", {
                 "method": "query_processor",
                 "original_query": query,
@@ -475,7 +478,7 @@ class HybridSearch:
                         sparse_error = error
                 except Exception as e:
                     error_msg = f"{name} retrieval failed with exception: {e}"
-                    logger.error(error_msg)
+                    logger.error("Parallel retrieval failed (%s)", type(e).__name__)
                     if name == 'dense':
                         dense_error = error_msg
                     else:
@@ -522,7 +525,7 @@ class HybridSearch:
             return results, None
         except Exception as e:
             error_msg = f"Dense retrieval error: {e}"
-            logger.error(error_msg)
+            logger.error("Dense retrieval failed (%s)", type(e).__name__)
             if trace is not None:
                 trace.record_stage("dense_retrieval", {
                     "method": "dense",
@@ -576,7 +579,7 @@ class HybridSearch:
             return results, None
         except Exception as e:
             error_msg = f"Sparse retrieval error: {e}"
-            logger.error(error_msg)
+            logger.error("Sparse retrieval failed (%s)", type(e).__name__)
             return None, error_msg
     
     def _fuse_results(

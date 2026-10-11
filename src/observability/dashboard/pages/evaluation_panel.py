@@ -9,6 +9,7 @@ Layout:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -84,6 +85,14 @@ def render() -> None:
         help="Path to the golden_test_set.json file.",
     )
     golden_path = Path(golden_path_str)
+    settings_path = st.text_input(
+        "Retrieval and Answer Settings Path (optional)", key="eval_settings_path",
+        help="Explicit settings YAML; blank uses the application default.",
+    ).strip()
+    judge_settings_path = st.text_input(
+        "Judge Settings Path (optional)", key="eval_judge_settings_path",
+        help="Separate evaluator model and embedding settings; blank reuses retrieval settings.",
+    ).strip()
 
     # Validate golden set exists
     if not golden_path.exists():
@@ -93,50 +102,48 @@ def render() -> None:
             "See `tests/fixtures/golden_test_set.json` for the format."
         )
 
-    # ── Answer Input Section (for Ragas) ───────────────────────────
+    # ── Answer provenance ──────────────────────────────────────────
     user_answers: Dict[int, str] = {}
-    if backend == "ragas" and golden_path.exists():
+    answer_mode = "none"
+    if backend in ("ragas", "composite") and golden_path.exists():
         st.divider()
-        st.subheader("✏️ Provide Answers (回答输入)")
+        st.subheader("回答来源")
+        answer_mode = st.radio(
+            "Answer source", options=["manual", "generated", "none"], key="eval_answer_mode",
+            format_func=lambda value: {"manual": "手填实际系统答案", "generated": "使用配置中的模型生成",
+                                       "none": "不提供答案（只测可用的检索指标）"}[value],
+        )
         st.caption(
-            "**RAGAS 需要 Query + Context + Answer 三要素来评估。**"
-            "日志中仅包含 Query 和检索到的上下文（Context），"
-            "请为每个测试用例填写实际的系统回答（Answer），"
-            "以便获得有意义的 faithfulness 和 answer_relevancy 评分。"
+            "模型生成使用当前 llm 配置，输入为问题与本次检索上下文。"
+            "手填项必须是实际系统答案；参考答案单独展示，不会自动充当系统答案或送入生成器。"
+            "未提供答案的用例不计算答案质量指标。"
         )
         try:
             _test_cases = _load_golden_queries(golden_path)
+            dataset_identity = hashlib.sha256(golden_path.read_bytes()).hexdigest()[:16]
             for tc_idx, tc in enumerate(_test_cases):
-                ans_key = f"eval_answer_tc_{tc_idx}"
-                default_val = tc.get("reference_answer", "")
                 q_preview = tc["query"][:60] + ("…" if len(tc["query"]) > 60 else "")
-                user_ans = st.text_area(
-                    f"Q{tc_idx + 1}: {q_preview}",
-                    value=st.session_state.get(ans_key, default_val),
-                    height=80,
-                    key=ans_key,
-                    placeholder="请输入该问题对应的系统回答…",
-                    help=(
-                        f"Query: {tc['query']}\n\n"
-                        "填写 LLM 生成的回答或期望的回答文本。"
-                        "Ragas 会基于此评估 faithfulness（忠实度）和 answer_relevancy（相关性）。"
-                    ),
-                )
-                if user_ans.strip():
-                    user_answers[tc_idx] = user_ans.strip()
-
-            # Show fill status
-            filled = len(user_answers)
-            total = len(_test_cases)
-            if filled < total:
-                st.warning(f"⚠️ 已填写 {filled}/{total} 个回答。未填写的用例将使用检索片段拼接作为回答（评估结果可能不准确）。")
-            else:
-                st.success(f"✅ 所有 {total} 个回答已填写。")
+                if answer_mode == "manual":
+                    user_ans = st.text_area(
+                        f"Q{tc_idx + 1}: {q_preview}", value="", height=80,
+                        key=f"eval_actual_answer_{dataset_identity}_{tc_idx}",
+                        placeholder="请输入该问题对应的实际系统回答…",
+                        help=f"Query: {tc['query']}\n填写实际输出，不填写期望答案。",
+                    )
+                    if user_ans.strip():
+                        user_answers[tc_idx] = user_ans
+                if tc.get("reference_answer") is not None:
+                    with st.expander(f"Q{tc_idx + 1} 参考答案（非系统输出）"):
+                        st.text(tc["reference_answer"])
+            if answer_mode == "manual" and len(user_answers) < len(_test_cases):
+                st.warning(f"已填写 {len(user_answers)}/{len(_test_cases)} 个实际答案。缺失项保持未测量。")
         except Exception as exc:
             st.warning(f"无法加载测试用例预览: {exc}")
 
     # ── Run Evaluation ─────────────────────────────────────────────
     st.divider()
+    stop_on_failure = st.checkbox("Stop calls after the first failed case", value=True,
+                                  key="eval_stop_on_failure")
 
     run_clicked = st.button(
         "▶️  Run Evaluation",
@@ -152,7 +159,25 @@ def render() -> None:
             top_k=int(top_k),
             collection=collection.strip() or None,
             user_answers=user_answers if user_answers else None,
+            answer_mode=answer_mode,
+            settings_path=Path(settings_path) if settings_path else None,
+            judge_settings_path=Path(judge_settings_path) if judge_settings_path else None,
+            stop_on_failure=stop_on_failure,
         )
+
+    st.divider()
+    st.subheader("Review a saved CLI report")
+    report_path = st.text_input("Saved Evaluation Report Path", key="eval_report_path")
+    if st.button("View Report", key="eval_view_report", disabled=not report_path.strip()):
+        try:
+            saved_report = json.loads(Path(report_path.strip()).read_text(encoding="utf-8"))
+            if not isinstance(saved_report, dict) or not isinstance(saved_report.get("query_results"), list):
+                raise ValueError("Expected an evaluation report with query_results.")
+            st.info("显示已保存的运行结果；本次查看没有重新检索、生成或评分。")
+            _render_aggregate_metrics(saved_report)
+            _render_query_details(saved_report)
+        except (OSError, ValueError, TypeError) as exc:
+            st.error(f"无法读取评测报告: {exc}")
 
     # ── Historical Results ─────────────────────────────────────────
     st.divider()
@@ -165,6 +190,10 @@ def _run_evaluation(
     top_k: int,
     collection: Optional[str],
     user_answers: Optional[Dict[int, str]] = None,
+    answer_mode: str = "manual",
+    settings_path: Path | None = None,
+    judge_settings_path: Path | None = None,
+    stop_on_failure: bool = False,
 ) -> None:
     """Execute an evaluation run and display results.
 
@@ -180,6 +209,10 @@ def _run_evaluation(
                 top_k=top_k,
                 collection=collection,
                 user_answers=user_answers,
+                answer_mode=answer_mode,
+                settings_path=settings_path,
+                judge_settings_path=judge_settings_path,
+                stop_on_failure=stop_on_failure,
             )
         except Exception as exc:
             st.error(f"❌ Evaluation failed: {exc}")
@@ -187,7 +220,10 @@ def _run_evaluation(
             return
 
     # ── Display results ────────────────────────────────────────────
-    st.success("✅ Evaluation complete!")
+    if report_dict["measurement_status"] == "complete":
+        st.success("测量完成。分数表示评测结果，不代表所有回答正确。")
+    else:
+        st.warning(f"测量状态：{report_dict['measurement_status']}。请检查缺失项、失败原因与实际分母。")
 
     _render_aggregate_metrics(report_dict)
     _render_query_details(report_dict)
@@ -202,6 +238,10 @@ def _execute_evaluation(
     top_k: int,
     collection: Optional[str],
     user_answers: Optional[Dict[int, str]] = None,
+    answer_mode: str = "manual",
+    settings_path: Path | None = None,
+    judge_settings_path: Path | None = None,
+    stop_on_failure: bool = False,
 ) -> Dict[str, Any]:
     """Run the evaluation pipeline and return the report dict.
 
@@ -212,26 +252,47 @@ def _execute_evaluation(
 
     from src.core.settings import load_settings
     from src.libs.evaluator.evaluator_factory import EvaluatorFactory
-    from src.observability.evaluation.eval_runner import EvalRunner, load_test_set
-
-    settings = load_settings()
-
-    # Override evaluator provider from UI selection — build a new full
-    # Settings object so that RagasEvaluator can still access .llm / .embedding.
-    eval_settings = settings.evaluation
-    overridden_eval = type(eval_settings)(
-        enabled=True,
-        provider=backend,
-        metrics=eval_settings.metrics if hasattr(eval_settings, "metrics") else [],
+    from src.observability.evaluation.answer_generation import (
+        LLMAnswerGenerator,
+        evaluation_run_metadata,
     )
-    # Replace only the evaluation sub-config in the full settings
-    settings_with_override = dc_replace(settings, evaluation=overridden_eval)
+    from src.observability.evaluation.eval_runner import EvalRunner
 
-    evaluator = EvaluatorFactory.create(settings_with_override)
+    if answer_mode not in ("manual", "generated", "none"):
+        raise ValueError("Unknown answer source.")
+    if user_answers and answer_mode != "manual":
+        raise ValueError("Actual answer overrides require manual mode.")
 
-    # Try to create HybridSearch (optional – works without if not configured)
+    settings = load_settings(settings_path) if settings_path is not None else load_settings()
+    judge_settings = load_settings(judge_settings_path) if judge_settings_path is not None else settings
+
+    # The UI's composite option explicitly means these two existing backends.
+    # EvaluationSettings has no backends field; use the original constructor's
+    # explicit composition seam and keep each child's supported metric names.
+    from src.libs.evaluator.custom_evaluator import CustomEvaluator
+    from src.observability.evaluation.ragas_evaluator import SUPPORTED_METRICS
+
+    def selected_settings(provider, supported):
+        metrics = [metric for metric in judge_settings.evaluation.metrics if metric in supported]
+        return dc_replace(judge_settings, evaluation=dc_replace(
+            judge_settings.evaluation, enabled=True, provider=provider, metrics=metrics))
+
+    custom_settings = selected_settings("custom", CustomEvaluator.SUPPORTED_METRICS)
+    ragas_settings = selected_settings("ragas", SUPPORTED_METRICS)
+    if backend == "composite":
+        evaluator = EvaluatorFactory.create(
+            dc_replace(judge_settings, evaluation=dc_replace(judge_settings.evaluation, enabled=True, provider=backend)),
+            evaluators=[EvaluatorFactory.create(custom_settings), EvaluatorFactory.create(ragas_settings)],
+        )
+    else:
+        evaluator = EvaluatorFactory.create(ragas_settings if backend == "ragas" else custom_settings)
+
+    # A public evaluation needs an initialized retriever; do not silently
+    # replace an initialization failure with an empty context evaluation.
     target_collection = collection or "default"
     hybrid_search = _try_create_hybrid_search(settings, target_collection)
+    if hybrid_search is None:
+        raise RuntimeError("检索初始化失败；本次未生成答案或执行评分。请检查索引与检索配置。")
 
     # Create reranker if enabled
     reranker = None
@@ -244,12 +305,14 @@ def _execute_evaluation(
         logger.warning("Could not create reranker: %s", exc)
 
     # Build answer_override map: index → user-provided answer text
-    # EvalRunner will use these instead of auto-generating from chunks.
+    # EvalRunner preserves the explicitly selected answer source.
     runner = EvalRunner(
         settings=settings,
         hybrid_search=hybrid_search,
         evaluator=evaluator,
         answer_overrides=user_answers,
+        answer_generator=LLMAnswerGenerator(settings) if answer_mode == "generated" else None,
+        synthetic_fallback=False,
         reranker=reranker,
     )
 
@@ -257,6 +320,12 @@ def _execute_evaluation(
         test_set_path=golden_path,
         top_k=top_k,
         collection=collection,
+        stop_on_failure=stop_on_failure,
+        run_metadata=evaluation_run_metadata(
+            settings, judge_settings, test_set_path=golden_path, collection=collection,
+            top_k=top_k, answer_mode=answer_mode,
+            settings_path=settings_path, judge_settings_path=judge_settings_path,
+        ),
     )
 
     return report.to_dict()
@@ -269,9 +338,9 @@ def _try_create_hybrid_search(settings: Any, collection: str = "default") -> Any
     (e.g., no indexed data).
     """
     try:
-        from src.core.query_engine.query_processor import QueryProcessor
-        from src.core.query_engine.hybrid_search import create_hybrid_search
         from src.core.query_engine.dense_retriever import create_dense_retriever
+        from src.core.query_engine.hybrid_search import create_hybrid_search
+        from src.core.query_engine.query_processor import QueryProcessor
         from src.core.query_engine.sparse_retriever import create_sparse_retriever
         from src.ingestion.storage.bm25_indexer import BM25Indexer
         from src.libs.embedding.embedding_factory import EmbeddingFactory
@@ -309,23 +378,29 @@ def _try_create_hybrid_search(settings: Any, collection: str = "default") -> Any
 def _render_aggregate_metrics(report: Dict[str, Any]) -> None:
     """Display aggregate metrics as metric cards."""
     st.subheader("📊 Aggregate Metrics")
+    if report.get("run_metadata"):
+        with st.expander("Run identity and configuration"):
+            st.json(report["run_metadata"])
 
     agg = report.get("aggregate_metrics", {})
 
     if not agg:
         st.info("No aggregate metrics available.")
-        return
+    else:
+        cols = st.columns(min(len(agg), 4))
+        for idx, (name, value) in enumerate(sorted(agg.items())):
+            with cols[idx % len(cols)]:
+                st.metric(label=name.replace("_", " ").title(), value=f"{value:.4f}")
 
-    cols = st.columns(min(len(agg), 4))
-    for idx, (name, value) in enumerate(sorted(agg.items())):
-        with cols[idx % len(cols)]:
-            st.metric(
-                label=name.replace("_", " ").title(),
-                value=f"{value:.4f}",
-            )
+    counts = report.get("metric_measurements", {})
+    if counts:
+        st.dataframe([{"metric": metric, **values} for metric, values in sorted(counts.items())],
+                     use_container_width=True)
+        st.caption("均值仅使用 observed/scored 项；total 是全部用例，failed_to_measure 与 not_applicable 不计为零分。")
 
     st.caption(
         f"Evaluator: **{report.get('evaluator_name', '—')}** · "
+        f"Measurement: **{report.get('measurement_status', 'unknown')}** · "
         f"Queries: **{report.get('query_count', 0)}** · "
         f"Total time: **{report.get('total_elapsed_ms', 0):.0f} ms**"
     )
@@ -356,6 +431,8 @@ def _render_query_details(report: Dict[str, Any]) -> None:
             f"**Q{idx + 1}**: {query[:80]} — {elapsed:.0f} ms — {metric_summary}",
             expanded=False,
         ):
+            st.json({key: qr.get(key) for key in ("retrieval_measurement", "answer_measurement",
+                                                 "evaluator_measurement", "metric_measurements")})
             # Metrics
             if metrics:
                 mcols = st.columns(min(len(metrics), 4))
@@ -368,12 +445,18 @@ def _render_query_details(report: Dict[str, Any]) -> None:
             if chunks:
                 st.markdown(f"**Retrieved Chunks** ({len(chunks)}):")
                 st.code(", ".join(chunks[:20]), language=None)
+            for context in qr.get("retrieved_contexts", []):
+                st.json(context)
 
             # Generated answer
             answer = qr.get("generated_answer")
             if answer:
-                st.markdown("**Generated Answer:**")
-                st.text(answer[:500])
+                mode = (qr.get("answer_measurement") or {}).get("mode")
+                st.markdown("**用户提供的实际答案：**" if mode == "answer_override" else "**模型生成答案：**")
+                st.text(answer)
+            if qr.get("reference_answer") is not None:
+                st.markdown("**参考答案（非系统输出）：**")
+                st.text(qr["reference_answer"])
 
 
 def _render_history() -> None:
@@ -397,11 +480,14 @@ def _render_history() -> None:
                 "Timestamp": entry.get("timestamp", "—"),
                 "Evaluator": entry.get("evaluator_name", "—"),
                 "Queries": entry.get("query_count", 0),
+                "Measurement": entry.get("measurement_status", "unknown"),
                 "Time (ms)": round(entry.get("total_elapsed_ms", 0)),
                 **{
                     k: round(v, 4)
                     for k, v in entry.get("aggregate_metrics", {}).items()
                 },
+                **{f"{k} observed/total": f"{v['observed']}/{v['total']}"
+                   for k, v in entry.get("metric_measurements", {}).items()},
             }
         )
 

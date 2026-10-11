@@ -1,0 +1,820 @@
+{
+  "scope": "exposed development API contract; fresh process per sequence; game callback is counted and skipped",
+  "cases": [
+    {
+      "name": "valid",
+      "actions": [
+        {
+          "id": "set-a",
+          "operation": "set",
+          "key": "a",
+          "value": "2"
+        },
+        {
+          "id": "same-a",
+          "operation": "set",
+          "key": "a",
+          "value": "2"
+        },
+        {
+          "id": "product",
+          "operation": "set",
+          "key": "b",
+          "value": "3"
+        },
+        {
+          "id": "replace-a",
+          "operation": "set",
+          "key": "a",
+          "value": "4"
+        },
+        {
+          "id": "remove-missing",
+          "operation": "remove",
+          "key": "missing"
+        },
+        {
+          "id": "zero",
+          "operation": "set",
+          "key": "b",
+          "value": "0"
+        },
+        {
+          "id": "change-under-zero",
+          "operation": "set",
+          "key": "a",
+          "value": "5"
+        },
+        {
+          "id": "remove-zero",
+          "operation": "remove",
+          "key": "b"
+        },
+        {
+          "id": "empty",
+          "operation": "remove",
+          "key": "a"
+        },
+        {
+          "id": "sole-zero",
+          "operation": "set",
+          "key": "a",
+          "value": "0"
+        },
+        {
+          "id": "same-zero",
+          "operation": "set",
+          "key": "a",
+          "value": "0"
+        },
+        {
+          "id": "remove-sole-zero",
+          "operation": "remove",
+          "key": "a"
+        }
+      ],
+      "expected": [
+        {
+          "id": "set-a",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "same-a",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 0,
+          "exception_type": null
+        },
+        {
+          "id": "product",
+          "value": "6",
+          "callback_count": 2,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "replace-a",
+          "value": "12",
+          "callback_count": 3,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "remove-missing",
+          "value": "12",
+          "callback_count": 3,
+          "callback_delta": 0,
+          "exception_type": null
+        },
+        {
+          "id": "zero",
+          "value": "0",
+          "callback_count": 4,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "change-under-zero",
+          "value": "0",
+          "callback_count": 4,
+          "callback_delta": 0,
+          "exception_type": null
+        },
+        {
+          "id": "remove-zero",
+          "value": "5",
+          "callback_count": 5,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "empty",
+          "value": "1",
+          "callback_count": 6,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "sole-zero",
+          "value": "0",
+          "callback_count": 7,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "same-zero",
+          "value": "0",
+          "callback_count": 7,
+          "callback_delta": 0,
+          "exception_type": null
+        },
+        {
+          "id": "remove-sole-zero",
+          "value": "1",
+          "callback_count": 8,
+          "callback_delta": 1,
+          "exception_type": null
+        }
+      ]
+    },
+    {
+      "name": "negative-a",
+      "actions": [
+        {
+          "id": "negative-a-seed",
+          "operation": "set",
+          "key": "a",
+          "value": "2"
+        },
+        {
+          "id": "negative-a-reject",
+          "operation": "set",
+          "key": "a",
+          "value": "-1"
+        },
+        {
+          "id": "negative-a-multiply",
+          "operation": "set",
+          "key": "b",
+          "value": "3"
+        },
+        {
+          "id": "negative-a-remove-a",
+          "operation": "remove",
+          "key": "a"
+        },
+        {
+          "id": "negative-a-remove-b",
+          "operation": "remove",
+          "key": "b"
+        },
+        {
+          "id": "negative-a-remove-c",
+          "operation": "remove",
+          "key": "c"
+        }
+      ],
+      "expected": [
+        {
+          "id": "negative-a-seed",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-a-reject",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 0,
+          "exception_type": "System.ArgumentOutOfRangeException"
+        },
+        {
+          "id": "negative-a-multiply",
+          "value": "6",
+          "callback_count": 2,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-a-remove-a",
+          "value": "3",
+          "callback_count": 3,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-a-remove-b",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-a-remove-c",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 0,
+          "exception_type": null
+        }
+      ]
+    },
+    {
+      "name": "negative-c",
+      "actions": [
+        {
+          "id": "negative-c-seed",
+          "operation": "set",
+          "key": "a",
+          "value": "2"
+        },
+        {
+          "id": "negative-c-reject",
+          "operation": "set",
+          "key": "c",
+          "value": "-1"
+        },
+        {
+          "id": "negative-c-multiply",
+          "operation": "set",
+          "key": "b",
+          "value": "3"
+        },
+        {
+          "id": "negative-c-remove-a",
+          "operation": "remove",
+          "key": "a"
+        },
+        {
+          "id": "negative-c-remove-b",
+          "operation": "remove",
+          "key": "b"
+        },
+        {
+          "id": "negative-c-remove-c",
+          "operation": "remove",
+          "key": "c"
+        }
+      ],
+      "expected": [
+        {
+          "id": "negative-c-seed",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-c-reject",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 0,
+          "exception_type": "System.ArgumentOutOfRangeException"
+        },
+        {
+          "id": "negative-c-multiply",
+          "value": "6",
+          "callback_count": 2,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-c-remove-a",
+          "value": "3",
+          "callback_count": 3,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-c-remove-b",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-c-remove-c",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 0,
+          "exception_type": null
+        }
+      ]
+    },
+    {
+      "name": "nan-a",
+      "actions": [
+        {
+          "id": "nan-a-seed",
+          "operation": "set",
+          "key": "a",
+          "value": "2"
+        },
+        {
+          "id": "nan-a-reject",
+          "operation": "set",
+          "key": "a",
+          "value": "NaN"
+        },
+        {
+          "id": "nan-a-multiply",
+          "operation": "set",
+          "key": "b",
+          "value": "3"
+        },
+        {
+          "id": "nan-a-remove-a",
+          "operation": "remove",
+          "key": "a"
+        },
+        {
+          "id": "nan-a-remove-b",
+          "operation": "remove",
+          "key": "b"
+        },
+        {
+          "id": "nan-a-remove-c",
+          "operation": "remove",
+          "key": "c"
+        }
+      ],
+      "expected": [
+        {
+          "id": "nan-a-seed",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "nan-a-reject",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 0,
+          "exception_type": "System.ArgumentOutOfRangeException"
+        },
+        {
+          "id": "nan-a-multiply",
+          "value": "6",
+          "callback_count": 2,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "nan-a-remove-a",
+          "value": "3",
+          "callback_count": 3,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "nan-a-remove-b",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "nan-a-remove-c",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 0,
+          "exception_type": null
+        }
+      ]
+    },
+    {
+      "name": "nan-c",
+      "actions": [
+        {
+          "id": "nan-c-seed",
+          "operation": "set",
+          "key": "a",
+          "value": "2"
+        },
+        {
+          "id": "nan-c-reject",
+          "operation": "set",
+          "key": "c",
+          "value": "NaN"
+        },
+        {
+          "id": "nan-c-multiply",
+          "operation": "set",
+          "key": "b",
+          "value": "3"
+        },
+        {
+          "id": "nan-c-remove-a",
+          "operation": "remove",
+          "key": "a"
+        },
+        {
+          "id": "nan-c-remove-b",
+          "operation": "remove",
+          "key": "b"
+        },
+        {
+          "id": "nan-c-remove-c",
+          "operation": "remove",
+          "key": "c"
+        }
+      ],
+      "expected": [
+        {
+          "id": "nan-c-seed",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "nan-c-reject",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 0,
+          "exception_type": "System.ArgumentOutOfRangeException"
+        },
+        {
+          "id": "nan-c-multiply",
+          "value": "6",
+          "callback_count": 2,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "nan-c-remove-a",
+          "value": "3",
+          "callback_count": 3,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "nan-c-remove-b",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "nan-c-remove-c",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 0,
+          "exception_type": null
+        }
+      ]
+    },
+    {
+      "name": "positive-infinity-a",
+      "actions": [
+        {
+          "id": "positive-infinity-a-seed",
+          "operation": "set",
+          "key": "a",
+          "value": "2"
+        },
+        {
+          "id": "positive-infinity-a-reject",
+          "operation": "set",
+          "key": "a",
+          "value": "Infinity"
+        },
+        {
+          "id": "positive-infinity-a-multiply",
+          "operation": "set",
+          "key": "b",
+          "value": "3"
+        },
+        {
+          "id": "positive-infinity-a-remove-a",
+          "operation": "remove",
+          "key": "a"
+        },
+        {
+          "id": "positive-infinity-a-remove-b",
+          "operation": "remove",
+          "key": "b"
+        },
+        {
+          "id": "positive-infinity-a-remove-c",
+          "operation": "remove",
+          "key": "c"
+        }
+      ],
+      "expected": [
+        {
+          "id": "positive-infinity-a-seed",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "positive-infinity-a-reject",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 0,
+          "exception_type": "System.ArgumentOutOfRangeException"
+        },
+        {
+          "id": "positive-infinity-a-multiply",
+          "value": "6",
+          "callback_count": 2,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "positive-infinity-a-remove-a",
+          "value": "3",
+          "callback_count": 3,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "positive-infinity-a-remove-b",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "positive-infinity-a-remove-c",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 0,
+          "exception_type": null
+        }
+      ]
+    },
+    {
+      "name": "positive-infinity-c",
+      "actions": [
+        {
+          "id": "positive-infinity-c-seed",
+          "operation": "set",
+          "key": "a",
+          "value": "2"
+        },
+        {
+          "id": "positive-infinity-c-reject",
+          "operation": "set",
+          "key": "c",
+          "value": "Infinity"
+        },
+        {
+          "id": "positive-infinity-c-multiply",
+          "operation": "set",
+          "key": "b",
+          "value": "3"
+        },
+        {
+          "id": "positive-infinity-c-remove-a",
+          "operation": "remove",
+          "key": "a"
+        },
+        {
+          "id": "positive-infinity-c-remove-b",
+          "operation": "remove",
+          "key": "b"
+        },
+        {
+          "id": "positive-infinity-c-remove-c",
+          "operation": "remove",
+          "key": "c"
+        }
+      ],
+      "expected": [
+        {
+          "id": "positive-infinity-c-seed",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "positive-infinity-c-reject",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 0,
+          "exception_type": "System.ArgumentOutOfRangeException"
+        },
+        {
+          "id": "positive-infinity-c-multiply",
+          "value": "6",
+          "callback_count": 2,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "positive-infinity-c-remove-a",
+          "value": "3",
+          "callback_count": 3,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "positive-infinity-c-remove-b",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "positive-infinity-c-remove-c",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 0,
+          "exception_type": null
+        }
+      ]
+    },
+    {
+      "name": "negative-infinity-a",
+      "actions": [
+        {
+          "id": "negative-infinity-a-seed",
+          "operation": "set",
+          "key": "a",
+          "value": "2"
+        },
+        {
+          "id": "negative-infinity-a-reject",
+          "operation": "set",
+          "key": "a",
+          "value": "-Infinity"
+        },
+        {
+          "id": "negative-infinity-a-multiply",
+          "operation": "set",
+          "key": "b",
+          "value": "3"
+        },
+        {
+          "id": "negative-infinity-a-remove-a",
+          "operation": "remove",
+          "key": "a"
+        },
+        {
+          "id": "negative-infinity-a-remove-b",
+          "operation": "remove",
+          "key": "b"
+        },
+        {
+          "id": "negative-infinity-a-remove-c",
+          "operation": "remove",
+          "key": "c"
+        }
+      ],
+      "expected": [
+        {
+          "id": "negative-infinity-a-seed",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-infinity-a-reject",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 0,
+          "exception_type": "System.ArgumentOutOfRangeException"
+        },
+        {
+          "id": "negative-infinity-a-multiply",
+          "value": "6",
+          "callback_count": 2,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-infinity-a-remove-a",
+          "value": "3",
+          "callback_count": 3,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-infinity-a-remove-b",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-infinity-a-remove-c",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 0,
+          "exception_type": null
+        }
+      ]
+    },
+    {
+      "name": "negative-infinity-c",
+      "actions": [
+        {
+          "id": "negative-infinity-c-seed",
+          "operation": "set",
+          "key": "a",
+          "value": "2"
+        },
+        {
+          "id": "negative-infinity-c-reject",
+          "operation": "set",
+          "key": "c",
+          "value": "-Infinity"
+        },
+        {
+          "id": "negative-infinity-c-multiply",
+          "operation": "set",
+          "key": "b",
+          "value": "3"
+        },
+        {
+          "id": "negative-infinity-c-remove-a",
+          "operation": "remove",
+          "key": "a"
+        },
+        {
+          "id": "negative-infinity-c-remove-b",
+          "operation": "remove",
+          "key": "b"
+        },
+        {
+          "id": "negative-infinity-c-remove-c",
+          "operation": "remove",
+          "key": "c"
+        }
+      ],
+      "expected": [
+        {
+          "id": "negative-infinity-c-seed",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-infinity-c-reject",
+          "value": "2",
+          "callback_count": 1,
+          "callback_delta": 0,
+          "exception_type": "System.ArgumentOutOfRangeException"
+        },
+        {
+          "id": "negative-infinity-c-multiply",
+          "value": "6",
+          "callback_count": 2,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-infinity-c-remove-a",
+          "value": "3",
+          "callback_count": 3,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-infinity-c-remove-b",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 1,
+          "exception_type": null
+        },
+        {
+          "id": "negative-infinity-c-remove-c",
+          "value": "1",
+          "callback_count": 4,
+          "callback_delta": 0,
+          "exception_type": null
+        }
+      ]
+    }
+  ]
+}

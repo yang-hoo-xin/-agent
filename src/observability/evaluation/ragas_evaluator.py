@@ -13,7 +13,10 @@ Design Principles:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import math
+from contextlib import AsyncExitStack
 from typing import Any, Dict, List, Optional, Sequence
 
 from src.libs.evaluator.base_evaluator import BaseEvaluator
@@ -121,13 +124,20 @@ class RagasEvaluator(BaseEvaluator):
             **kwargs: Additional parameters.
 
         Returns:
-            Dictionary mapping metric names to float scores (0.0 – 1.0).
+            Dictionary mapping measured metrics to finite float scores (0.0 – 1.0).
+            Missing or non-finite results are omitted, so EvalRunner records
+            them as failed measurements rather than observed zero scores.
 
         Raises:
             ValueError: If query/chunks are invalid or generated_answer is missing.
         """
         self.validate_query(query)
-        self.validate_retrieved_chunks(retrieved_chunks)
+        if not isinstance(retrieved_chunks, list):
+            raise ValueError("retrieved_chunks must be a list")
+        if not retrieved_chunks and ANSWER_RELEVANCY not in self._metric_names:
+            raise ValueError(
+                "retrieved_chunks cannot be empty unless answer_relevancy is selected"
+            )
 
         if not generated_answer or not generated_answer.strip():
             raise ValueError(
@@ -153,44 +163,58 @@ class RagasEvaluator(BaseEvaluator):
         contexts: List[str],
         answer: str,
     ) -> Dict[str, float]:
-        """Execute Ragas collections metrics and return normalised scores.
+        """Run every metric and close its HTTP clients in one event loop."""
+        return asyncio.run(self._arun_ragas(query, contexts, answer))
 
-        Ragas 0.4+ collections metrics use per-metric ``score()`` instead of
-        the legacy ``evaluate()`` pipeline.  Each metric has its own signature:
-        - Faithfulness / ContextPrecision: (user_input, response, retrieved_contexts)
-        - AnswerRelevancy: (user_input, response)
-        """
+    async def _arun_ragas(
+        self, query: str, contexts: list[str], answer: str,
+    ) -> dict[str, float]:
         from ragas.metrics.collections import (
-            Faithfulness,
             AnswerRelevancy,
             ContextPrecisionWithoutReference,
+            Faithfulness,
         )
 
-        # Build LLM / Embedding wrappers from settings
         llm, embeddings = self._build_wrappers()
+        async with AsyncExitStack() as clients:
+            # InstructorLLM -> AsyncInstructor -> the original AsyncOpenAI client.
+            # Close before asyncio.run closes the loop, including on score failure.
+            clients.push_async_callback(llm.client.client.close)
+            if embeddings is not None:
+                clients.push_async_callback(embeddings.client.close)
 
-        scores: Dict[str, float] = {}
+            scores: dict[str, float] = {}
 
-        for metric_name in self._metric_names:
-            if metric_name == FAITHFULNESS:
-                m = Faithfulness(llm=llm)
-                result = m.score(
-                    user_input=query, response=answer, retrieved_contexts=contexts,
-                )
-            elif metric_name == ANSWER_RELEVANCY:
-                m = AnswerRelevancy(llm=llm, embeddings=embeddings)
-                result = m.score(user_input=query, response=answer)
-            elif metric_name == CONTEXT_PRECISION:
-                m = ContextPrecisionWithoutReference(llm=llm)
-                result = m.score(
-                    user_input=query, response=answer, retrieved_contexts=contexts,
-                )
-            else:
-                continue
+            for metric_name in self._metric_names:
+                if not contexts and metric_name in {FAITHFULNESS, CONTEXT_PRECISION}:
+                    continue
+                if metric_name == FAITHFULNESS:
+                    m = Faithfulness(llm=llm)
+                    result = await m.ascore(
+                        user_input=query, response=answer, retrieved_contexts=contexts,
+                    )
+                elif metric_name == ANSWER_RELEVANCY:
+                    m = AnswerRelevancy(llm=llm, embeddings=embeddings)
+                    result = await m.ascore(user_input=query, response=answer)
+                elif metric_name == CONTEXT_PRECISION:
+                    m = ContextPrecisionWithoutReference(llm=llm)
+                    result = await m.ascore(
+                        user_input=query, response=answer, retrieved_contexts=contexts,
+                    )
+                else:
+                    continue
 
-            scores[metric_name] = float(result.value) if result.value is not None else 0.0
+                value = result.value
+                if value is None:
+                    logger.warning("Ragas metric '%s' returned no score", metric_name)
+                    continue
+                score = float(value)
+                if not math.isfinite(score):
+                    logger.warning("Ragas metric '%s' returned a non-finite score", metric_name)
+                    continue
+                scores[metric_name] = score
 
-        return scores
+            return scores
 
     def _build_wrappers(self) -> tuple:
         """Build Ragas LLM and Embedding wrappers from project settings.
@@ -225,16 +249,30 @@ class RagasEvaluator(BaseEvaluator):
                 api_key=llm_cfg.api_key,
                 azure_endpoint=llm_azure_endpoint or llm_cfg.azure_endpoint,
                 api_version=getattr(llm_cfg, "api_version", None) or "2024-02-15-preview",
+                max_retries=0,
             )
         elif provider == "openai":
-            llm_client = AsyncOpenAI(api_key=llm_cfg.api_key)
+            llm_client = AsyncOpenAI(
+                api_key=llm_cfg.api_key,
+                base_url=llm_cfg.base_url,
+                max_retries=0,
+            )
         else:
             raise ValueError(
                 f"Unsupported LLM provider for Ragas: '{provider}'. "
                 "Supported: azure, openai"
             )
 
-        llm = llm_factory(llm_cfg.model, client=llm_client, max_tokens=8192)
+        llm_model = (llm_cfg.deployment_name or llm_cfg.model) if use_azure_llm else llm_cfg.model
+        # Each failed request is a failed measurement. Do not multiply a bounded
+        # evaluation attempt through independent SDK and structured-output retries.
+        llm = llm_factory(
+            llm_model, client=llm_client, temperature=llm_cfg.temperature,
+            max_tokens=llm_cfg.max_tokens, max_retries=0,
+        )
+
+        if ANSWER_RELEVANCY not in self._metric_names:
+            return llm, None
 
         # ── Embeddings ──
         emb_cfg = self.settings.embedding
@@ -252,16 +290,22 @@ class RagasEvaluator(BaseEvaluator):
                 api_key=emb_cfg.api_key,
                 azure_endpoint=emb_azure_endpoint or emb_cfg.azure_endpoint,
                 api_version=getattr(emb_cfg, "api_version", None) or "2024-02-15-preview",
+                max_retries=0,
             )
         elif emb_provider == "openai":
-            emb_client = AsyncOpenAI(api_key=emb_cfg.api_key)
+            emb_client = AsyncOpenAI(
+                api_key=emb_cfg.api_key,
+                base_url=emb_cfg.base_url,
+                max_retries=0,
+            )
         else:
             raise ValueError(
                 f"Unsupported embedding provider for Ragas: '{emb_provider}'. "
                 "Supported: azure, openai"
             )
 
-        embeddings = OpenAIEmbeddings(model=emb_cfg.model, client=emb_client)
+        emb_model = (emb_cfg.deployment_name or emb_cfg.model) if use_azure_emb else emb_cfg.model
+        embeddings = OpenAIEmbeddings(model=emb_model, client=emb_client)
 
         return llm, embeddings
 

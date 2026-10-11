@@ -1,0 +1,48 @@
+# Isolated RFC 8259 acceptance configuration. Live use requires run consent.
+# Credentials come from OPENAI_API_KEY; account access has NOT been verified.
+llm:
+  provider: openai
+  model: gpt-4o-2024-08-06
+  base_url: https://api.openai.com/v1
+  temperature: 0.0
+  max_tokens: 1024
+embedding:
+  provider: openai
+  model: text-embedding-ada-002
+  base_url: https://api.openai.com/v1
+  dimensions: 1536
+vector_store:
+  provider: chroma
+  persist_directory: ./data/db/rag_acceptance_20260920/chroma
+  collection_name: rfc8259_20260920
+retrieval:
+  dense_enabled: false
+  dense_provider: disabled
+  dense_failure_policy: block
+  dense_top_k: 3
+  sparse_top_k: 3
+  fusion_top_k: 3
+  rrf_k: 60
+rerank:
+  enabled: false
+  provider: none
+  model: unused
+  top_k: 3
+evaluation:
+  enabled: true
+  provider: ragas
+  metrics: [faithfulness, answer_relevancy, context_precision]
+observability:
+  log_level: WARNING
+  trace_enabled: false
+  trace_file: ./logs/rag_acceptance_20260920.jsonl
+  structured_logging: false
+ingestion:
+  chunk_size: 1000
+  chunk_overlap: 200
+  splitter: recursive
+  batch_size: 100
+  chunk_refiner:
+    use_llm: false
+  metadata_enricher:
+    use_llm: false

@@ -132,10 +132,12 @@ class _UpstreamTransport(_OfflineOllamaTransport):
             assert any("observed_failure" in value for value in planning["semantic_feedback"])
             if self.fail_first:
                 assert "cli_synthetic_repair_marker" in json.dumps(planning["semantic_feedback"])
-            content = {"decision": "needs_evidence" if self.planning_stop else "select_targets",
+            candidate = planning.get("candidate_scope_contract", {}).get("mode") == "candidate_edit_scope"
+            content = {"decision": "needs_evidence" if self.planning_stop and not candidate else "select_targets",
                 "selected_evidence_ids": [] if self.planning_stop else planning["allowed_edit_evidence_ids"],
                 "rationale": "Synthetic task: update the behavior and any newly observed shared state while preserving feedback.",
-                "missing_evidence": ["Synthetic missing state owner."] if self.planning_stop else []}
+                ("verification_questions" if candidate else "missing_evidence"):
+                    ["Synthetic missing state owner."] if self.planning_stop else []}
         else:
             self.stage_roles.append("patch")
             prompt = _restore_patch_agent_context(next(value for value in messages if "required_change_units" in value))
@@ -175,12 +177,12 @@ class _UpstreamTransport(_OfflineOllamaTransport):
             self.generated_texts.append(json.dumps(content))
         return self._response(request, {"role": "assistant", "content": json.dumps(content)})
 
-    @staticmethod
-    def _patch(prompt, *, passed):
+    def _patch(self, prompt, *, passed):
         marker = "RecordRepairMarker" if passed else "RecordStillMissingMarker"
         return {"changes": [{"edit_binding_id": unit["edit_binding_id"],
             "rationale": "Synthetic transport response; not a real Mod implementation.", "rollback_hint": "Restore the original span.",
-            "after_text": prompt["edit_binding_contexts"][unit["edit_binding_id"]]["source_excerpt"].replace(
+            "after_text": source_fixture._fixture_visible_binding_text(
+                prompt, unit["edit_binding_id"], self.chat_requests[-1][1]["messages"]).replace(
                 "KeepExistingFeedback();", f"KeepExistingFeedback();\n        RecordRuntimeMarker();\n        {marker}();")}
             for unit in prompt["required_change_units"]]}
 
@@ -286,6 +288,12 @@ def test_public_cli_current_failed_revision_returns_to_planning_then_same_worker
     code, result = _run(case, capsys)
     assert code == 0, result
     assert handler.stage_roles == ["patch", "patch", "planning", "patch"]
+    carried = next(value for _, value in _message_jsons(handler.chat_requests[-1][1])
+        if value.get("message_type") == "patch_replanned_context")
+    assert carried["upstream_request"]["origin"] == "model"
+    assert all(carried["upstream_request"]["reason"] not in boundary
+        for boundary in handler.patch_prompts[-1]["constraints"])
+    assert set(handler.patch_prompts[0]["constraints"]).issubset(handler.patch_prompts[-1]["constraints"])
     assert handler.new_failure is not None
     report = handler.new_failure_ref
     assert _sha(Path(report["path"]).read_bytes()) == report["sha256"]
@@ -298,7 +306,7 @@ def test_public_cli_current_failed_revision_returns_to_planning_then_same_worker
     assert _source_hashes(case.inputs.workspace) == before
 
 
-def test_public_cli_planning_needs_evidence_cannot_reuse_old_plan_or_review(tmp_path, monkeypatch, capsys):
+def test_public_cli_empty_candidate_scope_cannot_reuse_old_plan_or_review(tmp_path, monkeypatch, capsys):
     case = _case(tmp_path, monkeypatch)
     handler = _install(monkeypatch, tmp_path / "wire", case, planning_stop=True)
     code, result = _run(case, capsys)

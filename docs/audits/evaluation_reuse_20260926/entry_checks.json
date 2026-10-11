@@ -1,0 +1,66 @@
+{
+  "python": "C:\\Users\\10160\\.codex\\visualizations\\2026\\08\\11\\019ff15f-9eac-7b13-aad5-faffde4b36b7\\rag_capability_mainline\\.venv\\Scripts\\python.exe",
+  "python_version": "3.10.20 | packaged by conda-forge | (main, Mar  5 2026, 16:36:49) [MSC v.1944 64 bit (AMD64)]",
+  "scope": "cold_process_import_and_argument_parser_only",
+  "checks": [
+    {
+      "module": "src.mod_agent.cli",
+      "mode": "help_only",
+      "exit_code": 0,
+      "usage_present": true,
+      "stderr": ""
+    },
+    {
+      "module": "scripts.prepare_patch_eval_suite",
+      "mode": "help_only",
+      "exit_code": 0,
+      "usage_present": true,
+      "stderr": ""
+    },
+    {
+      "module": "scripts.run_patch_sft_eval",
+      "mode": "help_only",
+      "exit_code": 0,
+      "usage_present": true,
+      "stderr": ""
+    },
+    {
+      "module": "scripts.compare_patch_trials",
+      "mode": "help_only",
+      "exit_code": 0,
+      "usage_present": true,
+      "stderr": ""
+    },
+    {
+      "module": "scripts.prepare_independent_release",
+      "mode": "help_only",
+      "exit_code": 0,
+      "usage_present": true,
+      "stderr": ""
+    },
+    {
+      "module": "scripts.product_trace",
+      "mode": "help_only",
+      "exit_code": 0,
+      "usage_present": true,
+      "stderr": ""
+    },
+    {
+      "module": "scripts.evaluate",
+      "mode": "help_only",
+      "exit_code": 0,
+      "usage_present": true,
+      "stderr": ""
+    },
+    {
+      "module": "scripts.prepare_memory_comparison",
+      "mode": "help_only",
+      "exit_code": 0,
+      "usage_present": true,
+      "stderr": ""
+    }
+  ],
+  "product_execution": false,
+  "model_execution": false,
+  "behavior_tests_executed": false
+}

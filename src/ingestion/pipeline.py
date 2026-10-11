@@ -16,32 +16,34 @@ Design Principles:
 - Idempotent: SHA256-based skip for unchanged files
 """
 
-from pathlib import Path
-from typing import Callable, List, Optional, Dict, Any
 import time
+import hashlib
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
-from src.core.settings import Settings, load_settings, resolve_path
-from src.core.types import Document, Chunk
+from src.core.settings import Settings, load_settings, require_storage_path, resolve_storage_path
 from src.core.trace.trace_context import TraceContext
-from src.observability.logger import get_logger
-
-# Libs layer imports
-from src.libs.loader.file_integrity import SQLiteIntegrityChecker
-from src.libs.loader.pdf_loader import PdfLoader
-from src.libs.embedding.embedding_factory import EmbeddingFactory
-from src.libs.vector_store.vector_store_factory import VectorStoreFactory
 
 # Ingestion layer imports
 from src.ingestion.chunking.document_chunker import DocumentChunker
-from src.ingestion.transform.chunk_refiner import ChunkRefiner
-from src.ingestion.transform.metadata_enricher import MetadataEnricher
-from src.ingestion.transform.image_captioner import ImageCaptioner
+from src.ingestion.document_manager import DocumentManager
+from src.ingestion.embedding.batch_processor import BatchProcessor
 from src.ingestion.embedding.dense_encoder import DenseEncoder
 from src.ingestion.embedding.sparse_encoder import SparseEncoder
-from src.ingestion.embedding.batch_processor import BatchProcessor
 from src.ingestion.storage.bm25_indexer import BM25Indexer
-from src.ingestion.storage.vector_upserter import VectorUpserter
 from src.ingestion.storage.image_storage import ImageStorage
+from src.ingestion.storage.vector_upserter import VectorUpserter
+from src.ingestion.transform.chunk_refiner import ChunkRefiner
+from src.ingestion.transform.image_captioner import ImageCaptioner
+from src.ingestion.transform.metadata_enricher import MetadataEnricher
+
+# Libs layer imports
+from src.libs.embedding.embedding_factory import EmbeddingFactory
+from src.libs.loader.file_integrity import SQLiteIntegrityChecker
+from src.libs.loader.pdf_loader import PdfLoader
+from src.libs.loader.material_loader import MaterialLoader
+from src.ingestion.identity import ingestion_identity
+from src.observability.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -133,20 +135,27 @@ class IngestionPipeline:
         self.settings = settings
         self.collection = collection
         self.force = force
+        require_storage_path(settings, settings.vector_store.persist_directory)
+        self.storage_paths = {"history": str(resolve_storage_path(settings, "db", "ingestion_history.db")),
+            "bm25": str(resolve_storage_path(settings, "db", "bm25", collection)),
+            "images": str(resolve_storage_path(settings, "images", collection)),
+            "image_index": str(resolve_storage_path(settings, "db", "image_index.db")),
+            "vector_store": str(require_storage_path(settings, settings.vector_store.persist_directory))}
+        self.processing_identity, self.processing_fingerprint = ingestion_identity(settings)
         
         # Initialize all components
         logger.info("Initializing Ingestion Pipeline components...")
         
         # Stage 1: File Integrity
-        self.integrity_checker = SQLiteIntegrityChecker(db_path=str(resolve_path("data/db/ingestion_history.db")))
+        self.integrity_checker = SQLiteIntegrityChecker(db_path=self.storage_paths["history"])
         logger.info("  ✓ FileIntegrityChecker initialized")
         
         # Stage 2: Loader
-        self.loader = PdfLoader(
+        self.loader = MaterialLoader(PdfLoader(
             extract_images=True,
-            image_storage_dir=str(resolve_path(f"data/images/{collection}")),
+            image_storage_dir=self.storage_paths["images"],
             image_id_namespace=collection,
-        )
+        ), collection=collection, image_storage_dir=self.storage_paths["images"])
         logger.info("  ✓ PdfLoader initialized")
         
         # Stage 3: Chunker
@@ -184,14 +193,21 @@ class IngestionPipeline:
         self.vector_upserter = VectorUpserter(settings, collection_name=collection)
         logger.info(f"  ✓ VectorUpserter initialized (provider={settings.vector_store.provider}, collection={collection})")
         
-        self.bm25_indexer = BM25Indexer(index_dir=str(resolve_path(f"data/db/bm25/{collection}")))
+        self.bm25_indexer = BM25Indexer(index_dir=self.storage_paths["bm25"])
         logger.info("  ✓ BM25Indexer initialized")
         
         self.image_storage = ImageStorage(
-            db_path=str(resolve_path("data/db/image_index.db")),
-            images_root=str(resolve_path("data/images"))
+            db_path=self.storage_paths["image_index"],
+            images_root=str(resolve_storage_path(settings, "images"))
         )
         logger.info("  ✓ ImageStorage initialized")
+
+        self.document_manager = DocumentManager(
+            self.vector_upserter.vector_store,
+            self.bm25_indexer,
+            self.image_storage,
+            self.integrity_checker,
+        )
         
         logger.info("Pipeline initialization complete!")
     
@@ -222,10 +238,10 @@ class IngestionPipeline:
             if on_progress is not None:
                 on_progress(stage_name, step, _total_stages)
         
-        logger.info(f"=" * 60)
+        logger.info("=" * 60)
         logger.info(f"Starting Ingestion Pipeline for: {file_path}")
         logger.info(f"Collection: {self.collection}")
-        logger.info(f"=" * 60)
+        logger.info("=" * 60)
         
         try:
             # ─────────────────────────────────────────────────────────────
@@ -237,16 +253,35 @@ class IngestionPipeline:
             file_hash = self.integrity_checker.compute_sha256(str(file_path))
             logger.info(f"  File hash: {file_hash[:16]}...")
             
-            if not self.force and self.integrity_checker.should_skip(file_hash, collection=self.collection):
-                logger.info(f"  ⏭️  File already processed, skipping (use force=True to reprocess)")
+            if not self.force and self.integrity_checker.should_skip(file_hash, collection=self.collection,
+                    processing_fingerprint=self.processing_fingerprint, source_path=str(file_path)):
+                logger.info("  ⏭️  File already processed, skipping (use force=True to reprocess)")
                 return PipelineResult(
                     success=True,
                     file_path=str(file_path),
                     doc_id=file_hash,
-                    stages={"integrity": {"skipped": True, "reason": "already_processed"}}
+                    stages={"integrity": {"skipped": True, "reason": "already_processed",
+                                          "incremental_action": "unchanged_skip",
+                                          "storage_paths": self.storage_paths,
+                                          "processing_fingerprint": self.processing_fingerprint}}
                 )
-            
-            stages["integrity"] = {"file_hash": file_hash, "skipped": False}
+
+            replacement_state = self.integrity_checker.begin_ingestion(
+                file_hash, str(file_path), collection=self.collection)
+            prior_hashes = replacement_state["prior_hashes"]
+            previous_status = replacement_state["same_hash_previous_status"]
+            incremental_action = (
+                "replace_source_path" if prior_hashes else
+                "retry_failed" if previous_status == "failed" else
+                "force_same_content" if previous_status == "success" else
+                "append_new_source_path"
+            )
+            stages["integrity"] = {"file_hash": file_hash, "skipped": False,
+                                   "storage_paths": self.storage_paths,
+                                   "processing_identity": self.processing_identity,
+                                   "processing_fingerprint": self.processing_fingerprint,
+                                   "incremental_action": incremental_action,
+                                   "prior_version_count": len(prior_hashes)}
             logger.info("  ✓ File needs processing")
             
             # ─────────────────────────────────────────────────────────────
@@ -257,6 +292,8 @@ class IngestionPipeline:
             
             _t0 = time.monotonic()
             document = self.loader.load(str(file_path))
+            if document.metadata.get("source_hash", file_hash) != file_hash:
+                raise RuntimeError("INGESTION_SOURCE_CHANGED_DURING_LOAD")
             _elapsed = (time.monotonic() - _t0) * 1000.0
             
             text_preview = document.text[:200].replace('\n', ' ') + "..." if len(document.text) > 200 else document.text
@@ -289,6 +326,16 @@ class IngestionPipeline:
             
             _t0 = time.monotonic()
             chunks = self.chunker.split_document(document)
+            cursor = 0
+            for chunk in chunks:
+                offset = document.text.find(chunk.text, cursor)
+                if offset >= 0:
+                    cursor = offset + 1
+                chunk.metadata.update(original_text=chunk.text,
+                    original_text_sha256=hashlib.sha256(chunk.text.encode()).hexdigest(),
+                    original_start_offset=offset, original_end_offset=offset + len(chunk.text) if offset >= 0 else -1,
+                    original_span_verified=offset >= 0, original_span_basis="parsed_text_characters",
+                    source_hash=file_hash, processing_fingerprint=self.processing_fingerprint)
             _elapsed = (time.monotonic() - _t0) * 1000.0
             
             logger.info(f"  Chunks generated: {len(chunks)}")
@@ -348,8 +395,22 @@ class IngestionPipeline:
             stages["transform"] = {
                 "chunk_refiner": {"llm": refined_by_llm, "rule": refined_by_rule},
                 "metadata_enricher": {"llm": enriched_by_llm, "rule": enriched_by_rule},
-                "image_captioner": {"captioned_chunks": captioned}
+                "image_captioner": {"captioned_chunks": captioned,
+                                    "observation": getattr(self.image_captioner, "last_observation", None)}
             }
+            expected = self.settings.ingestion
+            degraded = ((bool((expected.chunk_refiner or {}).get("use_llm")) and refined_by_llm != len(chunks))
+                or (bool((expected.metadata_enricher or {}).get("use_llm")) and enriched_by_llm != len(chunks))
+                or (bool(document.metadata.get("images")) and self.settings.vision_llm is not None
+                    and self.settings.vision_llm.enabled and (not captioned
+                        or getattr(self.image_captioner, "last_observation", {}).get("failed", 0)))) if expected is not None else False
+            stages["transform"]["degraded"] = degraded
+            if expected is not None and getattr(expected, "strict_transforms", False) and degraded:
+                raise RuntimeError("INGESTION_REQUIRED_TRANSFORM_INCOMPLETE")
+            for chunk in chunks:
+                chunk.metadata.update(enhanced_text_sha256=hashlib.sha256(chunk.text.encode()).hexdigest(),
+                    enhancement_is_original_source=False,
+                    enhancement_model_identity=self.processing_identity["llm"])
             _elapsed_transform = (time.monotonic() - _t0_transform) * 1000.0
             if trace is not None:
                 trace.record_stage("transform", {
@@ -384,6 +445,8 @@ class IngestionPipeline:
             # Process through BatchProcessor
             _t0 = time.monotonic()
             batch_result = self.batch_processor.process(chunks, trace)
+            if batch_result.failed_chunks:
+                raise RuntimeError("INGESTION_ENCODING_BATCH_INCOMPLETE")
             _elapsed = (time.monotonic() - _t0) * 1000.0
             
             dense_vectors = batch_result.dense_vectors
@@ -436,6 +499,12 @@ class IngestionPipeline:
             # 6a: Vector Upsert
             logger.info("  6a. Vector Storage (ChromaDB)...")
             _t0_storage = time.monotonic()
+            existing_vector_ids = self.document_manager.chunk_ids_for_source_path(
+                str(file_path), self.collection)
+            if self.integrity_checker.compute_sha256(str(file_path)) != file_hash:
+                raise RuntimeError("INGESTION_SOURCE_CHANGED_BEFORE_STORAGE")
+            if prior_hashes and not existing_vector_ids:
+                raise RuntimeError("Existing successful path has no exact Chroma chunk IDs for replacement.")
             vector_ids = self.vector_upserter.upsert(chunks, dense_vectors, trace)
             logger.info(f"      Stored {len(vector_ids)} vectors")
 
@@ -446,13 +515,21 @@ class IngestionPipeline:
 
             # 6b: BM25 Index
             logger.info("  6b. BM25 Index...")
-            self.bm25_indexer.add_documents(
+            self.bm25_indexer.replace_documents(
+                existing_vector_ids,
                 sparse_stats,
                 collection=self.collection,
-                doc_id=document.id,
                 trace=trace,
             )
             logger.info(f"      Index built for {len(sparse_stats)} documents")
+
+            # BM25 is committed before stale vectors are deleted. If either
+            # step fails, history remains failed and the next run can repeat
+            # the exact replacement using the still-observable vector IDs.
+            current_ids = frozenset(vector_ids)
+            stale_vector_ids = [value for value in existing_vector_ids if value not in current_ids]
+            if stale_vector_ids:
+                self.vector_upserter.vector_store.delete(stale_vector_ids, trace=trace)
             
             # 6c: Register images in image storage index
             # Note: Images are already saved by PdfLoader, we just need to index them
@@ -473,7 +550,10 @@ class IngestionPipeline:
             stages["storage"] = {
                 "vector_count": len(vector_ids),
                 "bm25_docs": len(sparse_stats),
-                "images_indexed": len(images)
+                "images_indexed": len(images),
+                "incremental_action": incremental_action,
+                "existing_vector_count": len(existing_vector_ids),
+                "stale_vectors_deleted": len(stale_vector_ids),
             }
             _elapsed_storage = (time.monotonic() - _t0_storage) * 1000.0
             if trace is not None:
@@ -503,13 +583,13 @@ class IngestionPipeline:
                         "backend": "ChromaDB",
                         "collection": self.collection,
                         "count": len(vector_ids),
-                        "path": "data/db/chroma/",
+                        "path": self.storage_paths["vector_store"],
                     },
                     "sparse_store": {
                         "backend": "BM25",
                         "collection": self.collection,
                         "count": len(sparse_stats),
-                        "path": f"data/db/bm25/{self.collection}/",
+                        "path": self.storage_paths["bm25"],
                     },
                     "image_store": {
                         "backend": "ImageStorage (JSON index)",
@@ -522,7 +602,8 @@ class IngestionPipeline:
             # ─────────────────────────────────────────────────────────────
             # Mark Success
             # ─────────────────────────────────────────────────────────────
-            self.integrity_checker.mark_success(file_hash, str(file_path), self.collection)
+            self.integrity_checker.mark_success(file_hash, str(file_path), self.collection,
+                processing_fingerprint=self.processing_fingerprint)
             
             logger.info("\n" + "=" * 60)
             logger.info("✅ Pipeline completed successfully!")
@@ -543,7 +624,8 @@ class IngestionPipeline:
             
         except Exception as e:
             logger.error(f"❌ Pipeline failed: {e}", exc_info=True)
-            self.integrity_checker.mark_failed(file_hash, str(file_path), str(e), collection=self.collection)
+            if 'file_hash' in locals():
+                self.integrity_checker.mark_failed(file_hash, str(file_path), str(e), collection=self.collection)
             
             return PipelineResult(
                 success=False,

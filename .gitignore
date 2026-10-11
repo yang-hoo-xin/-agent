@@ -127,3 +127,18 @@ traces.jsonl
 .env.*.local
 secrets.yaml
 nonexistent_traces.jsonl/
+
+# Publication scope: keep local runs, resumes and disposable workspaces private.
+# 为什么要有它：公开源码不需要上传个人投递材料、机器状态和重复运行产物，保留本地原件即可。
+/tmp/
+/output/
+/r8-snapshot/
+/.pytest*/
+/.phase3_runtime/
+/.uv-cache/
+.codex/task-packet*.json
+
+# Credential variants; share only explicit configuration examples.
+# 为什么要有它：实际凭据可能存为不同env文件名，公开时仅保留可以安全复制的示例模板。
+.env.*
+!.env.example

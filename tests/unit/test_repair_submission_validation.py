@@ -148,22 +148,19 @@ def _materialized(tmp_path: Path, before: str, after: str, *, change_plan=None):
     return materialized, plan, changes
 
 
-def test_three_added_whitespace_lines_match_original_dry_run_standard(tmp_path: Path) -> None:
+def test_added_whitespace_is_diagnostic_without_changing_materialized_bytes(tmp_path: Path) -> None:
     before = "class Subject {\n    public int Apply() => 1;\n}\n"
     after = "class Subject {  \n    public int Apply() => 2;\t\n} \n"
     materialized, plan, changes = _materialized(tmp_path, before, after)
-    with pytest.raises(codegen.PatchGenerationError) as caught:
-        patch_apply.validate_materialized_patch_submission(materialized)
-    assert type(caught.value).__name__ == "PatchSubmissionValidationError"
-    assert caught.value.diagnostics["failure_classification"] == "added_diff_trailing_whitespace"
-    assert caught.value.diagnostics["added_trailing_whitespace_count"] == 3
-    with pytest.raises(patch_apply.PatchApplyError, match="3 added line"):
-        patch_apply.ExactTextPatchApplier().run(
-            workspace_root=tmp_path,
-            proposal={"proposal_id": "proposal_001", "diff_intent": changes},
-            implementation_plan=plan,
-            review={"allowed_next_stage": "dry_run_apply"}, allow_write=False,
-        )
+    diagnostics = patch_apply.validate_materialized_patch_submission(materialized)
+    assert diagnostics == {"added_trailing_whitespace_count": 3}
+    dry = patch_apply.ExactTextPatchApplier().run(
+        workspace_root=tmp_path,
+        proposal={"proposal_id": "proposal_001", "diff_intent": changes},
+        implementation_plan=plan,
+        review={"allowed_next_stage": "dry_run_apply"}, allow_write=False,
+    )
+    assert dry["format_diagnostics"] == diagnostics
     assert materialized.files["Subject.cs"] == after.encode()
     assert (tmp_path / "Subject.cs").read_bytes() == before.encode()
 

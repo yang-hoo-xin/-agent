@@ -1,0 +1,56 @@
+# Isolated local RFC 8259 acceptance profile; no inference authorized by this file.
+# Endpoint/model metadata checked on 2026-09-20. Ollama 0.34.2.
+# qwen3-coder:30b digest:
+# 06c1097efce0431c2045fe7b2e5108366e43bee1b4603a7aded8f21689e90bca
+# bge-m3:latest digest:
+# 7907646426070047a77226ac3e684fbbe8410524f7b4a74d02837e43f2146bab
+# "ollama" is the documented ignored compatibility value, not a cloud key.
+# The /v1 API does not set num_ctx; effective service context is not inferred.
+llm:
+  provider: openai
+  model: qwen3-coder:30b
+  base_url: http://127.0.0.1:11434/v1
+  api_key: ollama
+  temperature: 0.0
+  max_tokens: 1024
+embedding:
+  provider: openai
+  model: bge-m3:latest
+  base_url: http://127.0.0.1:11434/v1
+  api_key: ollama
+  dimensions: 1024
+vector_store:
+  provider: chroma
+  persist_directory: ./data/db/rag_acceptance_local_20260920/chroma
+  collection_name: rfc8259_local_20260920
+retrieval:
+  dense_enabled: true
+  dense_provider: vector_store
+  dense_failure_policy: block
+  dense_top_k: 3
+  sparse_top_k: 3
+  fusion_top_k: 3
+  rrf_k: 60
+rerank:
+  enabled: false
+  provider: none
+  model: unused
+  top_k: 3
+evaluation:
+  enabled: true
+  provider: ragas
+  metrics: [faithfulness, answer_relevancy, context_precision]
+observability:
+  log_level: WARNING
+  trace_enabled: false
+  trace_file: ./logs/rag_acceptance_local_20260920.jsonl
+  structured_logging: false
+ingestion:
+  chunk_size: 1000
+  chunk_overlap: 200
+  splitter: recursive
+  batch_size: 100
+  chunk_refiner:
+    use_llm: false
+  metadata_enricher:
+    use_llm: false

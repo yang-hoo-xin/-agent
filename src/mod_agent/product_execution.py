@@ -412,6 +412,8 @@ class ProductExecutionRequestV1:
 class ProductExecutionGraphModeV1:
     contract_version: Literal["1"]
     request: ProductExecutionRequestV1
+    interrupted_patch_selection: Mapping[str, Any] | None = None
+    pretransport_patch_selection: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.contract_version != "1" or not isinstance(
@@ -421,6 +423,28 @@ class ProductExecutionGraphModeV1:
                 "Product execution Graph mode is invalid.",
                 side_effects_may_have_started=False,
             )
+        if self.interrupted_patch_selection is not None:
+            _validate_interrupted_selection(self.interrupted_patch_selection)
+        if self.pretransport_patch_selection is not None:
+            from src.mod_agent.pretransport_patch_admission import validate_selection
+            if self.interrupted_patch_selection is not None:
+                raise ProductExecutionContractError("Conflicting Patch recovery selections.", side_effects_may_have_started=False)
+            validate_selection(self.pretransport_patch_selection)
+
+
+
+def _validate_interrupted_selection(selection: Mapping[str, Any]) -> None:
+    """Accept only historical exact references, never caller-supplied state."""
+    # 为什么要有它：续接入口只选择原事实，不能借可选参数注入审批、重试次数或伪造工作流状态。
+    if not isinstance(selection, Mapping) or set(selection) != {"source_attempt_ref", "parent_manifest_ref", "execution_stop_ref"}:
+        raise ProductExecutionContractError("Interrupted Patch selection must contain three exact references.",
+                                            side_effects_may_have_started=False)
+    for ref in selection.values():
+        if not isinstance(ref, Mapping) or set(ref) != {"path", "sha256"}:
+            raise ProductExecutionContractError("Interrupted Patch selection reference is invalid.",
+                                                side_effects_may_have_started=False)
+        _require_non_empty(ref["path"], "interrupted selection path")
+        _require_sha256(ref["sha256"], "interrupted selection sha256")
 
 
 @dataclass(frozen=True)
@@ -543,6 +567,8 @@ class ProductExecutionOutputV1:
     node_name: str
     artifact_role: str
     artifact_ref: ArtifactRef
+    origin: Literal["generated", "reused_input"] = "generated"
+    reuse_selection: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.contract_version != "1" or self.phase not in _PHASES:
@@ -563,6 +589,19 @@ class ProductExecutionOutputV1:
                 "Product output ArtifactRef is invalid.",
                 side_effects_may_have_started=True,
             )
+        if self.origin == "reused_input":
+            if self.node_name == "pretransport_patch_admission":
+                from src.mod_agent.pretransport_patch_admission import validate_selection
+                validate_selection(self.reuse_selection)
+            else:
+                _validate_interrupted_selection(self.reuse_selection)
+            if (self.node_name not in {"interrupted_patch_admission", "pretransport_patch_admission"} or self.repair_attempt != 0
+                    or self.artifact_role not in {"feature_spec", "evidence_pack", "implementation_plan"}):
+                raise ProductExecutionContractError("Reused product input identity is invalid.",
+                                                    side_effects_may_have_started=False)
+        elif self.origin != "generated" or self.reuse_selection is not None:
+            raise ProductExecutionContractError("Product output origin is invalid.",
+                                                side_effects_may_have_started=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -573,6 +612,8 @@ class ProductExecutionOutputV1:
             "node_name": self.node_name,
             "artifact_role": self.artifact_role,
             "artifact_ref": _ref_to_dict(self.artifact_ref),
+            **({"origin": self.origin, "reuse_selection": self.reuse_selection}
+               if self.origin == "reused_input" else {}),
         }
 
     @classmethod
@@ -587,7 +628,7 @@ class ProductExecutionOutputV1:
                 "node_name",
                 "artifact_role",
                 "artifact_ref",
-            ),
+            ) + (("origin", "reuse_selection") if "origin" in value else ()),
             "ProductExecutionOutputV1",
         )
         selected = dict(value)
@@ -1194,12 +1235,12 @@ PRODUCT_EXECUTION_DECLARATION = ProductExecutionDeclarationV1(
 def _validate_store_trace(
     attempts: tuple[ProductExecutionStoreAttemptV1, ...],
     outputs: tuple[ProductExecutionOutputV1, ...],
-    *, upstream_sequences: frozenset[int] = frozenset(),
+    *, upstream_sequences: frozenset[int] = frozenset(), reused_input_count: int = 0,
 ) -> None:
     declaration = PRODUCT_EXECUTION_DECLARATION
     roles = declaration.role_by_node
     phases = declaration.phase_by_node
-    if tuple(item.sequence for item in attempts) != tuple(range(len(attempts))):
+    if tuple(item.sequence for item in attempts) != tuple(range(reused_input_count, reused_input_count + len(attempts))):
         raise ProductExecutionContractError(
             "Product Store attempt sequence changed.",
             side_effects_may_have_started=True,
@@ -1290,7 +1331,7 @@ def _validate_effect_trace(events: tuple[ProductExecutionEffectEventV1, ...]) ->
         )
 
 
-def _validate_lifecycle(attempts: tuple[ProductExecutionStoreAttemptV1, ...]) -> None:
+def _validate_lifecycle(attempts: tuple[ProductExecutionStoreAttemptV1, ...], *, interrupted_patch: bool = False) -> None:
     if not attempts:
         return
     nodes: list[tuple[str, int]] = []
@@ -1299,7 +1340,7 @@ def _validate_lifecycle(attempts: tuple[ProductExecutionStoreAttemptV1, ...]) ->
         if not nodes or nodes[-1] != key:
             nodes.append(key)
     grammar = PRODUCT_EXECUTION_DECLARATION.lifecycle_grammar
-    initial = grammar.initial_prefix
+    initial = grammar.initial_prefix[5:] if interrupted_patch else grammar.initial_prefix
     observed_initial_nodes = [node for node, attempt in nodes if attempt == 0]
     observed_without_terminal = list(observed_initial_nodes)
     if observed_without_terminal and observed_without_terminal[-1] == "blocked":
@@ -1317,7 +1358,7 @@ def _validate_lifecycle(attempts: tuple[ProductExecutionStoreAttemptV1, ...]) ->
                 side_effects_may_have_started=True,
             )
         return
-    if any(attempt > 0 and node in initial[:5] for node, attempt in nodes):
+    if any(attempt > 0 and node in grammar.initial_prefix[:5] for node, attempt in nodes):
         raise ProductExecutionContractError(
             "Planning/evidence nodes cannot repeat during repair.",
             side_effects_may_have_started=True,
@@ -1573,8 +1614,8 @@ def _validate_repair_plan_lifecycle_predicates(
             )
 
 
-def _validated_product_upstream_sequences(facts: "ProductExecutionFactsV1") -> frozenset[int]:
-    """Recognize one exact assessment insertion before applying the original grammar.
+def _validated_product_upstream_sequences(facts: ProductExecutionFactsV1) -> frozenset[int]:
+    """Recognize exact assessment insertions before applying the original grammar.
 
     Assessment can precede the first Proposal, so it has no invented failure
     ancestor. Its stored selected inputs and semantic boundary identify the
@@ -1584,7 +1625,6 @@ def _validated_product_upstream_sequences(facts: "ProductExecutionFactsV1") -> f
     if envelopes is None:
         return frozenset()
     excluded: set[int] = set()
-    admitted = False
     attempts = facts.store_attempts
 
     def require(condition):
@@ -1599,14 +1639,15 @@ def _validated_product_upstream_sequences(facts: "ProductExecutionFactsV1") -> f
         if (item.artifact_role != "repair_plan" or not isinstance(data, Mapping)
                 or data.get("failure_class") != "patch_upstream_assessment"):
             continue
-        require(not admitted and index > 0 and item.node_name == "create_repair_plan")
-        admitted = True
+        retained_plan = next((output for output in facts.outputs
+                              if output.origin == "reused_input" and output.artifact_role == "implementation_plan"), None)
+        require((index > 0 or retained_plan is not None) and item.node_name == "create_repair_plan")
         context = data.get("repair_context") or {}
         upstream = context.get("upstream_request") or {}
         decision = data.get("semantic_decision") or {}
         owner = upstream.get("required_owner")
-        previous = attempts[index - 1]
-        require(previous.node_name in {"create_implementation_plan", "create_repair_plan"}
+        previous = attempts[index - 1] if index else retained_plan
+        require(previous.node_name in {"create_implementation_plan", "create_repair_plan", "interrupted_patch_admission", "pretransport_patch_admission"}
                 and previous.repair_attempt == item.repair_attempt
                 and envelope.get("status") == "success"
                 and owner in {"evidence", "planning"}
@@ -1676,7 +1717,11 @@ def _validated_product_upstream_sequences(facts: "ProductExecutionFactsV1") -> f
             excluded.add(row.sequence)
             following += 1
         if following < len(attempts):
-            require(attempts[following].node_name in {"generate_patch_proposal", "blocked"})
+            next_attempt = attempts[following]
+            next_data = envelopes.get(next_attempt.sequence, {}).get("data", {})
+            require(next_attempt.node_name in {"generate_patch_proposal", "blocked"}
+                    or next_attempt.node_name == "create_repair_plan"
+                    and next_data.get("failure_class") == "patch_upstream_assessment")
     return frozenset(excluded)
 
 
@@ -1794,15 +1839,76 @@ class ProductExecutionFactsV1:
     failure_stage: str | None
 
 
+def _validated_reused_product_inputs(facts: ProductExecutionFactsV1) -> tuple[ProductExecutionOutputV1, ...]:
+    reused = tuple(output for output in facts.outputs if output.origin == "reused_input")
+    if not reused:
+        return ()
+    roles = ("feature_spec", "evidence_pack", "implementation_plan")
+    def require(condition):
+        if not condition:
+            raise ProductExecutionContractError("Interrupted Patch reused inputs changed their exact lineage.",
+                                                side_effects_may_have_started=True)
+    # 为什么要有它：复用标记本身不能放宽生命周期，三件只读输入必须保持顺序、同一选择来源及原始依赖链。
+    require(reused == facts.outputs[:3] and len(reused) == 3)
+    require(tuple(row.artifact_role for row in reused) == roles
+            and tuple(row.sequence for row in reused) == (0, 1, 2)
+            and tuple(row.phase for row in reused) == ("planning", "evidence", "planning")
+            and all(row.artifact_ref.feature_id == facts.feature_id
+                    and row.reuse_selection == reused[0].reuse_selection and row.node_name == reused[0].node_name for row in reused))
+    from src.mod_agent.saved_patch_admission import _json
+    try:
+        journal = _json(reused[0].reuse_selection["source_attempt_ref"])
+        manifest = _json(reused[0].reuse_selection["parent_manifest_ref"])
+        pretransport = reused[0].node_name == "pretransport_patch_admission"
+        if pretransport:
+            terminal = _json(reused[0].reuse_selection["parent_result_ref"])
+            require(manifest.get("terminal_record") == reused[0].reuse_selection["parent_result_ref"]
+                and journal.get("model_call_count") == 0 and journal.get("proposal_admitted") is False
+                and terminal.get("product_execution_result", {}).get("execution_disposition") == "partial"
+                and terminal.get("model_call_budget") == journal.get("shared_model_budget"))
+        else:
+            stop = _json(reused[0].reuse_selection["execution_stop_ref"])
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        raise ProductExecutionContractError("Interrupted Patch reused inputs lost their exact original records.",
+                                            side_effects_may_have_started=True) from exc
+    require(journal.get("selected_artifacts") == {row.artifact_role: _ref_to_dict(row.artifact_ref) for row in reused}
+            and journal.get("feature_id") == facts.feature_id
+            and journal.get("request_id") == manifest.get("request_id") == facts.request.request_id
+            and journal.get("parent_run_id") == manifest.get("run_id") == facts.request.run_id
+            and (pretransport or (all(stop.get(key) == reused[0].reuse_selection[key] for key in ("source_attempt_ref", "parent_manifest_ref"))
+            and stop.get("original_execution_stopped") is True and stop.get("origin") == "host_controller")))
+    envelopes = _output_readback_envelopes(facts)
+    if envelopes is None:
+        require(facts.failure_stage == "post_execution_validation")
+        return reused
+    for index, output in enumerate(reused):
+        envelope = envelopes[output.sequence]
+        candidate = None
+        if output.artifact_role == "evidence_pack" and envelope.get("status") == "blocked":
+            from src.mod_agent.evidence.compilation_candidate import compilation_candidate_scope
+            candidate = compilation_candidate_scope(envelope["data"], envelopes[reused[0].sequence]["data"])
+        require(envelope.get("status") == "success" or candidate is not None)
+        if index:
+            previous = reused[index - 1].artifact_ref
+            upstream = envelope.get("inputs", {}).get("upstream_artifacts", [])
+            require(any(row.get("artifact_type") == previous.artifact_type
+                        and row.get("path") == previous.path
+                        and row.get("artifact_hash") == previous.artifact_hash for row in upstream))
+    return reused
+
+
 def _validate_product_execution_result_facts(
     facts: ProductExecutionFactsV1,
 ) -> None:
+    reused = _validated_reused_product_inputs(facts)
     upstream_sequences = _validated_product_upstream_sequences(facts)
     initial_reassessment_sequences = _validated_initial_findings_reassessment_sequences(facts)
-    _validate_store_trace(facts.store_attempts, facts.outputs,
-                         upstream_sequences=upstream_sequences | initial_reassessment_sequences)
+    _validate_store_trace(facts.store_attempts, tuple(row for row in facts.outputs if row.origin == "generated"),
+                         upstream_sequences=upstream_sequences | initial_reassessment_sequences,
+                         reused_input_count=len(reused))
     _validate_effect_trace(facts.effect_events)
-    _validate_lifecycle(tuple(item for item in facts.store_attempts if item.sequence not in upstream_sequences))
+    _validate_lifecycle(tuple(item for item in facts.store_attempts if item.sequence not in upstream_sequences),
+                        interrupted_patch=bool(reused))
     _validate_repair_plan_lifecycle_predicates(facts, upstream_sequences=upstream_sequences)
     _validate_terminal_effect_boundary(facts)
     if facts.feature_id is not None:

@@ -37,6 +37,57 @@ class SettingsError(ValueError):
     """Raised when settings validation fails."""
 
 
+def _local_storage_root(settings):
+    value = getattr(settings, "storage_root", None)
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip() or value.startswith(("\\\\", "//")):
+        raise SettingsError("storage_root must be an absolute local path")
+    root = Path(value)
+    if not root.is_absolute() or ".." in root.parts:
+        raise SettingsError("storage_root must be an absolute local path")
+    if root.exists() and not root.is_dir():
+        raise SettingsError("storage_root must be a directory")
+    _reject_storage_links(root)
+    return root.resolve()
+
+
+def _reject_storage_links(path):
+    import stat
+    for candidate in (path, *path.parents):
+        if candidate.exists() or candidate.is_symlink():
+            info = candidate.lstat()
+            if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+                raise SettingsError("storage paths cannot use symlinks or reparse points")
+
+
+def resolve_storage_path(settings, *parts):
+    """Resolve paths relative to the selected data root, preserving legacy defaults.
+
+    为什么要有它：实验隔离必须覆盖稀疏库、历史和图片，而非只改向量库目录。
+    """
+    relative = Path(*parts) if parts else Path()
+    if relative.is_absolute() or relative.drive or ".." in relative.parts:
+        raise SettingsError("storage child path must stay relative to storage_root")
+    root = _local_storage_root(settings)
+    target = (root / relative) if root is not None else resolve_path(Path("data") / relative)
+    if root is not None:
+        _reject_storage_links(target)
+    return target
+
+
+def require_storage_path(settings, path):
+    root = _local_storage_root(settings)
+    if root is None:
+        return resolve_path(path)
+    selected = Path(path)
+    if (not selected.is_absolute() or str(selected).startswith(("\\\\", "//"))
+            or ".." in selected.parts or not selected.resolve().is_relative_to(root)):
+        raise SettingsError("configured storage path must be absolute and within storage_root")
+    _reject_storage_links(selected)
+    return selected.resolve()
+
+
 def _require_mapping(data: Dict[str, Any], key: str, path: str) -> Dict[str, Any]:
     value = data.get(key)
     if value is None:
@@ -154,6 +205,14 @@ class EmbeddingSettings:
     deployment_name: Optional[str] = None
     # Ollama-specific optional fields
     base_url: Optional[str] = None
+    transport: str = "legacy"
+    timeout: float = 120.0
+    model_revision: Optional[str] = None
+
+    def __post_init__(self):
+        if (self.transport not in {"batch", "legacy"} or type(self.timeout) not in (int, float)
+                or not 0 < self.timeout < float("inf")):
+            raise SettingsError("embedding transport/timeout invalid")
 
 
 @dataclass(frozen=True)
@@ -208,6 +267,10 @@ class VisionLLMSettings:
     azure_endpoint: Optional[str] = None
     deployment_name: Optional[str] = None
     base_url: Optional[str] = None
+    model_revision: Optional[str] = None
+    timeout: float = 180.0
+    context_window: int = 32768
+    max_tokens: int = 1024
 
 
 @dataclass(frozen=True)
@@ -277,6 +340,82 @@ class IngestionSettings:
     batch_size: int
     chunk_refiner: Optional[Dict[str, Any]] = None  # 动态配置
     metadata_enricher: Optional[Dict[str, Any]] = None  # 动态配置
+    max_workers: int = 5
+    image_max_workers: int = 3
+    model_revisions: Optional[Dict[str, str]] = None
+    extensions: Optional[List[str]] = None
+    strict_transforms: bool = False
+
+    def __post_init__(self):
+        if any(type(value) is not int or not 1 <= value <= 8 for value in (self.max_workers, self.image_max_workers)):
+            raise SettingsError("ingestion concurrency must be between 1 and 8")
+        if type(self.strict_transforms) is not bool:
+            raise SettingsError("ingestion strict_transforms must be boolean")
+        if self.extensions is not None and (not isinstance(self.extensions, list) or not self.extensions
+                or any(item not in {".pdf", ".cs", ".xml", ".md", ".txt", ".png"} for item in self.extensions)):
+            raise SettingsError("ingestion extensions unsupported")
+        if self.model_revisions is not None and (not isinstance(self.model_revisions, dict)
+                or any(not isinstance(key, str) or not isinstance(value, str) or not value
+                       for key, value in self.model_revisions.items())):
+            raise SettingsError("ingestion model_revisions invalid")
+
+
+@dataclass(frozen=True)
+class TaskMemorySettings:
+    enabled: bool = False
+    store_root: Optional[str] = None
+    max_context_chars: int = 3000
+
+    def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise SettingsError("Expected boolean for field: task_memory.enabled")
+        if self.store_root is not None and (
+            not isinstance(self.store_root, str) or not self.store_root.strip()
+        ):
+            raise SettingsError("Expected non-empty string for field: task_memory.store_root")
+        if self.enabled and self.store_root is None:
+            raise SettingsError("Enabled task_memory requires task_memory.store_root")
+        if type(self.max_context_chars) is not int or self.max_context_chars < 256:
+            raise SettingsError("Expected integer of at least 256: task_memory.max_context_chars")
+
+
+@dataclass(frozen=True)
+class QuerySettings:
+    rewrite_enabled: bool = False
+    rewrite_max_calls: int = 1
+    rewrite_max_tokens: int = 256
+    answer_streaming: bool = False
+    cache_enabled: bool = False
+    cache_directory: str = "data/cache/query"
+    model_revision: Optional[str] = None
+    context_window: Optional[int] = None
+    max_concurrency: int = 1
+    timeout_seconds: float = 180.0
+    queue_timeout_seconds: float = 180.0
+    candidate_top_k: int = 20
+    max_context_chars: int = 24000
+    expected_processing_fingerprint: Optional[str] = None
+
+    def __post_init__(self):
+        for key in ("rewrite_enabled", "answer_streaming", "cache_enabled"):
+            if type(getattr(self, key)) is not bool:
+                raise SettingsError(f"query.{key} must be a boolean")
+        if type(self.rewrite_max_calls) is not int or self.rewrite_max_calls not in (0, 1):
+            raise SettingsError("query.rewrite_max_calls must be zero or one")
+        for key in ("rewrite_max_tokens", "max_concurrency", "candidate_top_k", "max_context_chars"):
+            if type(getattr(self, key)) is not int or getattr(self, key) <= 0:
+                raise SettingsError(f"query.{key} must be a positive integer")
+        for key in ("timeout_seconds", "queue_timeout_seconds"):
+            if type(getattr(self, key)) not in (int, float) or not 0 < getattr(self, key) < float("inf"):
+                raise SettingsError(f"query.{key} must be positive and finite")
+        if not isinstance(self.cache_directory, str) or not self.cache_directory.strip():
+            raise SettingsError("query.cache_directory must be nonempty")
+        if self.model_revision is not None and (not isinstance(self.model_revision, str) or not self.model_revision.strip()):
+            raise SettingsError("query.model_revision must be nonempty when supplied")
+        if self.context_window is not None and (type(self.context_window) is not int or self.context_window < 1024):
+            raise SettingsError("query.context_window must be an integer of at least 1024")
+        if self.expected_processing_fingerprint is not None and (not isinstance(self.expected_processing_fingerprint, str) or not self.expected_processing_fingerprint.strip()):
+            raise SettingsError("query.expected_processing_fingerprint must be nonempty when supplied")
 
 
 @dataclass(frozen=True)
@@ -292,6 +431,13 @@ class Settings:
     vision_llm: Optional[VisionLLMSettings] = None
     performance: Optional[PerformanceSettings] = None
     runtime: Optional[RuntimeAutomationSettings] = None
+    task_memory: Optional[TaskMemorySettings] = None
+    query: Optional[QuerySettings] = None
+    storage_root: Optional[str] = None
+
+    def __post_init__(self):
+        if self.storage_root is not None:
+            require_storage_path(self, self.vector_store.persist_directory)
 
     @classmethod
     def from_dict(
@@ -308,6 +454,20 @@ class Settings:
         evaluation = _require_mapping(data, "evaluation", "settings")
         observability = _require_mapping(data, "observability", "settings")
 
+        query_settings = None
+        if "query" in data:
+            query = _require_mapping(data, "query", "settings")
+            if set(query) - set(QuerySettings.__dataclass_fields__):
+                raise SettingsError("Unknown field in query settings")
+            query_settings = QuerySettings(**query)
+
+        task_memory_settings = None
+        if "task_memory" in data:
+            task_memory = _require_mapping(data, "task_memory", "settings")
+            if set(task_memory) - {"enabled", "store_root", "max_context_chars"}:
+                raise SettingsError("Unknown field in task_memory settings")
+            task_memory_settings = TaskMemorySettings(**task_memory)
+
         ingestion_settings = None
         if "ingestion" in data:
             ingestion = _require_mapping(data, "ingestion", "settings")
@@ -318,6 +478,11 @@ class Settings:
                 batch_size=_require_int(ingestion, "batch_size", "ingestion"),
                 chunk_refiner=ingestion.get("chunk_refiner"),  # 可选配置
                 metadata_enricher=ingestion.get("metadata_enricher"),  # 可选配置
+                max_workers=ingestion.get("max_workers", 5),
+                image_max_workers=ingestion.get("image_max_workers", 3),
+                model_revisions=ingestion.get("model_revisions"),
+                extensions=ingestion.get("extensions"),
+                strict_transforms=ingestion.get("strict_transforms", False),
             )
 
         vision_llm_settings = None
@@ -333,6 +498,10 @@ class Settings:
                 azure_endpoint=vision_llm.get("azure_endpoint"),
                 deployment_name=vision_llm.get("deployment_name"),
                 base_url=vision_llm.get("base_url"),
+                model_revision=vision_llm.get("model_revision"),
+                timeout=vision_llm.get("timeout", 180.0),
+                context_window=vision_llm.get("context_window", 32768),
+                max_tokens=vision_llm.get("max_tokens", 1024),
             )
 
         performance_settings = None
@@ -509,6 +678,9 @@ class Settings:
                 azure_endpoint=embedding.get("azure_endpoint"),
                 deployment_name=embedding.get("deployment_name"),
                 base_url=embedding.get("base_url"),
+                transport=embedding.get("transport", "legacy"),
+                timeout=embedding.get("timeout", 120.0),
+                model_revision=embedding.get("model_revision"),
             ),
             vector_store=VectorStoreSettings(
                 provider=_require_str(vector_store, "provider", "vector_store"),
@@ -545,6 +717,9 @@ class Settings:
             vision_llm=vision_llm_settings,
             performance=performance_settings,
             runtime=runtime_settings,
+            task_memory=task_memory_settings,
+            query=query_settings,
+            storage_root=data.get("storage_root"),
         )
 
         if (

@@ -784,9 +784,12 @@ def _attempt(path: Path, raw: bytes, journal: Mapping[str, Any], refs: _Referenc
 def project_patch_executions(
     artifact_store_root: str | Path, *, feature_id: str | None = None,
     run_id: str | None = None, attempt_locator: str | None = None,
+    include_investigation: bool = False,
 ) -> dict[str, Any]:
     """Read exact filters over ``cr`` journals, including failed and partial attempts."""
     root = _local_path(Path.cwd(), str(artifact_store_root))
+    if include_investigation and run_id is None and attempt_locator is None:
+        raise ValueError("Investigation requires one explicit run_id or attempt locator.")
     attempts_root = root / "cr"
     if attempt_locator is not None:
         path = _local_path(root, attempt_locator)
@@ -813,7 +816,18 @@ def project_patch_executions(
             continue
         if run_id is not None and journal.get("run_id") != run_id:
             continue
-        attempts.append(_attempt(path, raw, journal, _References(root)))
+        references = _References(root)
+        attempt = _attempt(path, raw, journal, references)
+        if include_investigation:
+            from src.observability.patch_investigation import build_investigation_chain
+
+            attempt["investigation_chain"] = build_investigation_chain(journal, attempt, references.check)
+            checked = Counter(item[0]["integrity"] for item in references.cache.values())
+            if references.unverifiable_references:
+                checked["unverifiable_reference"] = references.unverifiable_references
+            attempt["reference_integrity_counts"] = dict(sorted(checked.items()))
+            attempt["source_currentness"] = "see_bound_source_checks_in_investigation_chain"
+        attempts.append(attempt)
     return {
         "schema_version": "patch_execution_index_v1", "authority": "non_authoritative",
         "query_scope": "single_explicit_artifact_store_patch_journals",
@@ -922,7 +936,9 @@ def project_product_execution(run_root: str | Path, *, feature_id=None, run_id=N
         raise ValueError("product_manifest_feature_mismatch")
     if (run_id is not None and run_id != identity["run_id"]) or (feature_id is not None and feature_id != identity["feature_id"]):
         raise ValueError("product_query_identity_filter_mismatch")
-    stage = terminal.get("current_stage", "unknown")
+    # Legacy terminal writers stored null in the result but "unknown" in the
+    # manifest. Project the same missing-stage value without rewriting history.
+    stage = str(terminal.get("current_stage") or "unknown")
     if manifest.get("terminal_stage") is not None and manifest["terminal_stage"] != stage:
         raise ValueError("product_terminal_stage_mismatch")
     refs = []

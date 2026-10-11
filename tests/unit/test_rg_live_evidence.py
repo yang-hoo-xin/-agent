@@ -974,7 +974,10 @@ def test_rg_live_non_method_match_keeps_bounded_context_without_symbol_fabricati
     )
 
     item = pack.items[0]
-    assert item.span == {"start_line": 1, "end_line": 12}
+    # This class-level comment is after the complete method, not part of its unit.
+    # 为什么要有它：匿名上下文携带相邻方法会制造重叠，保留命中所在非方法区域即可。
+    assert item.span == {"start_line": 9, "end_line": 12}
+    assert "BoundarySignal" in item.excerpt and "EarlierMethod" not in item.excerpt
     assert item.method_name is None
     assert item.method_kind is None
     assert item.declaring_type is None

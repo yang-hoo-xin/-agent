@@ -548,9 +548,19 @@ def _reviewed_build_inputs(store, checkpoint_ref, resume_payload):
     apply_ref = ArtifactRef(feature_id=checkpoint_ref.feature_id, artifact_type="isolated_apply_result",
         path=state["artifacts"]["isolated_apply_result"], artifact_hash=state["artifact_hashes"]["isolated_apply_result"])
     applied = store.semantic_read_immutable(apply_ref)["data"]
+    from src.mod_agent.execution.task_delegation import (
+        has_verified_apply_authorization,
+        validate_delegated_resume,
+        validate_task_delegation,
+    )
+    if applied.get("authorization_origin") is not None:
+        validate_delegated_resume(applied["task_delegation_ref"], resume_payload,
+            run_id=checkpoint["run_id"], request_id=checkpoint["request_id"])
+        validate_task_delegation(applied["task_delegation_ref"], fresh_verification=True)
     if (applied["actual_write_performed"] is not True or applied["execution_mode"] != "isolated_apply"
             or applied["approved_diff_hash"] != binding["diff_hash"]
-            or applied["human_semantic_review_completed"] is not True):
+            or not has_verified_apply_authorization(applied, run_id=checkpoint["run_id"],
+                request_id=checkpoint["request_id"])):
         raise ValueError("REVIEWED_BUILD_APPROVED_APPLY_REQUIRED")
     source, destination = Path(binding["workspace_root"]), Path(binding["isolated_workspace"])
     if (not source.is_absolute() or not destination.is_absolute() or not source.is_dir() or not destination.is_dir()
@@ -592,6 +602,8 @@ def _verify_reviewed_build_result(result, *, destination, feature_id, mode, sour
             or not Path(profile["working_directory"]).resolve().is_relative_to(destination)):
         raise ValueError("REVIEWED_BUILD_PROFILE_OUTSIDE_APPLIED_WORKSPACE")
     applied_source_root = Path(source_binding.get("applied_source_root", str(destination))).resolve()
+    if _applied_source_snapshot(applied_source_root) != source_binding["applied_source_snapshot"]:
+        raise ValueError("REVIEWED_BUILD_INPUT_CHANGED_DURING_BUILD")
     for row in source_binding["applied_source_snapshot"]:
         path = applied_source_root / row["path"]
         if (not path.is_file() or path.is_symlink() or not path.resolve().is_relative_to(destination)
@@ -720,7 +732,8 @@ def continue_reviewed_patch(*, artifact_store_root, checkpoint_ref, resume_paylo
 
 
 def resume_deferred_approval(*, artifact_store_root, checkpoint_ref, resume_payload,
-                             human_semantic_decision, execution_trace_configuration=None):
+                             human_semantic_decision=None, task_delegation_ref=None,
+                             execution_trace_configuration=None):
     """Approve a saved product diff in its existing isolated workspace, once."""
     from src.mod_agent.execution.patch_apply import (
         ExactTextPatchApplier,
@@ -766,9 +779,21 @@ def resume_deferred_approval(*, artifact_store_root, checkpoint_ref, resume_payl
     dry = documents["dry_run_result"]
     if resume_payload.diff_hash != dry["diff_hash"]:
         raise ValueError("DEFERRED_APPROVAL_DIFF_MISMATCH")
-    human = _validate_human_semantic_decision(human_semantic_decision,
-        expected_binding=dry["human_semantic_decision_binding"])
-    if resume_payload.decision != human["decision"]:
+    human = None
+    if task_delegation_ref is not None:
+        from src.mod_agent.execution.task_delegation import validate_delegated_resume
+
+        if human_semantic_decision is not None:
+            raise ValueError("DEFERRED_APPROVAL_AUTHORIZATION_SOURCE_AMBIGUOUS")
+        delegated = validate_delegated_resume(task_delegation_ref, resume_payload,
+            run_id=request.run_id, request_id=request.request_id, checkpoint_ref=checkpoint_ref)
+        approval_decision = delegated["decision"]
+        base.update(authorization_origin="task_delegation_policy", task_delegation_ref=dict(task_delegation_ref))
+    else:
+        human = _validate_human_semantic_decision(human_semantic_decision,
+            expected_binding=dry["human_semantic_decision_binding"])
+        approval_decision = human["decision"]
+    if resume_payload.decision != approval_decision:
         raise ValueError("DEFERRED_APPROVAL_DECISIONS_DISAGREE")
     source = Path(request.source_root)
     destination = Path(request.isolated_workspace_root)
@@ -788,15 +813,17 @@ def resume_deferred_approval(*, artifact_store_root, checkpoint_ref, resume_payl
         raise ValueError("DEFERRED_APPROVAL_CURRENT_DIFF_CHANGED")
     decision, report_ref = checkpoint_store.resume(checkpoint_ref, resume_payload)
     base.update(resume_report=_artifact_reference(report_ref), diff_hash=dry["diff_hash"])
-    if not decision.allowed or human["decision"] != "approve":
-        return {**base, "status": "rejected" if human["decision"] == "reject" else "blocked",
+    if not decision.allowed or approval_decision != "approve":
+        return {**base, "status": "rejected" if approval_decision == "reject" else "blocked",
                 "blockers": list(decision.blockers)}
     source_before = _copy_source_snapshot(source)
 
     def apply_current(proposal, implementation, review):
         verify_source()
         return applier.run(workspace_root=destination, proposal=proposal, implementation_plan=implementation,
-            review=review, allow_write=True, approved_diff_hash=dry["diff_hash"], human_semantic_decision=human)
+            review=review, allow_write=True, approved_diff_hash=dry["diff_hash"], human_semantic_decision=human,
+            task_delegation_ref=task_delegation_ref,
+            task_delegation_resume_ref=_artifact_reference(report_ref) if task_delegation_ref else None)
 
     observations = {}
     configuration = execution_trace_configuration or PatchExecutionTraceConfiguration()
@@ -822,6 +849,8 @@ def resume_deferred_approval(*, artifact_store_root, checkpoint_ref, resume_payl
                     "workspace_root": str(source), "isolated_workspace": str(destination),
                     "diff_hash": dry["diff_hash"], "unified_diff_sha256": dry["unified_diff_sha256"],
                     "human_semantic_decision_binding": dry["human_semantic_decision_binding"],
+                    **({"authorization_origin": "task_delegation_policy",
+                        "task_delegation_ref": dict(task_delegation_ref)} if task_delegation_ref else {}),
                 }, source_before, target)
             result = {**base, "status": "applied_in_isolation" if complete else "blocked",
                 "isolated_apply_result": _artifact_reference(apply_ref), "workflow_checkpoint": _artifact_reference(following),

@@ -1,0 +1,239 @@
+{
+  "schema_version": "self_rag_critic_observed_regression_v1",
+  "origin": "self-rag-critic-v2-calibration-02 existing real answers and observed critic annotations; no model execution",
+  "result_source_sha256": "f06e08c9566f171dbcdd83b32909282f09daa8f02c1338facf64cf63462860c2",
+  "rows": [
+    {
+      "candidate": {
+        "answer": "To assess the API team's restriction that every complete JSON payload must start with an opening brace `{` or square bracket `[`, we can cite the following from RFC 8259:\n\n### General Rule:\nThe **JSON-text** syntax is defined as:\n```\nJSON-text = ws value ws\n```\nwhere `ws` represents insignificant whitespace, and `value` refers to one of the valid JSON values: an object, array, number, string, or one of the three literal names (`true`, `false`, `null`) [context:1].\n\nThis means that a complete JSON payload must begin with a **value**, which can be an object (`{...}`) or an array (`[...]`), as these are the only two structural elements that can serve as the root of a valid JSON document.\n\n### Scalar-Only Examples in RFC 8259:\nThe RFC defines the following scalar-only values:\n- A **number** (e.g., `42`, `-3.14`)\n- A **string** (e.g., `\"hello\"`)\n- The literals `true`, `false`, and `null` [context:1]\n\nHowever, these scalar types are not allowed to be the root of a JSON payload on their own — they must be enclosed in either an object or array structure. Therefore, while individual scalars like numbers, strings, or booleans are valid values, they cannot form a complete JSON payload by themselves without being part of an object `{}` or array `[]`.\n\nThus, the restriction imposed by the API team aligns with RFC 8259's definition that a valid JSON payload must start with either an object (`{`) or an array (`[`), since those are the only two structures capable of serving as the root value [context:1].",
+        "arm": "bm25",
+        "case_id": "holdout_06",
+        "contexts": [
+          {
+            "chunk_id": "dca62add_0012_a08b2621",
+            "context_index": 1,
+            "text": "JSON-text = ws value ws\n\n These are the six structural characters:\n\n begin-array = ws %x5B ws ; [ left square bracket\n\n begin-object = ws %x7B ws ; { left curly bracket\n\n end-array = ws %x5D ws ; ] right square bracket\n\n end-object = ws %x7D ws ; } right curly bracket\n\n name-separator = ws %x3A ws ; : colon\n\n value-separator = ws %x2C ws ; , comma\n\nBray Standards Track [Page 5]\n\n\fRFC 8259 JSON December 2017\n\n Insignificant whitespace is allowed before or after any of the six\n structural characters.\n\n ws = *(\n %x20 / ; Space\n %x09 / ; Horizontal tab\n %x0A / ; Line feed or New line\n %x0D ) ; Carriage return\n\n3. Values\n\n A JSON value MUST be an object, array, number, or string, or one of\n the following three literal names:"
+          },
+          {
+            "chunk_id": "dca62add_0005_aec0fa89",
+            "context_index": 2,
+            "text": "8.1. Character Encoding . . . . . . . . . . . . . . . . . . . 9\n 8.2. Unicode Characters . . . . . . . . . . . . . . . . . . . 10\n 8.3. String Comparison . . . . . . . . . . . . . . . . . . . . 10\n 9. Parsers . . . . . . . . . . . . . . . . . . . . . . . . . . . 10\n 10. Generators . . . . . . . . . . . . . . . . . . . . . . . . . 10\n 11. IANA Considerations . . . . . . . . . . . . . . . . . . . . . 11\n 12. Security Considerations . . . . . . . . . . . . . . . . . . . 12\n 13. Examples . . . . . . . . . . . . . . . . . . . . . . . . . . 12\n 14. References . . . . . . . . . . . . . . . . . . . . . . . . . 14\n 14.1. Normative References . . . . . . . . . . . . . . . . . . 14\n 14.2. Informative References . . . . . . . . . . . . . . . . . 14\n Appendix A. Changes from RFC 7159 . . . . . . . . . . . . . . . 16\n Contributors . . . . . . . . . . . . . . . . . . . . . . . . . . 16"
+          },
+          {
+            "chunk_id": "dca62add_0015_3f088301",
+            "context_index": 3,
+            "text": "RFC 8259 JSON December 2017\n\n object, and some implementations report all of the name/value pairs,\n including duplicates.\n\n JSON parsing libraries have been observed to differ as to whether or\n not they make the ordering of object members visible to calling\n software. Implementations whose behavior does not depend on member\n ordering will be interoperable in the sense that they will not be\n affected by these differences.\n\n5. Arrays\n\n An array structure is represented as square brackets surrounding zero\n or more values (or elements). Elements are separated by commas.\n\n array = begin-array [ value *( value-separator value ) ] end-array\n\n There is no requirement that the values in an array be of the same\n type.\n\n6. Numbers"
+          }
+        ],
+        "question": "An API team insists that every complete JSON payload start with an opening brace or square bracket. Which general rule and which scalar-only examples in RFC 8259 would you cite to assess that restriction?",
+        "sample_id": "exposed-56b7505630cefd7be6b1",
+        "source_constraint": {
+          "decision_stage": "before_retrieval",
+          "mode": "supplied_contexts_only"
+        }
+      },
+      "annotation": {
+        "answer_kind": "factual",
+        "completeness": "complete",
+        "core_claim": "a complete JSON payload must begin with a value, which can be an object ({...}) or an array ([...])",
+        "core_verdict": "supported",
+        "evidence_quotes": [
+          {
+            "context_index": 1,
+            "quote": "JSON-text = ws value ws",
+            "relation": "supports_core"
+          },
+          {
+            "context_index": 1,
+            "quote": "A JSON value MUST be an object, array, number, or string, or one of the following three literal names:",
+            "relation": "supports_core"
+          }
+        ],
+        "issue": "",
+        "labels": {
+          "relevance": "relevant",
+          "retrieval": "retrieve",
+          "support": "fully_supported",
+          "utility": 5
+        },
+        "unsupported_factual_claims": false
+      },
+      "candidate_source_sha256": "c50e4b97819a512b77f3936764156370329c9ec92101712388adfb2fd231fe42",
+      "annotation_source_sha256": "9f0fb0e4ef4a4fbfa8fc5acf84efc7d33b2ae16c752f056b39bcde12d3ed2dc0"
+    },
+    {
+      "candidate": {
+        "answer": "To assess the API team's restriction that every complete JSON payload must start with an opening brace `{` or square bracket `[`, we can cite the following from RFC 8259:\n\n### General Rule:\nThe **JSON-text** structure is defined in RFC 8259 as follows [context:3]:\n> `JSON-text = ws value ws`\n\nThis means that a complete JSON text consists of optional whitespace (`ws`), followed by a single **value**, followed by more optional whitespace. The definition implies that the JSON payload must begin with a valid **value**, which can be an object (`{...}`) or an array (`[...]`) — both of which start with their respective structural characters.\n\n### Scalar-Only Examples in RFC 8259:\nRFC 8259 defines the possible values as:\n> A JSON value MUST be an object, array, number, or string, or one of the following three literal names: `true`, `false`, or `null` [context:3].\n\nThus, a valid JSON value can be:\n- An **object** starting with `{`\n- An **array** starting with `[`\n- A **number**\n- A **string**\n- The literals `true`, `false`, or `null`\n\nSince the API team insists that every complete JSON payload starts with either `{` or `[`, this aligns with the requirement that a valid JSON value must be an object or array, which are the only two value types that begin with these characters.\n\n### Conclusion:\nThe restriction is consistent with RFC 8259 because:\n1. A complete JSON payload is defined as `JSON-text = ws value ws` [context:3].\n2. The `value` can be an **object** or **array**, both of which start with `{` or `[`, respectively.\n3. Other scalar values like numbers, strings, `true`, `false`, and `null` do not begin with these characters, so they would not satisfy the API team's requirement if the payload is expected to always start with `{` or `[`.\n\nTherefore, the restriction enforces that only **object** or **array** values are allowed as top-level structures in the JSON payload.",
+        "arm": "hybrid",
+        "case_id": "holdout_06",
+        "contexts": [
+          {
+            "chunk_id": "dca62add_0015_3f088301",
+            "context_index": 1,
+            "text": "RFC 8259 JSON December 2017\n\n object, and some implementations report all of the name/value pairs,\n including duplicates.\n\n JSON parsing libraries have been observed to differ as to whether or\n not they make the ordering of object members visible to calling\n software. Implementations whose behavior does not depend on member\n ordering will be interoperable in the sense that they will not be\n affected by these differences.\n\n5. Arrays\n\n An array structure is represented as square brackets surrounding zero\n or more values (or elements). Elements are separated by commas.\n\n array = begin-array [ value *( value-separator value ) ] end-array\n\n There is no requirement that the values in an array be of the same\n type.\n\n6. Numbers"
+          },
+          {
+            "chunk_id": "dca62add_0008_7e454a3c",
+            "context_index": 2,
+            "text": "An array is an ordered sequence of zero or more values.\n\nBray Standards Track [Page 3]\n\n\fRFC 8259 JSON December 2017\n\n The terms \"object\" and \"array\" come from the conventions of\n JavaScript.\n\n JSON’s design goals were for it to be minimal, portable, textual, and\n a subset of JavaScript.\n\n1.1. Conventions Used in This Document\n\n The key words \"MUST\", \"MUST NOT\", \"REQUIRED\", \"SHALL\", \"SHALL NOT\",\n \"SHOULD\", \"SHOULD NOT\", \"RECOMMENDED\", \"NOT RECOMMENDED\", \"MAY\", and\n \"OPTIONAL\" in this document are to be interpreted as described in BCP\n 14 [RFC2119] [RFC8174] when, and only when, they appear in all\n capitals, as shown here.\n\n The grammatical rules in this document are to be interpreted as\n described in [RFC5234].\n\n1.2. Specifications of JSON"
+          },
+          {
+            "chunk_id": "dca62add_0012_a08b2621",
+            "context_index": 3,
+            "text": "JSON-text = ws value ws\n\n These are the six structural characters:\n\n begin-array = ws %x5B ws ; [ left square bracket\n\n begin-object = ws %x7B ws ; { left curly bracket\n\n end-array = ws %x5D ws ; ] right square bracket\n\n end-object = ws %x7D ws ; } right curly bracket\n\n name-separator = ws %x3A ws ; : colon\n\n value-separator = ws %x2C ws ; , comma\n\nBray Standards Track [Page 5]\n\n\fRFC 8259 JSON December 2017\n\n Insignificant whitespace is allowed before or after any of the six\n structural characters.\n\n ws = *(\n %x20 / ; Space\n %x09 / ; Horizontal tab\n %x0A / ; Line feed or New line\n %x0D ) ; Carriage return\n\n3. Values\n\n A JSON value MUST be an object, array, number, or string, or one of\n the following three literal names:"
+          }
+        ],
+        "question": "An API team insists that every complete JSON payload start with an opening brace or square bracket. Which general rule and which scalar-only examples in RFC 8259 would you cite to assess that restriction?",
+        "sample_id": "exposed-e397088f4d15af0feff6",
+        "source_constraint": {
+          "decision_stage": "before_retrieval",
+          "mode": "supplied_contexts_only"
+        }
+      },
+      "annotation": {
+        "answer_kind": "factual",
+        "completeness": "complete",
+        "core_claim": "A complete JSON payload is defined as `JSON-text = ws value ws`",
+        "core_verdict": "supported",
+        "evidence_quotes": [
+          {
+            "context_index": 3,
+            "quote": "JSON-text = ws value ws",
+            "relation": "supports_core"
+          },
+          {
+            "context_index": 3,
+            "quote": "A JSON value MUST be an object, array, number, or string, or one of the following three literal names: `true`, `false`, or `null`",
+            "relation": "supports_core"
+          }
+        ],
+        "issue": "",
+        "labels": {
+          "relevance": "relevant",
+          "retrieval": "retrieve",
+          "support": "partially_supported",
+          "utility": 5
+        },
+        "unsupported_factual_claims": true
+      },
+      "candidate_source_sha256": "8dd717272c1de6b1e6180aa68d0da6db906b401ba49410e453851416587bc854",
+      "annotation_source_sha256": "47996776a2b093dd4bb85b2fc5a9da538b0b67474b40f9b388e578128e504c71"
+    },
+    {
+      "candidate": {
+        "answer": "RFC 8259 registers the JSON media type, which is defined in the context provided [context:1]. According to RFC 8259, no \"charset\" parameter is defined for this registration [context:1]. The specification also states that adding a charset parameter really has no effect on compliant recipients [context:1]. This means that even if a sender specifies a charset parameter when sending JSON data, a compliant receiver is not required to take any special action based on that parameter.",
+        "arm": "bm25",
+        "case_id": "holdout_08",
+        "contexts": [
+          {
+            "chunk_id": "dca62add_0029_bb372179",
+            "context_index": 1,
+            "text": "Intended usage: COMMON\n\n Restrictions on usage: none\n\n Author:\n Douglas Crockford\n\n\n Change controller:\n IESG\n\n\nBray Standards Track [Page 11]\n\n\fRFC 8259 JSON December 2017\n\n Note: No \"charset\" parameter is defined for this registration.\n Adding one really has no effect on compliant recipients.\n\n12. Security Considerations\n\n Generally, there are security issues with scripting languages. JSON\n is a subset of JavaScript but excludes assignment and invocation."
+          },
+          {
+            "chunk_id": "dca62add_0016_1afc5451",
+            "context_index": 2,
+            "text": "array = begin-array [ value *( value-separator value ) ] end-array\n\n There is no requirement that the values in an array be of the same\n type.\n\n6. Numbers\n\n The representation of numbers is similar to that used in most\n programming languages. A number is represented in base 10 using\n decimal digits. It contains an integer component that may be\n prefixed with an optional minus sign, which may be followed by a\n fraction part and/or an exponent part. Leading zeros are not\n allowed.\n\n A fraction part is a decimal point followed by one or more digits.\n\n An exponent part begins with the letter E in uppercase or lowercase,\n which may be followed by a plus or minus sign. The E and optional\n sign are followed by one or more digits.\n\n Numeric values that cannot be represented in the grammar below (such\n as Infinity and NaN) are not permitted.\n\n number = [ minus ] int [ frac ] [ exp ]\n\n decimal-point = %x2E ; ."
+          },
+          {
+            "chunk_id": "dca62add_0028_a104d213",
+            "context_index": 3,
+            "text": "Encoding considerations: binary\n\n Security considerations: See RFC 8259, Section 12\n\n Interoperability considerations: Described in RFC 8259\n\n Published specification: RFC 8259\n\n Applications that use this media type:\n JSON has been used to exchange data between applications written\n in all of these programming languages: ActionScript, C, C#,\n Clojure, ColdFusion, Common Lisp, E, Erlang, Go, Java, JavaScript,\n Lua, Objective CAML, Perl, PHP, Python, Rebol, Ruby, Scala, and\n Scheme.\n\n Additional information:\n Magic number(s): n/a\n File extension(s): .json\n Macintosh file type code(s): TEXT\n\n Person & email address to contact for further information:\n IESG\n\n\n Intended usage: COMMON\n\n Restrictions on usage: none\n\n Author:\n Douglas Crockford\n\n\n Change controller:\n IESG"
+          }
+        ],
+        "question": "A receiver reads a declared JSON media type and a sender-supplied charset setting. What type does RFC 8259 register, and how does it say an added charset parameter affects a compliant recipient?",
+        "sample_id": "exposed-8a3a72b9d8d3a5e8420b",
+        "source_constraint": {
+          "decision_stage": "before_retrieval",
+          "mode": "supplied_contexts_only"
+        }
+      },
+      "annotation": {
+        "answer_kind": "factual",
+        "completeness": "complete",
+        "core_claim": "RFC 8259 registers the JSON media type, which is defined in the context provided [context:1]. According to RFC 8259, no ",
+        "core_verdict": "supported",
+        "evidence_quotes": [
+          {
+            "context_index": 1,
+            "quote": "Note: No \"charset\" parameter is defined for this registration.",
+            "relation": "supports_core"
+          },
+          {
+            "context_index": 1,
+            "quote": "Adding one really has no effect on compliant recipients.",
+            "relation": "supports_core"
+          }
+        ],
+        "issue": "",
+        "labels": {
+          "relevance": "relevant",
+          "retrieval": "retrieve",
+          "support": "fully_supported",
+          "utility": 5
+        },
+        "unsupported_factual_claims": false
+      },
+      "candidate_source_sha256": "dcd947262f2deab6e83c82b5397a3be2f790a7cd5d7cf46bf7a0b13241dd693d",
+      "annotation_source_sha256": "e7a13c785dabd1de4ae66da51a4df42d110ac9a0c9af7c4fc736304e95b35157"
+    },
+    {
+      "candidate": {
+        "answer": "RFC 8259 registers the media type `application/json` for JSON text [context:2]. According to the specification, no `charset` parameter is defined for this media type [context:3]. RFC 8259 states that adding a charset parameter has no effect on compliant recipients [context:3].",
+        "arm": "hybrid",
+        "case_id": "holdout_08",
+        "contexts": [
+          {
+            "chunk_id": "dca62add_0028_a104d213",
+            "context_index": 1,
+            "text": "Encoding considerations: binary\n\n Security considerations: See RFC 8259, Section 12\n\n Interoperability considerations: Described in RFC 8259\n\n Published specification: RFC 8259\n\n Applications that use this media type:\n JSON has been used to exchange data between applications written\n in all of these programming languages: ActionScript, C, C#,\n Clojure, ColdFusion, Common Lisp, E, Erlang, Go, Java, JavaScript,\n Lua, Objective CAML, Perl, PHP, Python, Rebol, Ruby, Scala, and\n Scheme.\n\n Additional information:\n Magic number(s): n/a\n File extension(s): .json\n Macintosh file type code(s): TEXT\n\n Person & email address to contact for further information:\n IESG\n\n\n Intended usage: COMMON\n\n Restrictions on usage: none\n\n Author:\n Douglas Crockford\n\n\n Change controller:\n IESG"
+          },
+          {
+            "chunk_id": "dca62add_0027_e831597a",
+            "context_index": 2,
+            "text": "An implementation may set limits on the size of texts that it\n accepts. An implementation may set limits on the maximum depth of\n nesting. An implementation may set limits on the range and precision\n of numbers. An implementation may set limits on the length and\n character contents of strings.\n\n10. Generators\n\n A JSON generator produces JSON text. The resulting text MUST\n strictly conform to the JSON grammar.\n\nBray Standards Track [Page 10]\n\n\fRFC 8259 JSON December 2017\n\n11. IANA Considerations\n\n The media type for JSON text is application/json.\n\n Type name: application\n\n Subtype name: json\n\n Required parameters: n/a\n\n Optional parameters: n/a\n\n Encoding considerations: binary\n\n Security considerations: See RFC 8259, Section 12\n\n Interoperability considerations: Described in RFC 8259\n\n Published specification: RFC 8259"
+          },
+          {
+            "chunk_id": "dca62add_0029_bb372179",
+            "context_index": 3,
+            "text": "Intended usage: COMMON\n\n Restrictions on usage: none\n\n Author:\n Douglas Crockford\n\n\n Change controller:\n IESG\n\n\nBray Standards Track [Page 11]\n\n\fRFC 8259 JSON December 2017\n\n Note: No \"charset\" parameter is defined for this registration.\n Adding one really has no effect on compliant recipients.\n\n12. Security Considerations\n\n Generally, there are security issues with scripting languages. JSON\n is a subset of JavaScript but excludes assignment and invocation."
+          }
+        ],
+        "question": "A receiver reads a declared JSON media type and a sender-supplied charset setting. What type does RFC 8259 register, and how does it say an added charset parameter affects a compliant recipient?",
+        "sample_id": "exposed-ffe9b7c0b56fe0e7a36b",
+        "source_constraint": {
+          "decision_stage": "before_retrieval",
+          "mode": "supplied_contexts_only"
+        }
+      },
+      "annotation": {
+        "answer_kind": "factual",
+        "completeness": "complete",
+        "core_claim": "RFC 8259 registers the media type `application/json` for JSON text",
+        "core_verdict": "supported",
+        "evidence_quotes": [
+          {
+            "context_index": 2,
+            "quote": "The media type for JSON text is application/json.",
+            "relation": "supports_core"
+          },
+          {
+            "context_index": 3,
+            "quote": "Note: No \"charset\" parameter is defined for this registration. Adding one really has no effect on compliant recipients.",
+            "relation": "supports_core"
+          }
+        ],
+        "issue": "",
+        "labels": {
+          "relevance": "relevant",
+          "retrieval": "retrieve",
+          "support": "fully_supported",
+          "utility": 5
+        },
+        "unsupported_factual_claims": false
+      },
+      "candidate_source_sha256": "c22fd5083a3ec7a4ded1c6fe9e7c3172d5a10ec51106b5dd6f897faf5140ae20",
+      "annotation_source_sha256": "3f94bec448f900e9cd4d4c7ba39a45b5f83ce40c0df60d36d291ee2c6035889f"
+    }
+  ]
+}

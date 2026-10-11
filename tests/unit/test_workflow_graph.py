@@ -1156,12 +1156,13 @@ def test_stagger_diagnostic_authority_graph_stops_at_diagnostic_plan(
     ),
 )
 def test_unsupported_discriminators_fail_at_all_three_layers_without_writes(
-    tmp_path: Path,
+    short_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
     case_id: str,
     schema_version: str,
     projection_kind: str,
 ) -> None:
+    tmp_path = short_workspace
     default_registry = ArtifactTypeRegistry()
     request_contract = replace(
         default_registry.get("edit_authority_request"),
@@ -1476,12 +1477,13 @@ def test_public_entry_cannot_bypass_declared_operation_applicability(
     ),
 )
 def test_hud_request_proposal_schema_mismatch_fails_at_all_layers_before_write(
-    tmp_path: Path,
+    short_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
     case_id: str,
     request_schema: str,
     proposal_schema: str,
 ) -> None:
+    tmp_path = short_workspace
     default_registry = ArtifactTypeRegistry()
     request_contract = replace(
         default_registry.get("edit_authority_request"),
@@ -7985,11 +7987,11 @@ def test_default_graph_uses_domain_policy_for_unsupported_domain(tmp_path: Path)
     assert request_plan["requires_hook_evidence"] is False
     assert request_plan["hook_requirement"] == {
         "required": False,
-        "reason": "not_required",
+        "reason": "implementation_mechanism_unresolved",
     }
     assert feature_spec["hook_requirement"] == {
         "required": False,
-        "reason": "not_required",
+        "reason": "implementation_mechanism_unresolved",
     }
     assert proposal["risk_assessment"]["risk_level"] == "high"
     assert result["review_summary"]["allowed_next_stage"] is None

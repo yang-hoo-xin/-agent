@@ -1,0 +1,48 @@
+{
+  "passed": true,
+  "scope": "documentation_and_read_only_navigation",
+  "archives": [
+    {
+      "path": "docs/ACTIVE_PRODUCT_CONTRACT.history-20260926.md",
+      "matches_original": true,
+      "original_lines": 1802,
+      "current_lines": 56
+    },
+    {
+      "path": "docs/PROJECT_STATE.history-20260926.md",
+      "matches_original": true,
+      "original_lines": 2980,
+      "current_lines": 54
+    },
+    {
+      "path": "docs/IMPLEMENTATION_QUEUE.history-20260926.md",
+      "matches_original": true,
+      "original_lines": 1679,
+      "current_lines": 27
+    }
+  ],
+  "local_links_checked": 39,
+  "link_failures": [],
+  "legacy_anchors_valid": true,
+  "unrelated_wip_checked": 190,
+  "unexpected_wip_changes": [],
+  "related_exact_edits": [
+    {
+      "path": "docs/ARCHITECTURE_OVERVIEW.md",
+      "occurrences": 1,
+      "prior_bytes_restored": true
+    },
+    {
+      "path": "docs/EVALUATION_DRIVEN_DEVELOPMENT.md",
+      "occurrences": 1,
+      "prior_bytes_restored": true
+    }
+  ],
+  "navigation_reused_from": "verification.json: navigation (implementation unchanged)",
+  "navigation_exit": 0,
+  "navigation_read_only": true,
+  "diff_check_exit": 0,
+  "independent_review": "final_read_only_review_passed",
+  "model_calls": 0,
+  "product_tests_or_build_executed": false
+}

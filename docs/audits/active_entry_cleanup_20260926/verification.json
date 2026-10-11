@@ -1,0 +1,122 @@
+{
+  "scope": "documentation_and_read_only_navigation",
+  "passed": false,
+  "archives": [
+    {
+      "path": "docs/ACTIVE_PRODUCT_CONTRACT.history-20260926.md",
+      "sha256_matches_original": true,
+      "old_lines": 1802,
+      "current_lines": 56
+    },
+    {
+      "path": "docs/PROJECT_STATE.history-20260926.md",
+      "sha256_matches_original": true,
+      "old_lines": 2980,
+      "current_lines": 54
+    },
+    {
+      "path": "docs/IMPLEMENTATION_QUEUE.history-20260926.md",
+      "sha256_matches_original": true,
+      "old_lines": 1679,
+      "current_lines": 27
+    }
+  ],
+  "unrelated_wip_checked": 190,
+  "unexpected_wip_changes": [],
+  "related_exact_edits": [
+    {
+      "path": "docs/ARCHITECTURE_OVERVIEW.md",
+      "replacement_occurrences": 0,
+      "exact_prior_bytes_reconstructed": false
+    },
+    {
+      "path": "docs/EVALUATION_DRIVEN_DEVELOPMENT.md",
+      "replacement_occurrences": 1,
+      "exact_prior_bytes_reconstructed": true
+    }
+  ],
+  "local_links_checked": 38,
+  "link_failures": [],
+  "legacy_anchors": [
+    {
+      "target": "docs/ACTIVE_PRODUCT_CONTRACT.md",
+      "anchor": "11-current-development-selection",
+      "valid": true
+    },
+    {
+      "target": "docs/PROJECT_STATE.md",
+      "anchor": "follow-recoil-baseline-2026-09-14",
+      "valid": true
+    }
+  ],
+  "navigation": {
+    "argv": [
+      "C:\\Users\\10160\\.codex\\visualizations\\2026\\08\\11\\019ff15f-9eac-7b13-aad5-faffde4b36b7\\rag_capability_mainline\\.venv\\Scripts\\python.exe",
+      "-B",
+      "-m",
+      "scripts.engineering_cognition",
+      "--kind",
+      "symbol",
+      "--name",
+      "RequestPatchExecution",
+      "--pretty"
+    ],
+    "exit_code": 0,
+    "read_only": true,
+    "view": "entity",
+    "persistence": "none",
+    "data": {
+      "exact_match_only": true,
+      "kind": "symbol",
+      "result": {
+        "definition_refs": [
+          "src/mod_agent/request_patch_execution.py:233"
+        ],
+        "final_authority": "not_inferred",
+        "latest_actual_evidence": {
+          "binding": "not_available",
+          "reason": "no_complete_actual_journal_observed",
+          "search_scope": "artifacts/**/actual_journal.json",
+          "status": "unknown"
+        },
+        "name": "RequestPatchExecution",
+        "reference_refs": [
+          "src/mod_agent/initial_findings_continuation.py:1097",
+          "src/mod_agent/initial_findings_continuation.py:858",
+          "src/mod_agent/local_entry.py:7886",
+          "src/mod_agent/local_entry.py:8150",
+          "src/mod_agent/product_executor.py:698",
+          "src/mod_agent/product_executor.py:700",
+          "src/mod_agent/request_patch_execution.py:233"
+        ],
+        "reference_refs_truncated": false,
+        "semantic_owner": "not_inferred",
+        "status": "found",
+        "test_execution": "not_performed_by_projection",
+        "test_reference_semantics": "exact_lexical_reference_only",
+        "test_refs": [
+          "tests/unit/test_mod_agent_cli.py:2206",
+          "tests/unit/test_mod_agent_cli.py:2207",
+          "tests/unit/test_mod_agent_cli.py:2239",
+          "tests/unit/test_product_patch_journal.py:264",
+          "tests/unit/test_product_patch_journal.py:267",
+          "tests/unit/test_product_patch_journal.py:287",
+          "tests/unit/test_product_patch_outcome.py:16",
+          "tests/unit/test_product_patch_outcome.py:25",
+          "tests/unit/test_product_trace_lifecycle.py:163",
+          "tests/unit/test_product_trace_lifecycle.py:199",
+          "tests/unit/test_request_patch_repair_context.py:185",
+          "tests/unit/test_request_patch_repair_context.py:19",
+          "tests/unit/test_run_request_external_worker.py:19",
+          "tests/unit/test_run_request_external_worker.py:193",
+          "tests/unit/test_run_request_external_worker.py:85"
+        ],
+        "test_refs_truncated": false
+      }
+    }
+  },
+  "diff_check_exit": 0,
+  "diff_check_stdout": "",
+  "model_calls": 0,
+  "product_tests_or_build_executed": false
+}

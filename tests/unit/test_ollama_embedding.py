@@ -28,6 +28,9 @@ def mock_settings_ollama() -> Any:
     settings.embedding.provider = "ollama"
     settings.embedding.model = "nomic-embed-text"
     settings.embedding.dimensions = 768
+    settings.embedding.transport = "legacy"
+    settings.embedding.timeout = 120.0
+    settings.embedding.base_url = None
     return settings
 
 

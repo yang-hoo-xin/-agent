@@ -967,8 +967,9 @@ def test_fresh_api_augmentation_factory_reuses_local_discovery_components(
             self.model = kwargs["model"]
 
     class FakeLiveProvider:
-        def __init__(self, workspace_root, *, rg_executable):
+        def __init__(self, workspace_root, *, rg_executable, small_file_max_bytes):
             captured["live_init"] = (workspace_root, rg_executable)
+            captured["small_file_max_bytes"] = small_file_max_bytes
 
         def collect_query_set(self, *, queries, search_root, max_items):
             captured["adapted_queries"] = queries

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping
 
@@ -66,6 +67,7 @@ class EvidenceItem:
     metadata_token: str | None = None
     signature_blob: str | None = None
     risk_notes: tuple[str, ...] = ()
+    document_provenance: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return JSON-serializable evidence."""
@@ -124,6 +126,8 @@ class EvidenceItem:
             payload["metadata_token"] = self.metadata_token
         if self.signature_blob is not None:
             payload["signature_blob"] = self.signature_blob
+        if self.document_provenance is not None:
+            payload["document_provenance"] = dict(self.document_provenance)
         return payload
 
 
@@ -501,7 +505,7 @@ def _evidence_item_from_artifact_payload(value: Mapping[str, Any]) -> EvidenceIt
         "authority",
         "risk_notes",
     }
-    optional = {"source_authority", "module_mvid", "metadata_token", "signature_blob"}
+    optional = {"source_authority", "module_mvid", "metadata_token", "signature_blob", "document_provenance"}
     if not required.issubset(value) or set(value) - required - optional:
         raise ValueError("EVIDENCE_ITEM_PAYLOAD_SHAPE_INVALID")
     if value.get("authority") not in {
@@ -510,6 +514,9 @@ def _evidence_item_from_artifact_payload(value: Mapping[str, Any]) -> EvidenceIt
     }:
         raise ValueError("EVIDENCE_ITEM_AUTHORITY_INVALID")
     source_authority = value.get("source_authority")
+    document_provenance = value.get("document_provenance")
+    if document_provenance is not None and (not isinstance(document_provenance, dict) or value.get("source_type") != "domain_note"):
+        raise ValueError("EVIDENCE_ITEM_DOCUMENT_PROVENANCE_INVALID")
     if source_authority is not None and source_authority not in {
         "authoritative",
         "supporting",
@@ -617,6 +624,7 @@ def _evidence_item_from_artifact_payload(value: Mapping[str, Any]) -> EvidenceIt
         metadata_token=value.get("metadata_token"),
         signature_blob=value.get("signature_blob"),
         risk_notes=tuple(risk_notes),
+        document_provenance=deepcopy(document_provenance) if document_provenance is not None else None,
     )
 
 

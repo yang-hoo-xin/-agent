@@ -1,0 +1,49 @@
+{
+  "description": "Tier-0 public RAG smoke set derived from RFC 8259 for ingestion-to-evaluation canary coverage. It is not an external benchmark or a claim of retrieval-quality generalization.",
+  "tier": "tier_0_public_smoke",
+  "purpose": "Verify that ingestion, retrieval, answer generation, citation, and evaluation can execute on three public-source questions.",
+  "source": {
+    "url": "https://www.ietf.org/ietf-ftp/rfc/rfc8259.txt.pdf",
+    "sha256": "36eae5d5812250c57e31cd87e591e6fd63fa2384ac4d8c53d7e0306807c75680"
+  },
+  "authoring_origin": {
+    "type": "codex_synthesized_from_public_source",
+    "creation_turn_id": "01a0bd25-c437-7cd3-add1-54fd430f938a",
+    "basis": "Questions and paraphrased references were prepared from RFC 8259 sections 6, 8.1, and 9."
+  },
+  "human_verified": false,
+  "answer_policy": "Answer the question under one fixed policy. Use and cite retrieved contexts when supplied; without retrieved contexts, state that no retrieved evidence was supplied. If available information cannot support a requested value, say so.",
+  "citation_policy": "With retrieval enabled, cite supporting passages inline as [context:N]. RAG-off answers must not invent retrieved citations.",
+  "test_cases": [
+    {
+      "case_id": "rfc8259_t0_numbers",
+      "query": "Does RFC 8259 permit Infinity, NaN, or leading zeros in JSON numbers?",
+      "expected_chunk_ids": ["doc_36eae5d5812250c5_0016_e60b202e"],
+      "reference_answer": "No. JSON number syntax excludes Infinity and NaN, and numbers cannot have leading zeros.",
+      "source_sections": ["6"],
+      "source_pages": [7],
+      "diagnostic_types": ["single_hop"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t0_encoding_bom",
+      "query": "What character encoding does RFC 8259 require between systems outside a closed ecosystem, and what are the byte order mark rules?",
+      "expected_chunk_ids": ["doc_36eae5d5812250c5_0023_c627f79f"],
+      "reference_answer": "Use UTF-8. Senders must not prefix network-transmitted JSON with a byte order mark. A receiving parser may ignore a mark that is present.",
+      "source_sections": ["8.1"],
+      "source_pages": [9],
+      "diagnostic_types": ["multi_fact_recall"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t0_parser_limits",
+      "query": "Which implementation limits may a JSON parser set under RFC 8259 section 9?",
+      "expected_chunk_ids": ["doc_36eae5d5812250c5_0027_c55041f8"],
+      "reference_answer": "A parser may restrict input size, nesting depth, numeric range and precision, and string length and character contents.",
+      "source_sections": ["9"],
+      "source_pages": [10],
+      "diagnostic_types": ["single_hop"],
+      "expected_behavior": "answer"
+    }
+  ]
+}

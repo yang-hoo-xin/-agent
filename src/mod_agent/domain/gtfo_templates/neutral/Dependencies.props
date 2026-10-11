@@ -1,0 +1,16 @@
+<Project InitialTargets="ValidateGamePath">
+  <Target Name="ValidateGamePath">
+    <Error Text="Set GameFolder through the run-local dependency binding." Condition="'$(GameFolder)' == '' or !Exists('$(GameFolder)')" />
+  </Target>
+  <ItemGroup>
+    <Reference Include="$(GameFolder)/BepInEx/core/BepInEx.Core.dll" Private="false" />
+    <Reference Include="$(GameFolder)/BepInEx/core/BepInEx.Unity.IL2CPP.dll" Private="false" />
+    <Reference Include="$(GameFolder)/BepInEx/core/Il2CppInterop.Runtime.dll" Private="false" />
+    <Reference Include="$(GameFolder)/BepInEx/core/0Harmony.dll" Private="false" />
+    <Reference Include="$(GameFolder)/BepInEx/interop/*.dll" Private="false" />
+    <Reference Remove="$(GameFolder)/BepInEx/interop/netstandard.dll" />
+    <Reference Remove="$(GameFolder)/BepInEx/interop/mscorlib.dll" />
+    <Reference Remove="$(GameFolder)/BepInEx/interop/Newtonsoft.Json.dll" />
+    <Reference Include="$(GameFolder)/BepInEx/plugins/GTFO-API.dll" Private="false" />
+  </ItemGroup>
+</Project>

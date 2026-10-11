@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import subprocess
 from collections.abc import Callable, Mapping
@@ -14,6 +15,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore, ArtifactWriteResult
 from src.mod_agent.domain import GTFOAdapter, UnsupportedDomainAdapter
+from src.mod_agent.errors import LocalEntryError as LocalEntryError
 from src.mod_agent.execution import ExactDiffApprovalRejectedError
 from src.mod_agent.git.admission import GitAdmissionError, StrictGitAdmission
 from src.mod_agent.model_admission import (
@@ -109,10 +111,6 @@ PATCH_PROVIDER_PAYLOAD_DISCLOSURE_BINDINGS = (
         ("feature_runtime_verification_plan",),
     ),
 )
-
-
-class LocalEntryError(RuntimeError):
-    """Raised when the active local product entry cannot proceed."""
 
 
 class _ProductExecutionAdmissionError(ProductExecutionContractError):
@@ -960,6 +958,19 @@ class _ProductStoreRecorder:
     def __getattr__(self, name: str) -> Any:
         return getattr(self._store, name)
 
+    def reuse_interrupted_inputs(self, admitted: Mapping[str, Any], selection: Mapping[str, Any], *, pretransport=False) -> None:
+        """Retain prior identities without inventing Store writes or effects."""
+        # 为什么要有它：续接结果需要原输入身份，但本次没有重新生成它们，不能污染调用量和副作用记录。
+        if self.outputs or self.attempts or self.effect_events:
+            raise ProductExecutionContractError("Reused inputs must precede current execution.",
+                                                side_effects_may_have_started=False)
+        for role, phase in (("feature_spec", "planning"), ("evidence_pack", "evidence"),
+                            ("implementation_plan", "planning")):
+            self.outputs.append(ProductExecutionOutputV1(contract_version="1", sequence=len(self.outputs),
+                phase=phase, repair_attempt=0, node_name=("pretransport_patch_admission" if pretransport else "interrupted_patch_admission"), artifact_role=role,
+                artifact_ref=ArtifactRef(**admitted["selected_artifacts"][role]), origin="reused_input",
+                reuse_selection=copy.deepcopy(selection)))
+
     @property
     def current_repair_attempt(self) -> int:
         return self._repair_attempt
@@ -1034,7 +1045,7 @@ class _ProductStoreRecorder:
             )
         attempt = ProductExecutionStoreAttemptV1(
             contract_version="1",
-            sequence=len(self.attempts),
+            sequence=len(self.attempts) + sum(row.origin == "reused_input" for row in self.outputs),
             phase=self._phase_by_node[node],
             repair_attempt=attempt_number,
             node_name=node,
@@ -1561,6 +1572,8 @@ def execute_product_execution(
     *,
     strict_git_admission: StrictGitAdmission | None = None,
     defer_approval: bool = False,
+    interrupted_patch_selection: Mapping[str, Any] | None = None,
+    pretransport_patch_selection: Mapping[str, Any] | None = None,
 ) -> ProductExecutionResultV1:
     """Execute the existing StateGraph exactly once and freeze one machine result."""
 
@@ -1585,6 +1598,28 @@ def execute_product_execution(
         )
     initial_isolated_snapshot = source_snapshot(Path(request.isolated_target_root))
     recorder = _ProductStoreRecorder(artifact_store)
+    admitted_interruption = None
+    if pretransport_patch_selection is not None:
+        from src.mod_agent.pretransport_patch_admission import admit_pretransport_patch
+        if interrupted_patch_selection is not None:
+            raise ProductExecutionContractError("Conflicting Patch recovery selections.", side_effects_may_have_started=False)
+        admitted_interruption = admit_pretransport_patch(pretransport_patch_selection,
+            workspace_root=Path(request.isolated_workspace_root), artifact_store=artifact_store)
+        if (admitted_interruption["request_id"] != request.request_id
+                or admitted_interruption["parent_run_id"] != request.run_id
+                or admitted_interruption["user_request"] != request.user_request):
+            raise ProductExecutionContractError("Pretransport Patch request identity changed.", side_effects_may_have_started=False)
+        recorder.reuse_interrupted_inputs(admitted_interruption, pretransport_patch_selection, pretransport=True)
+    if interrupted_patch_selection is not None:
+        from src.mod_agent.interrupted_patch_admission import admit_interrupted_patch
+        admitted_interruption = admit_interrupted_patch(interrupted_patch_selection,
+            workspace_root=Path(request.isolated_workspace_root), artifact_store=artifact_store)
+        if (admitted_interruption["request_id"] != request.request_id
+                or admitted_interruption["parent_run_id"] != request.run_id
+                or admitted_interruption["user_request"] != request.user_request):
+            raise ProductExecutionContractError("Interrupted Patch selection changed product request identity.",
+                                                side_effects_may_have_started=False)
+        recorder.reuse_interrupted_inputs(admitted_interruption, interrupted_patch_selection)
 
     def await_exact_approval(_proposal, _implementation, _review):
         from langgraph.types import interrupt
@@ -1669,7 +1704,9 @@ def execute_product_execution(
         ).identify_project(request.isolated_workspace_root).review_policy(),
         use_default_proposal_git_binding=False,
         product_execution_mode=ProductExecutionGraphModeV1(
-            contract_version="1", request=request
+            contract_version="1", request=request,
+            interrupted_patch_selection=copy.deepcopy(interrupted_patch_selection),
+            pretransport_patch_selection=copy.deepcopy(pretransport_patch_selection),
         ),
         enable_patch_upstream_replanning=adapters.product_patch_upstream_execution is not None,
         product_patch_upstream_execution=wrapped.product_patch_upstream_execution,
@@ -1686,6 +1723,13 @@ def execute_product_execution(
         target_mod=request.target_mod,
         confirmed_isolated_write=True,
     )
+    if admitted_interruption is not None:
+        feature = admitted_interruption["feature_spec"]
+        state.update(feature_id=admitted_interruption["feature_id"],
+            risk_level=feature["risk_level"],
+            current_stage="implementation_plan", next_stage="patch_proposal",
+            artifacts={role: ref["path"] for role, ref in admitted_interruption["selected_artifacts"].items()},
+            artifact_hashes={role: ref["artifact_hash"] for role, ref in admitted_interruption["selected_artifacts"].items()})
     graph_result: Mapping[str, Any] = state
     platform_blockers: tuple[ProductExecutionBlockerV1, ...] = ()
     failure_stage: str | None = None

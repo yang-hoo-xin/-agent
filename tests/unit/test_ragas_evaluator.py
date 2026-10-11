@@ -13,8 +13,11 @@ and deterministic.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch, PropertyMock
+import json
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -238,3 +241,275 @@ class TestRagasEvaluatorFactory:
         providers = EvaluatorFactory.list_providers()
         assert "custom" in providers
         # ragas may be in _PROVIDERS after first create or in _LAZY_PROVIDERS
+
+
+class TestRagasResultMeasurements:
+    """Exercise native result parsing without constructing a model or judge."""
+
+    @staticmethod
+    def _evaluator(monkeypatch, *, faithfulness, precision=0.75):
+        from ragas.metrics import collections
+
+        from src.observability.evaluation.ragas_evaluator import RagasEvaluator
+
+        evaluator = RagasEvaluator(metrics=["faithfulness", "context_precision"])
+        llm = SimpleNamespace(client=SimpleNamespace(client=SimpleNamespace(close=AsyncMock())))
+        embeddings = SimpleNamespace(client=SimpleNamespace(close=AsyncMock()))
+        monkeypatch.setattr(evaluator, "_build_wrappers", lambda: (llm, embeddings))
+        for name, value in (("Faithfulness", faithfulness),
+                            ("ContextPrecisionWithoutReference", precision)):
+            metric = MagicMock()
+            if isinstance(value, Exception):
+                metric.ascore = AsyncMock(side_effect=value)
+            else:
+                metric.ascore = AsyncMock(return_value=SimpleNamespace(value=value))
+            monkeypatch.setattr(collections, name, MagicMock(return_value=metric))
+        return evaluator
+
+    @pytest.mark.parametrize("value", [None, float("nan"), float("inf"), float("-inf")],
+                             ids=["missing", "nan", "positive-infinity", "negative-infinity"])
+    def test_invalid_native_result_is_not_a_score(self, monkeypatch, value):
+        evaluator = self._evaluator(monkeypatch, faithfulness=value)
+        assert evaluator.evaluate("question", ["context"], "actual answer") == {
+            "context_precision": 0.75,
+        }
+
+    @pytest.mark.parametrize("value", [0.0, 0.5])
+    def test_measured_zero_and_finite_native_result_are_preserved(self, monkeypatch, value):
+        evaluator = self._evaluator(monkeypatch, faithfulness=value)
+        assert evaluator.evaluate("question", ["context"], "actual answer") == {
+            "faithfulness": value, "context_precision": 0.75,
+        }
+
+    @pytest.mark.parametrize("value", [None, float("nan"), RuntimeError("judge unavailable")],
+                             ids=["missing", "nonfinite", "exception"])
+    def test_native_failure_and_true_zero_keep_distinct_runner_denominators(
+        self, monkeypatch, tmp_path: Path, value,
+    ):
+        from src.observability.evaluation.eval_runner import EvalRunner
+
+        evaluator = self._evaluator(monkeypatch, faithfulness=0.0, precision=value)
+        test_set = tmp_path / "measurement.json"
+        test_set.write_text(json.dumps({"test_cases": [{"query": "question"}]}), encoding="utf-8")
+        search = SimpleNamespace(search=lambda **kwargs: [{"id": "context-1", "text": "context"}])
+        report = EvalRunner(hybrid_search=search, evaluator=evaluator,
+                            answer_generator=lambda query, chunks: "actual answer").run(test_set)
+        result = report.query_results[0]
+        assert result.metric_measurements["context_precision"] == "failed_to_measure"
+        assert "context_precision" not in report.aggregate_metrics
+        assert report.metric_measurements["context_precision"] == {
+            "total": 1, "applicable": 1, "observed": 0, "scored": 0,
+            "failed_to_measure": 1, "not_applicable": 0,
+        }
+        if isinstance(value, Exception):
+            assert result.evaluator_measurement.error_category == "RuntimeError"
+            assert "judge unavailable" in result.evaluator_measurement.error_message
+            assert report.aggregate_metrics == {}
+        else:
+            assert result.metric_measurements["faithfulness"] == "observed"
+            assert report.aggregate_metrics == {"faithfulness": 0.0}
+            assert report.metric_measurements["faithfulness"]["scored"] == 1
+        # Reports remain strict JSON: missing/nonfinite results are never emitted as values.
+        json.dumps(report.to_dict(), allow_nan=False)
+
+    def test_empty_context_measures_only_answer_relevancy(self, monkeypatch):
+        from ragas.metrics import collections
+
+        from src.observability.evaluation.ragas_evaluator import RagasEvaluator
+
+        evaluator = RagasEvaluator(metrics=[
+            "faithfulness", "answer_relevancy", "context_precision",
+        ])
+        llm = SimpleNamespace(client=SimpleNamespace(client=SimpleNamespace(close=AsyncMock())))
+        embeddings = SimpleNamespace(client=SimpleNamespace(close=AsyncMock()))
+        monkeypatch.setattr(evaluator, "_build_wrappers", lambda: (llm, embeddings))
+        relevancy = MagicMock()
+        relevancy.ascore = AsyncMock(return_value=SimpleNamespace(value=0.0))
+        monkeypatch.setattr(collections, "AnswerRelevancy", MagicMock(return_value=relevancy))
+        faithfulness = MagicMock()
+        precision = MagicMock()
+        monkeypatch.setattr(collections, "Faithfulness", faithfulness)
+        monkeypatch.setattr(collections, "ContextPrecisionWithoutReference", precision)
+
+        assert evaluator.evaluate("question", [], "answer without retrieved evidence") == {
+            "answer_relevancy": 0.0,
+        }
+        relevancy.ascore.assert_awaited_once_with(
+            user_input="question", response="answer without retrieved evidence",
+        )
+        faithfulness.assert_not_called()
+        precision.assert_not_called()
+
+
+class TestRagasProviderTransport:
+    """Keep Ragas, Instructor and the SDK real; replace HTTP transport only."""
+
+    @staticmethod
+    def _settings(**llm_overrides):
+        from src.core.settings import EmbeddingSettings, LLMSettings
+
+        return SimpleNamespace(
+            llm=LLMSettings(**{
+                "provider": "openai", "model": "judge-model", "api_key": "test-key",
+                "base_url": "https://judge.example.test/v1", "temperature": 0.25,
+                "max_tokens": 321, **llm_overrides,
+            }),
+            embedding=EmbeddingSettings(
+                provider="openai", model="embedding-model", api_key="test-key",
+                base_url="https://embedding.example.test/v1", dimensions=2,
+            ),
+        )
+
+    @staticmethod
+    def _transport(monkeypatch, *, replies=None, status=200):
+        import httpx
+
+        monkeypatch.setenv("RAGAS_DO_NOT_TRACK", "true")
+        requests = []
+        replies = iter(replies) if replies is not None else None
+
+        async def send(client, request, **kwargs):
+            body = json.loads(request.content)
+            requests.append((request, body))
+            if status != 200:
+                return httpx.Response(status, json={"error": {"message": "judge unavailable"}},
+                                      request=request)
+            if request.url.path.endswith("/embeddings"):
+                inputs = body["input"] if isinstance(body["input"], list) else [body["input"]]
+                payload = {"object": "list", "model": body["model"], "data": [
+                    {"object": "embedding", "index": i, "embedding": [0.6, 0.8]}
+                    for i in range(len(inputs))
+                ], "usage": {"prompt_tokens": 1, "total_tokens": 1}}
+            else:
+                reply = next(replies) if replies is not None else {"verdict": 1}
+                payload = {"id": "test-completion", "object": "chat.completion",
+                           "created": 0, "model": body["model"], "choices": [{
+                               "index": 0, "finish_reason": "stop", "message": {
+                                   "role": "assistant", "content": json.dumps(reply),
+                               },
+                           }]}
+            return httpx.Response(200, json=payload, request=request)
+
+        monkeypatch.setattr(httpx.AsyncClient, "send", send)
+        return requests
+
+    @pytest.mark.parametrize("field, expected", [
+        ("url", "https://judge.example.test/v1/chat/completions"),
+        ("model", "judge-model"), ("temperature", 0.25), ("max_tokens", 321),
+    ])
+    def test_judge_configuration_reaches_native_request(self, monkeypatch, field, expected):
+        from pydantic import BaseModel
+
+        from src.observability.evaluation.ragas_evaluator import RagasEvaluator
+
+        class Decision(BaseModel):
+            verdict: int
+
+        requests = self._transport(monkeypatch)
+        evaluator = RagasEvaluator(settings=self._settings(), metrics=["faithfulness"])
+        llm, _ = evaluator._build_wrappers()
+        assert llm.generate("Is the supplied answer supported?", Decision).verdict == 1
+        assert len(requests) == 1
+        request, body = requests[0]
+        assert (str(request.url) if field == "url" else body[field]) == expected
+
+    def test_embedding_endpoint_and_model_reach_native_request(self, monkeypatch):
+        from src.observability.evaluation.ragas_evaluator import RagasEvaluator
+
+        requests = self._transport(monkeypatch)
+        evaluator = RagasEvaluator(settings=self._settings(), metrics=["answer_relevancy"])
+        _, embeddings = evaluator._build_wrappers()
+        assert embeddings.embed_text("What time does the library open?") == [0.6, 0.8]
+        assert len(requests) == 1
+        request, body = requests[0]
+        assert str(request.url) == "https://embedding.example.test/v1/embeddings"
+        assert body["model"] == "embedding-model"
+        assert body["input"] == "What time does the library open?"
+
+    @pytest.mark.parametrize("provider", ["azure", "openai"])
+    def test_azure_deployment_is_used_for_judge_and_embedding(self, monkeypatch, provider):
+        from dataclasses import replace
+
+        from pydantic import BaseModel
+
+        from src.observability.evaluation.ragas_evaluator import RagasEvaluator
+
+        class Decision(BaseModel):
+            verdict: int
+
+        settings = self._settings(provider=provider, base_url=None,
+                                  azure_endpoint="https://judge.azure.example.test",
+                                  deployment_name="judge-deployment", api_version="2024-02-15-preview")
+        settings.embedding = replace(
+            settings.embedding, provider=provider, base_url=None,
+            azure_endpoint="https://embedding.azure.example.test",
+            deployment_name="embedding-deployment", api_version="2024-02-15-preview",
+        )
+        requests = self._transport(monkeypatch)
+        llm, embeddings = RagasEvaluator(settings, metrics=["answer_relevancy"])._build_wrappers()
+        assert llm.generate("Judge this answer", Decision).verdict == 1
+        assert embeddings.embed_text("A question") == [0.6, 0.8]
+        assert [body["model"] for _, body in requests] == ["judge-deployment", "embedding-deployment"]
+        assert [request.url.path for request, _ in requests] == [
+            "/openai/deployments/judge-deployment/chat/completions",
+            "/openai/deployments/embedding-deployment/embeddings",
+        ]
+        assert all(request.url.params["api-version"] == "2024-02-15-preview"
+                   for request, _ in requests)
+
+    def test_metrics_without_embeddings_do_not_require_embedding_configuration(self, monkeypatch):
+        from src.observability.evaluation.ragas_evaluator import RagasEvaluator
+
+        settings = self._settings()
+        del settings.embedding
+        self._transport(monkeypatch)
+        _, embeddings = RagasEvaluator(settings, metrics=["faithfulness"])._build_wrappers()
+        assert embeddings is None
+
+    @pytest.mark.parametrize("status, replies", [(503, None), (200, [{"invalid": True}])])
+    def test_first_request_failure_is_not_retried(self, monkeypatch, status, replies):
+        from src.observability.evaluation.ragas_evaluator import RagasEvaluator
+
+        requests = self._transport(monkeypatch, status=status, replies=replies)
+        evaluator = RagasEvaluator(self._settings(), metrics=["faithfulness"])
+        build_wrappers = evaluator._build_wrappers
+        built = []
+
+        def capture_wrappers():
+            wrappers = build_wrappers()
+            built.append(wrappers)
+            return wrappers
+
+        monkeypatch.setattr(evaluator, "_build_wrappers", capture_wrappers)
+        with pytest.raises(RuntimeError, match="Ragas evaluation failed"):
+            evaluator.evaluate("What time does the library open?", ["It opens at 9."], "At 9.")
+        assert len(requests) == 1
+        assert built[0][0].client.client.is_closed()
+
+    def test_all_metrics_use_native_scoring_with_bounded_requests(self, monkeypatch):
+        from src.observability.evaluation.ragas_evaluator import RagasEvaluator
+
+        question = "What time does the library open?"
+        statement = "The library opens at 9."
+        requests = self._transport(monkeypatch, replies=[
+            {"statements": [statement]},
+            {"statements": [{"statement": statement, "reason": "Explicit in context", "verdict": 1}]},
+            *[{"question": question, "noncommittal": 0}] * 3,
+            {"reason": "Contains opening hours", "verdict": 1},
+            {"reason": "Contains closing hours only", "verdict": 0},
+        ])
+        evaluator = RagasEvaluator(self._settings(), metrics=[
+            "faithfulness", "answer_relevancy", "context_precision",
+        ])
+        result = evaluator.evaluate(question, [statement, "The library closes at 5."], statement)
+        assert result == pytest.approx({
+            "faithfulness": 1.0, "answer_relevancy": 1.0, "context_precision": 1.0,
+        })
+        judge_requests = [body for request, body in requests if request.url.host == "judge.example.test"]
+        embedding_requests = [body for request, body in requests
+                              if request.url.host == "embedding.example.test"]
+        assert len(judge_requests) == 7
+        assert len(embedding_requests) == 2
+        assert all(body["max_tokens"] == 321 and body["temperature"] == 0.25
+                   and body["response_format"] == {"type": "json_object"} for body in judge_requests)
+        assert [body["input"] for body in embedding_requests] == [question, [question] * 3]

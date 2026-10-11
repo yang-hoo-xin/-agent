@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""QA Config — Switch settings.yaml profiles for testing different configurations.
+"""Switch settings profiles in an explicitly isolated QA checkout.
 
 Usage:
-    python .github/skills/qa-tester/scripts/qa_config.py show          # List profiles
-    python .github/skills/qa-tester/scripts/qa_config.py check         # Verify credentials
-    python .github/skills/qa-tester/scripts/qa_config.py apply <name>  # Apply a profile
-    python .github/skills/qa-tester/scripts/qa_config.py restore       # Restore backup
+    python .agents/skills/qa-tester/scripts/qa_config.py COMMAND --target-repo PATH
 
 Profiles:
     deepseek         LLM → DeepSeek + Vision disabled (needs test_credentials.yaml)
@@ -16,9 +13,17 @@ Profiles:
 """
 
 import argparse
-import shutil
 import sys
 from pathlib import Path
+
+from qa_paths import (
+    SOURCE_REPO_ROOT,
+    create_backup,
+    require_contained_path,
+    resolve_isolated_repo,
+    restore_backup,
+    seal_target_state,
+)
 
 try:
     import yaml
@@ -26,10 +31,26 @@ except ImportError:
     print("ERROR: PyYAML is required. Install with: pip install pyyaml")
     sys.exit(2)
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
+REPO_ROOT = SOURCE_REPO_ROOT
 SETTINGS_FILE = REPO_ROOT / "config" / "settings.yaml"
-SETTINGS_BACKUP = REPO_ROOT / "config" / "settings.yaml.bak"
+SETTINGS_BACKUP = REPO_ROOT / "config" / "settings.yaml.qa-backup"
 CREDENTIALS_FILE = REPO_ROOT / "config" / "test_credentials.yaml"
+
+
+def configure_target(value: str | Path) -> Path:
+    """Bind configuration operations to one marked isolated checkout."""
+    global REPO_ROOT, SETTINGS_FILE, SETTINGS_BACKUP, CREDENTIALS_FILE
+    REPO_ROOT = resolve_isolated_repo(value)
+    SETTINGS_FILE = require_contained_path(
+        REPO_ROOT, REPO_ROOT / "config" / "settings.yaml"
+    )
+    SETTINGS_BACKUP = require_contained_path(
+        REPO_ROOT, REPO_ROOT / "config" / "settings.yaml.qa-backup"
+    )
+    CREDENTIALS_FILE = require_contained_path(
+        REPO_ROOT, REPO_ROOT / "config" / "test_credentials.yaml"
+    )
+    return REPO_ROOT
 
 
 def _load_yaml(path: Path) -> dict:
@@ -43,12 +64,9 @@ def _save_yaml(path: Path, data: dict) -> None:
 
 
 def _backup() -> None:
-    """Create backup if not already backed up."""
-    if not SETTINGS_BACKUP.exists():
-        shutil.copy2(SETTINGS_FILE, SETTINGS_BACKUP)
-        print(f"   📋 Backup created: {SETTINGS_BACKUP.name}")
-    else:
-        print(f"   📋 Backup already exists")
+    """Create one backup and refuse to overwrite unknown prior state."""
+    create_backup(SETTINGS_FILE, SETTINGS_BACKUP)
+    print(f"   📋 Backup created: {SETTINGS_BACKUP.name}")
 
 
 def _load_credentials() -> dict | None:
@@ -152,7 +170,7 @@ def cmd_check() -> None:
     if creds and "deepseek" in creds:
         key = creds["deepseek"].get("api_key", "")
         if key and not key.startswith("<"):
-            print(f"   ✅ DeepSeek API key: configured ({key[:8]}...)")
+            print("   ✅ DeepSeek API key: configured")
         else:
             print(f"   ⚠️  DeepSeek API key: placeholder (not configured)")
     else:
@@ -172,6 +190,7 @@ def cmd_apply(profile_name: str) -> None:
     settings = _load_yaml(SETTINGS_FILE)
     settings = PROFILES[profile_name](settings)
     _save_yaml(SETTINGS_FILE, settings)
+    seal_target_state(SETTINGS_FILE, SETTINGS_BACKUP)
     print(f"   ✅ settings.yaml updated")
 
 
@@ -181,8 +200,7 @@ def cmd_restore() -> None:
         print("❌ No backup found. Nothing to restore.")
         return
 
-    shutil.copy2(SETTINGS_BACKUP, SETTINGS_FILE)
-    SETTINGS_BACKUP.unlink()
+    restore_backup(SETTINGS_FILE, SETTINGS_BACKUP)
     print("✅ settings.yaml restored from backup")
 
 
@@ -198,7 +216,14 @@ def main() -> None:
         nargs="?",
         help="Profile name (for 'apply' command)",
     )
+    parser.add_argument(
+        "--target-repo",
+        required=True,
+        type=Path,
+        help="Marked isolated checkout whose settings may be changed",
+    )
     args = parser.parse_args()
+    configure_target(args.target_repo)
 
     if args.command == "show":
         cmd_show()

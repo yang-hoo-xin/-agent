@@ -1,151 +1,51 @@
-# Dashboard & MCP Test Patterns Reference
+# Dashboard and MCP Test Patterns
 
-> Read this file when executing Dashboard (A–F) or MCP (J) tests.
+Read this reference only when the selected QA target is a Dashboard or MCP
+surface.
 
----
+## Dashboard
 
-## Dashboard Tests — Streamlit AppTest
+- Prefer an existing focused AppTest test that reaches the selected page.
+  为什么要有它： repository tests preserve current setup and assertions better
+  than an improvised script.
+- When a new focused AppTest reproduction is necessary, print or assert the
+  exact element values involved in the requested behavior. 为什么要有它：
+  element counts alone do not establish the displayed semantics.
+- Treat Streamlit tab output as a flat rendered result unless the current
+  Streamlit API provides an explicit tab relationship. 为什么要有它： content
+  found somewhere in the render does not prove where it appeared.
+- Do not call destructive Dashboard services against the active checkout. Use
+  an isolated test fixture or an explicitly marked isolated checkout.
+  为什么要有它：UI verification must not erase current repository data.
 
-Streamlit `AppTest` renders pages in headless mode (no browser). For each test, write and execute an inline Python script.
+The maintained smoke entry point is currently:
 
-### Basic Template
-
-```python
-from streamlit.testing.v1 import AppTest
-
-def page_script():
-    from src.observability.dashboard.pages.<PAGE_MODULE> import render
-    render()
-
-at = AppTest.from_function(page_script, default_timeout=30)
-at.run()
-assert not at.exception, f"Exception: {at.exception}"
-
-# Print elements for verification
-for attr in ("header", "subheader", "info", "error", "warning", "markdown"):
-    for el in getattr(at, attr, []):
-        print(f"{attr}: {getattr(el, 'value', '')}")
-for m in at.metric:
-    print(f"metric: label={m.label}, value={m.value}")
-for s in at.selectbox:
-    print(f"selectbox: options={s.options}, value={s.value}")
-print(f"button count: {len(at.button)}")
-print(f"expander count: {len(at.expander)}")
+```text
+python -B -m pytest tests/e2e/test_dashboard_smoke.py -q --tb=short
 ```
 
-Page modules: `overview`, `data_browser`, `ingestion_manager`, `ingestion_traces`, `query_traces`, `evaluation_panel`
+Read that test before selecting a narrower node or assertion. 为什么要有它：
+its current imports and fixtures are the exact contract for this repository.
 
-### Interaction Patterns
+## MCP
 
-**Select dropdown + re-render:**
-```python
-at.selectbox[0].select("test_col")
-at.run()
+- Prefer the maintained protocol tests and select only the cases that cover the
+  requested method or failure. 为什么要有它： hand-written protocol sessions
+  easily freeze old method names or protocol fields.
+- If a subprocess reproduction is necessary, bound its timeout, capture stdout
+  and stderr, and terminate it in a `finally` block. 为什么要有它： a failed
+  protocol assertion must not leave a server process running.
+- Read current server metadata and tests before writing JSON-RPC fields or tool
+  names. 为什么要有它： identifiers must come from current source rather than
+  this reference.
+
+The maintained MCP test entry points are currently:
+
+```text
+python -B -m pytest tests/e2e/test_mcp_client.py -q --tb=short
+python -B -m pytest tests/integration/test_mcp_server.py -q --tb=short
 ```
 
-**Click button + re-render:**
-```python
-at.button[0].click()
-at.run()
-```
-
-**Text input:**
-```python
-at.text_input[0].input("search term")
-at.run()
-```
-
-### File Upload Workaround
-
-`AppTest` cannot simulate `st.file_uploader`. Use two-step approach:
-1. Ingest via CLI: `python scripts/ingest.py --path <file> [--collection <name>]`
-2. Verify via AppTest: render page, check document counts / chunk lists
-
-### Data Mutations (Clear All / Delete Document)
-
-Call the service directly, then verify via AppTest or CLI:
-```python
-from src.observability.dashboard.services.data_service import DataService
-svc = DataService()
-svc.delete_document(source_path, collection, source_hash)  # or svc.reset_all()
-```
-
-### Reference Smoke Tests
-
-```
-pytest tests/e2e/test_dashboard_smoke.py -v
-```
-
----
-
-## MCP Tests — Subprocess JSON-RPC
-
-### Method 1: Existing pytest tests (covers most J-* cases)
-
-```
-pytest tests/e2e/test_mcp_client.py -v         # 7 E2E tests
-pytest tests/integration/test_mcp_server.py -v  # 4 protocol tests
-```
-
-### Method 2: Inline JSON-RPC script
-
-```python
-import json, subprocess, sys, threading, time
-
-proc = subprocess.Popen(
-    [sys.executable, "-m", "src.mcp_server.server"],
-    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    text=True, encoding="utf-8",
-)
-
-messages = [
-    {"jsonrpc": "2.0", "id": 1, "method": "initialize",
-     "params": {"protocolVersion": "2025-06-18",
-                "clientInfo": {"name": "qa-test", "version": "1.0"},
-                "capabilities": {}}},
-    {"jsonrpc": "2.0", "method": "notifications/initialized"},
-    {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-     "params": {"name": "query_knowledge_hub",
-                "arguments": {"query": "What is hybrid search?", "top_k": 5}}},
-]
-
-for msg in messages:
-    proc.stdin.write(json.dumps(msg) + "\n")
-    proc.stdin.flush()
-
-responses = []
-def reader():
-    while True:
-        line = proc.stdout.readline()
-        if not line: break
-        stripped = line.strip()
-        if not stripped: continue
-        try:
-            data = json.loads(stripped)
-            if "id" in data and ("result" in data or "error" in data):
-                responses.append(data)
-        except json.JSONDecodeError: pass
-
-t = threading.Thread(target=reader, daemon=True)
-t.start()
-time.sleep(30)
-proc.terminate()
-
-for r in responses:
-    print(json.dumps(r, indent=2, ensure_ascii=False)[:500])
-```
-
-### MCP Test Assertions
-
-| Test ID | What to Verify | Key Assertions |
-|---------|---------------|----------------|
-| J-01 | Server startup | `initialize` response has `serverInfo`, `capabilities` |
-| J-02 | tools/list | 3 tools: `query_knowledge_hub`, `list_collections`, `get_document_summary` |
-| J-03 | query_knowledge_hub | `content` array with text blocks |
-| J-04 | list_collections | Response contains collection names |
-| J-05 | get_document_summary | Response has title/summary |
-| J-06 | Multimodal | Response has `type: "image"` blocks |
-| J-07 | Bad collection | Graceful error, no crash |
-| J-08 | Invalid params | JSON-RPC error or `isError: true` |
-| J-09 | Stability | 5 sequential calls all succeed |
-| J-10 | Citations | Response has `source_file`, `page`, `score` |
+These commands are examples for the selected surface, not a requirement to run
+both. 为什么要有它： the verification set must stay proportional to the user
+request.

@@ -43,6 +43,7 @@ from src.mod_agent.evidence.requirement_coverage import (
     resolve_requirement_coverage,
 )
 from src.mod_agent.evidence.requirement_coverage_provider import (
+    FINDINGS_CONTRACT_VERSION,
     RequirementFindingsAdmissionError,
     RequirementProjectionAdmissionError,
     admit_requirement_projection_response,
@@ -851,7 +852,7 @@ def test_requirement_coverage_without_augmentation_keeps_existing_payload_shape(
         def collect_query_set(self, *, queries, search_root, max_items):
             assert queries == tuple(dict(item) for item in materialized["queries"])
             assert search_root == "generated_mods/SyntheticMod"
-            assert max_items == len(materialized["queries"])
+            assert max_items == max(4, len(materialized["queries"]))
             return retrieved
 
     provider = RequirementCoverageEvidenceProvider(
@@ -866,7 +867,14 @@ def test_requirement_coverage_without_augmentation_keeps_existing_payload_shape(
         feature_data=feature,
     )
 
-    assert actual.to_artifact_payload() == expected.to_artifact_payload()
+    actual_payload = actual.to_artifact_payload()
+    allocation = actual_payload["budget_summary"].pop("source_material_budget_selection")
+    assert allocation == {"schema_version": "requirement_material_budget_v1",
+        "scope": "requirement_coverage_source_query_set_item_allocation",
+        "query_count": len(materialized["queries"]), "max_items": max(4, len(materialized["queries"])),
+        "small_project_material_floor": 4, "basis": "max_of_query_count_and_bounded_small_project_material_floor",
+        "semantic_coverage_claimed": False}
+    assert actual_payload == expected.to_artifact_payload()
     assert "source_augmentation" not in actual.budget_summary
 
 
@@ -1375,7 +1383,8 @@ def test_v3_four_site_plan_projects_and_materializes_canned_native_response(
     prompt_payload = json.loads(llm.messages[1].content)
     assert prompt_payload["target_behavior"] == feature["target_behavior"]
     assert prompt_payload["acceptance_criteria"] == feature["acceptance_criteria"]
-    assert prompt_payload["constraints"] == feature["non_goals"]
+    assert prompt_payload["constraints"] == list(implementation.side_effect_boundaries)
+    assert set(feature["non_goals"]).issubset(prompt_payload["constraints"])
     assert prompt_payload["runtime_verification_plan"] == feature[
         "runtime_verification_plan"
     ]
@@ -1923,7 +1932,8 @@ def test_findings_prompt_defines_change_support_as_current_source_location(
             "edit_target_evidence_ids, and unresolved_gaps."
         ),
     ]
-    assert len(payloads[0]["rules"]) == 7
+    assert payloads[0]["findings_contract_version"] == FINDINGS_CONTRACT_VERSION
+    assert any("Nonempty edit_target_evidence_ids requires" in rule for rule in payloads[0]["rules"])
     assert "requirements" not in payloads[0]
     assert "query_execution" not in payloads[0]
     assert "request_sha256" not in payloads[0]
@@ -2083,7 +2093,7 @@ def test_findings_provider_rejects_duplicate_active_relation_index_after_schema(
             {
                 "relation_index": 1,
                 "relationship": "conflict",
-                "evidence_ids": [],
+                "evidence_ids": [retrieved.items[0].evidence_id],
                 "edit_target_evidence_ids": [],
                 "unresolved_gaps": ["Different bounded gap."],
             },
@@ -3431,7 +3441,7 @@ def test_actual9_derived_two_requirement_projection_is_completed_before_findings
         def collect_query_set(self, *, queries, search_root, max_items):
             assert len(queries) == 2
             assert search_root == "generated_mods/SyntheticMod"
-            assert max_items == 2
+            assert max_items == 4
             return EvidencePack.empty(
                 query="actual9-derived-no-evidence",
                 reason="No current-source evidence was supplied.",
@@ -5084,6 +5094,83 @@ def test_initial_findings_factory_rejects_provider_failure_or_unaccepted_finding
     with pytest.raises(ValueError, match="INITIAL_FINDINGS_REASSESSMENT_NOT_ADMITTED"):
         _initial_findings_factory(case, tmp_path, queries, findings_calls).reassess_initial(case.state, case.feature)
     assert queries == findings_calls == []
+
+
+def test_initial_findings_reassessment_admits_closed_no_term_initial_query(tmp_path):
+    from src.mod_agent.evidence.reassessment import initial_findings_reassessment_allowed
+
+    case = _initial_findings_reassessment_case(tmp_path)
+    payload = case.pack.to_artifact_payload()
+    payload["budget_summary"]["all_queries_executed"] = False
+    payload["budget_summary"]["per_query_execution"][0].update(
+        retrieval_status="query_terms_missing", evidence_ids=[])
+    assert initial_findings_reassessment_allowed(payload, case.feature)
+    payload["budget_summary"]["per_query_execution"][0]["retrieval_status"] = "tool_failed"
+    assert not initial_findings_reassessment_allowed(payload, case.feature)
+
+
+def test_one_explicit_reassessment_revision_preserves_prior_lineage(tmp_path):
+    from src.mod_agent.evidence.reassessment import (
+        initial_findings_reassessment_allowed,
+        prepare_initial_findings_reassessment_revision,
+    )
+
+    case = _initial_findings_reassessment_case(tmp_path)
+    payload = case.pack.to_artifact_payload()
+    payload["budget_summary"]["initial_findings_reassessment"] = {
+        "prior_evidence_ref": {"artifact_hash": case.evidence_ref.artifact_hash},
+        "cycle": 1,
+        "max_cycles": 1,
+    }
+    payload["budget_summary"]["reassessment"] = {
+        "old_evidence_hash": case.evidence_ref.artifact_hash,
+        "query_count": 1,
+        "per_query_execution": deepcopy(payload["budget_summary"]["per_query_execution"]),
+        "findings_attempt_audit": [{"attempt_index": 1, "status": "accepted", "error_code": None}],
+        "model_receipt_available": True,
+    }
+    assert not initial_findings_reassessment_allowed(payload, case.feature)
+    projected = prepare_initial_findings_reassessment_revision(payload, case.feature)
+    assert initial_findings_reassessment_allowed(projected, case.feature)
+    assert projected["budget_summary"]["prior_initial_findings_reassessment"] == (
+        payload["budget_summary"]["initial_findings_reassessment"])
+    with pytest.raises(ValueError, match="INITIAL_FINDINGS_REASSESSMENT_REVISION_INVALID"):
+        prepare_initial_findings_reassessment_revision(projected, case.feature)
+
+
+def test_second_reviewed_reassessment_revision_is_numbered_without_rewriting_prior_lineage(tmp_path):
+    from src.mod_agent.evidence.reassessment import (
+        initial_findings_reassessment_allowed,
+        prepare_initial_findings_reassessment_revision,
+    )
+
+    case = _initial_findings_reassessment_case(tmp_path)
+    payload = case.pack.to_artifact_payload()
+    payload["budget_summary"]["initial_findings_reassessment"] = {
+        "prior_evidence_ref": {"artifact_hash": case.evidence_ref.artifact_hash},
+        "cycle": 1,
+        "max_cycles": 1,
+        "revision_number": 1,
+    }
+    payload["budget_summary"]["reassessment"] = {
+        "old_evidence_hash": case.evidence_ref.artifact_hash,
+        "query_count": 1,
+        "per_query_execution": deepcopy(payload["budget_summary"]["per_query_execution"]),
+        "findings_attempt_audit": [{"attempt_index": 1, "status": "accepted", "error_code": None}],
+        "model_receipt_available": True,
+    }
+
+    projected = prepare_initial_findings_reassessment_revision(
+        payload, case.feature, revision_number=2)
+
+    assert initial_findings_reassessment_allowed(projected, case.feature)
+    assert projected["budget_summary"]["reassessment_revision_number"] == 2
+    assert projected["budget_summary"]["reassessment_revision_admission"]["revision_number"] == 2
+    assert projected["budget_summary"]["prior_initial_findings_reassessment"] == (
+        payload["budget_summary"]["initial_findings_reassessment"])
+    with pytest.raises(ValueError, match="INITIAL_FINDINGS_REASSESSMENT_REVISION_INVALID"):
+        prepare_initial_findings_reassessment_revision(
+            payload, case.feature, revision_number=5)
 
 
 def test_initial_findings_factory_rejects_source_drift_before_query(tmp_path):

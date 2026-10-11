@@ -17,11 +17,13 @@ from uuid import uuid4
 from src.libs.llm.agent_turn import AgentMessage, AgentResponseFormat, AgentTurnRequest
 from src.mod_agent.artifacts import ArtifactStore
 from src.mod_agent.evidence import RgLiveEvidenceProvider
+from src.mod_agent.evidence.optimization_policy import run_optimization_policy
 from src.mod_agent.evidence.reassessment import RequirementCoverageReassessmentFactory
 from src.mod_agent.evidence.requirement_coverage_provider import (
     StructuredModelRequirementCoverageProvider,
     admit_requirement_projection_response,
 )
+from src.mod_agent.evidence.source_view import run_small_file_max_bytes
 from src.mod_agent.local_entry import (
     LocalOllamaInitialPatchAdapter,
     LocalOllamaInitialPatchProfileV1,
@@ -195,6 +197,8 @@ class PatchUpstreamConfiguration:
         output_root = Path(request.artifact_store_root).resolve() / "cr" / ("upstream-" + uuid4().hex)
         planning_client = _RecordedProvider(self, self.planning_profile, "planning", output_root, recorder, reserve_model_call)
         selector = ModelPlanningTargetSelector(client=planning_client, workspace_root=workspace,
+            behavior_evaluator_configured=(self._worker_configuration is not None
+                and self._worker_configuration.behavior_evaluator() is not None),
             receipt_path=output_root / "planning-receipt.json")
         evidence_factory = None
         if self.evidence is not None:
@@ -225,8 +229,11 @@ class PatchUpstreamConfiguration:
 
             evidence_factory = RequirementCoverageReassessmentFactory(
                 artifact_store=ArtifactStore(request.artifact_store_root), workspace_root=workspace,
-                search_root=evidence["search_root"], source_provider=RgLiveEvidenceProvider(workspace),
-                semantic_provider=StructuredModelRequirementCoverageProvider(findings_client.complete_json),
+                search_root=evidence["search_root"], source_provider=RgLiveEvidenceProvider(workspace,
+                    small_file_max_bytes=run_small_file_max_bytes(workspace),
+                    reuse_query_observations=run_optimization_policy(workspace)["reuse_query_observations"]),
+                semantic_provider=StructuredModelRequirementCoverageProvider(findings_client.complete_json,
+                    compress_findings_input=run_optimization_policy(workspace)["compress_findings_input"]),
                 query_selector=select_queries, max_additional_queries=evidence["max_additional_queries"],
             )
         if recorder is not None:

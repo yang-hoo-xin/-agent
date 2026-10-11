@@ -29,6 +29,37 @@ request
 -> truthful delivery claim
 ```
 
+### 1.1 Current Integration Target: Coding Agent v0
+
+The current product milestone is Coding Agent v0, with
+`docs/CODING_AGENT_V0_INTERNAL_ALPHA.md` defining its first integrated
+delivery. This target composes the modules shown below; it does not replace the
+single LangGraph control plane or add another Agent SDK.
+
+The model-facing loop is observation-driven:
+
+```text
+understand request
+-> choose one bounded read-only investigation
+-> receive source/tool observation
+-> revise the engineering direction or stop
+-> produce evidence-bound implementation work
+-> receive Build/Test observation
+-> revise once or finish
+```
+
+LangGraph owns allowed execution order, permissions, interruption, recovery,
+and terminal routing. It must not hard-code BetterHitFeedback methods,
+WallCrawler gaps, search direction, or the semantic response to a Build/Test
+failure. Domain-specific rules remain behind Domain Harness or calibration
+boundaries.
+
+The first committed BetterHitFeedback EvidencePack is consumed internally by
+Planning/Patch/Build before public entry adoption. BetterHitFeedback and
+WallCrawler Hidden-Golden plus minimal Eval then close RAG-1A. RAG-1B makes the
+same Evidence executor available through the unique public Agent entry and
+forms Coding Agent v0 public alpha.
+
 ## 2. Current Control-Plane Architecture
 
 ```mermaid
@@ -248,7 +279,7 @@ diff with raw SHA256 and line statistics, and runs a low-cost lexical C#
 delimiter check. The check intentionally does not claim symbol, type, overload,
 or complete control-flow validation. The CLI displays the unified diff,
 statistics, and checks before requesting the existing exact diff approval.
-Human semantic approval therefore follows inspectable bytes and still precedes
+On the human-review branch, semantic approval follows inspectable bytes and precedes
 isolated Apply and Build.
 
 Run `sfp_manual_repair_005` exercised this boundary without a model or source
@@ -524,7 +555,10 @@ task packet whose Git/task identity no longer matches is stale context only.
 The projection writes no product Artifact and adds no LangGraph node,
 cognition database, shadow registry, or route authority. The single existing
 LangGraph remains the workflow control plane; current contracts, explicit
-owners, Binding/Review rules, and human approval retain authority.
+owners and Binding/Review rules retain their execution responsibilities.
+Apply consumes a bound human decision or the limited host-issued
+`task_delegation_decision_v1` from `execution/task_delegation.py`.
+为什么要有它：closure3已执行任务委托分支，授权来源须与实际接口一致；导航投影仍不授予写权限。
 
 Product Dependency/API Evidence is currently partial. `fresh-coverage` builds
 coverage from `RgLiveEvidenceProvider` over live target-workspace `*.cs`
@@ -865,4 +899,5 @@ capability.
 ## 8. Authority Reference
 
 This document does not define an authority or reading order. Follow
-`AGENTS.md` section 2 exclusively.
+the current user request and the applicable working agreements in `AGENTS.md`.
+为什么要有它：旧 section 2 已不再定义权限顺序，架构说明不能产生另一套任务授权。

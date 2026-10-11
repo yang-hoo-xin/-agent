@@ -6,8 +6,12 @@ the standard OpenAI Embeddings API.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import time
 from typing import Any, List, Optional
+from uuid import uuid4
 
 from src.libs.embedding.base_embedding import BaseEmbedding
 
@@ -104,6 +108,31 @@ class OpenAIEmbedding(BaseEmbedding):
         trace: Optional[Any] = None,
         **kwargs: Any,
     ) -> List[List[float]]:
+        """Return vectors and, when traced, retain native usage for this call.
+
+        为什么要有它：检索失败仍可能已经消耗Token；缺失usage保持未知，不借用前一题或估算成零。
+        """
+        started = time.perf_counter()
+        observation = {
+            "invocation_id": str(uuid4()), "configured_model": self.model,
+            "request": None, "response_model": None, "usage": None,
+            "sdk_call_invoked": False, "response_received": False,
+            "http_attempt_count": None, "status": "started", "error_type": None,
+            "usage_scope": "native SDK response; internal HTTP retry usage unavailable",
+        }
+        try:
+            vectors = self._embed_observed(texts, observation, **kwargs)
+            observation.update(status="observed", output_count=len(vectors))
+            return vectors
+        except Exception as error:
+            observation.update(status="failed", error_type=type(error).__name__)
+            raise
+        finally:
+            observation["elapsed_ms"] = (time.perf_counter() - started) * 1000.0
+            if trace is not None:
+                trace.record_stage("embedding", observation, elapsed_ms=observation["elapsed_ms"])
+
+    def _embed_observed(self, texts, observation, **kwargs):
         """Generate embeddings for a batch of texts using OpenAI API.
         
         Args:
@@ -121,6 +150,9 @@ class OpenAIEmbedding(BaseEmbedding):
         """
         # Validate input
         self.validate_texts(texts)
+        observation["request"] = {"model": self.model, "input_count": len(texts),
+            "input_sha256": hashlib.sha256(json.dumps(texts, ensure_ascii=False,
+                separators=(",", ":")).encode("utf-8")).hexdigest()}
         
         # Import OpenAI client (lazy import to avoid dependency at module level)
         try:
@@ -157,11 +189,19 @@ class OpenAIEmbedding(BaseEmbedding):
         
         # Call OpenAI API
         try:
+            observation["sdk_call_invoked"] = True
             response = client.embeddings.create(**api_params)
         except Exception as e:
             raise OpenAIEmbeddingError(
                 f"OpenAI Embeddings API call failed: {e}"
             ) from e
+        observation["response_received"] = True
+        returned_model = getattr(response, "model", None)
+        observation["response_model"] = returned_model if isinstance(returned_model, str) else None
+        usage = getattr(response, "usage", None)
+        native_usage = {key: value for key in ("prompt_tokens", "total_tokens")
+            if type(value := getattr(usage, key, None)) is int and value >= 0}
+        observation["usage"] = native_usage or None
         
         # Extract embeddings from response
         # Response format: response.data is a list of objects with .embedding attribute

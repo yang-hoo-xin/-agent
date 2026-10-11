@@ -62,9 +62,9 @@ test('host registers human commands only and returns backend errors without mode
     on: (name, handler) => events.push({ name, handler }) }, config);
   assert.equal(events[0].name, 'agent/pre-step');
   assert.deepEqual(await events[0].handler({}, () => assert.fail('DSH must not enter model generation')), { kind: 'reject' });
-  assert.deepEqual(commands.map(command => command.name), ['mod-runs', 'mod-status', 'mod-review', 'mod-approve', 'mod-reject', 'mod-submit']);
-  assert.equal((await commands[1].handler({ rawInput: '', signal: new AbortController().signal })).kind, 'error');
-  const failed = await commands[0].handler({ rawInput: '', signal: new AbortController().signal });
+  assert.deepEqual(commands.map(command => command.name), ['mod-continue', 'mod-resume', 'mod-observe', 'mod-investigate', 'mod-remember', 'mod-memory', 'mod-runs', 'mod-status', 'mod-review', 'mod-approve', 'mod-reject', 'mod-delivery', 'mod-deliver', 'mod-decline', 'mod-submit', 'mod-deployment', 'mod-deploy', 'mod-tasks', 'mod-run', 'mod-new']);
+  assert.equal((await commands.find(command => command.name === 'mod-status').handler({ rawInput: '', signal: new AbortController().signal })).kind, 'error');
+  const failed = await commands.find(command => command.name === 'mod-runs').handler({ rawInput: '', signal: new AbortController().signal });
   assert.deepEqual(failed, { kind: 'error', text: 'QUERY_BACKEND_FAILED' });
 });
 

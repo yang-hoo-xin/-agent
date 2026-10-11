@@ -50,6 +50,7 @@ from src.mod_agent.intelligent_evidence_only import (
 )
 from src.mod_agent.local_entry import LocalEntryError
 from src.mod_agent.runtime import RuntimeEvidenceItem, build_real_runtime_evidence_payload
+from tests.fixtures.local_request_profile import request_budget_args
 
 
 @pytest.fixture()
@@ -632,21 +633,19 @@ def test_plan_request_returns_no_write_planning_result() -> None:
         target_mod="WallCrawler",
     )
 
-    assert result.status == "needs_evidence"
+    assert result.status == "ready_for_feature_spec"
     assert result.command == "plan-request"
     assert result.execution_mode == "planning_only"
     assert result.writes_performed is False
     assert result.stopped_before == "feature_spec"
-    assert result.request_planning_report["route"] == "game_hook_investigation"
-    assert result.request_planning_report["risk_level"] == "high"
-    assert result.request_planning_report["requires_hook_evidence"] is True
+    assert result.request_planning_report["route"] == "standard_feature"
+    assert result.request_planning_report["risk_level"] == "medium"
+    assert result.request_planning_report["requires_hook_evidence"] is False
     assert result.request_planning_report["requires_runtime_evidence"] is True
-    assert result.mod_planning_brief["request_type"]["value"] == "hook-required"
-    assert result.mod_planning_brief["decision"] == "needs_evidence"
-    assert result.mod_planning_brief["next_action"] == "hook discovery"
-    assert result.mod_planning_brief["blockers"][0]["code"] == (
-        "HOOK_EVIDENCE_REQUIRED"
-    )
+    assert result.mod_planning_brief["request_type"]["value"] == "gameplay behavior"
+    assert result.mod_planning_brief["decision"] == "ready_for_feature_spec"
+    assert result.mod_planning_brief["next_action"] == "feature_spec"
+    assert result.mod_planning_brief["blockers"] == []
 
 
 def test_cli_plan_request_prints_planning_only_json(
@@ -668,7 +667,7 @@ def test_cli_plan_request_prints_planning_only_json(
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
     assert exit_code == 0
-    assert payload["status"] == "needs_evidence"
+    assert payload["status"] == "ready_for_feature_spec"
     assert payload["command"] == "plan-request"
     assert payload["execution_mode"] == "planning_only"
     assert payload["writes_performed"] is False
@@ -1524,6 +1523,7 @@ def test_cli_run_request_blocks_before_target_access_without_source_disclosure(
             "missing-target",
             "--confirm-isolated-write",
             "--allow-build",
+            *request_budget_args(),
         ]
     )
 
@@ -1571,6 +1571,7 @@ def test_cli_run_request_forwards_precomputed_targets_but_rejects_legacy_summary
             "evidence_cli_target_001",
             "--planning-target-evidence-id",
             "evidence_cli_target_002",
+            *request_budget_args(),
         ]
     )
 
@@ -1625,6 +1626,7 @@ def test_cli_run_request_passes_runtime_admission_but_rejects_legacy_summary(
             "--runtime-plugin-destination",
             r"C:\GTFO\BepInEx\plugins\BetterHitFeedback.dll",
             "--allow-game-directory-write",
+            *request_budget_args(),
         ]
     )
 
@@ -1665,6 +1667,7 @@ def test_cli_runtime_request_rejects_build_only_legacy_summary(
             "--runtime-plugin-destination",
             r"C:\GTFO\BepInEx\plugins\BetterHitFeedback.dll",
             "--allow-game-directory-write",
+            *request_budget_args(),
         ]
     )
 
@@ -1695,6 +1698,7 @@ def test_cli_does_not_treat_legacy_status_as_machine_truth(
             "--allow-source-disclosure",
             "--confirm-isolated-write",
             "--allow-build",
+            *request_budget_args(),
         ]
     )
 
@@ -1705,12 +1709,12 @@ def test_cli_does_not_treat_legacy_status_as_machine_truth(
 
 
 def test_cli_run_request_uses_real_public_product_executor_and_graph(
-    tmp_path: Path,
+    short_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    target = tmp_path / "Example"
-    bepinex = tmp_path / "BepInEx"
+    target = short_workspace / "Example"
+    bepinex = short_workspace / "BepInEx"
     target.mkdir()
     bepinex.mkdir()
     (target / "Example.csproj").write_text(
@@ -1783,7 +1787,7 @@ def test_cli_run_request_uses_real_public_product_executor_and_graph(
             "--target-project",
             str(target),
             "--workspace-root",
-            str(tmp_path / "runs"),
+            str(short_workspace / "runs"),
             "--settings",
             "config/settings.yaml",
             "--local-ollama",
@@ -1793,6 +1797,7 @@ def test_cli_run_request_uses_real_public_product_executor_and_graph(
             "32768",
             "--confirm-isolated-write",
             "--allow-build",
+            *request_budget_args(),
         ]
     )
 
@@ -1863,6 +1868,12 @@ def _formal_coverage_model_response(request: dict[str, object]) -> dict[str, obj
         }
     if message_type == "product_requirement_findings":
         evidence_id = request["source_observations"][0]["evidence_id"]
+        if request.get("native_findings_contract") == "planning_readiness_v1":
+            return {"findings": [{"relation_index": relation["relation_index"], "planning_readiness": "ready",
+                "current_evidence_ids": [evidence_id], "current_basis": "Fixture source identifies the current implementation and edit location.",
+                "requested_behavior_status": "not_yet_implemented", "blocking_current_facts": [],
+                "edit_target_evidence_ids": [evidence_id] if any(parent["role"] == "change"
+                    for parent in relation["parent_requirements"]) else []} for relation in request["relations"]]}
         return {
             "findings": [
                 {
@@ -1901,11 +1912,15 @@ def _install_public_run_request_native_chat(monkeypatch, deterministic_chat):
                 continue
             if "patch_agent_context_encoding" in context:
                 context = local_entry_module._restore_patch_agent_context(context)
-            if "required_change_units" in context or "allowed_edit_evidence_ids" in context:
+            if ("required_change_units" in context or "allowed_edit_evidence_ids" in context
+                    or context.get("message_type") in {"product_requirement_projection", "product_requirement_findings"}):
                 contexts.append(context)
-        assert contexts, "Native request omitted its real Planning or Patch context."
+        assert contexts, "Native request omitted its real Evidence, Planning or Patch context."
         context = contexts[-1]
-        if "allowed_edit_evidence_ids" in context:
+        coverage_response = _formal_coverage_model_response(context)
+        if coverage_response is not None:
+            response = ChatResponse(model=payload["model"], content=json.dumps(coverage_response))
+        elif "allowed_edit_evidence_ids" in context:
             response = ChatResponse(model=payload["model"], content=json.dumps({
                 "decision": "select_targets", "selected_evidence_ids": context["allowed_edit_evidence_ids"],
                 "rationale": "Engineering transport fixture selected the observed source unit.", "missing_evidence": [],
@@ -2101,6 +2116,8 @@ def test_cli_run_request_real_public_product_executor_compile_success(
             "qwen3:4b-instruct",
             "--ollama-context-window",
             "32768",
+            "--task-model-call-limit",
+            "9",
             "--confirm-isolated-write",
             "--allow-build",
             "--planning-target-evidence-id",
@@ -2111,7 +2128,7 @@ def test_cli_run_request_real_public_product_executor_compile_success(
     payload = json.loads(capsys.readouterr().out)
     assert "product_execution_result" in payload, payload
     machine = payload["product_execution_result"]
-    assert exit_code == 0
+    assert exit_code == 0, payload
     assert machine["platform_status"] == "completed"
     assert machine["execution_disposition"] == "succeeded"
     assert machine["terminal_node"] == "build"
@@ -2180,6 +2197,9 @@ def _public_patch_upstream_scenario(
     initial_provider_available=True, initial_query_timeout=False,
     source_retrieval_mode=None, source_setup=None, upstream_query="RefreshSharedState",
     request_patch_upstream=True, patch_response_transform=None,
+    request_description=None, omit_approval_reader=False,
+    upstream_reason="Offline fixture needs the unobserved shared-state source before patching.",
+    upstream_repeat_count=0, model_call_budget_policy=None,
 ):
     """Deterministic HTTP/baseline compiler; stop before product Apply or Build."""
     from src.mod_agent.evidence.rg_live import RgLiveEvidenceProvider
@@ -2267,8 +2287,18 @@ def _public_patch_upstream_scenario(
                 if message_type in {"patch_upstream_evidence_queries", "initial_findings_evidence_queries"}:
                     if message_type == "initial_findings_evidence_queries" and initial_query_timeout:
                         raise httpx.ReadTimeout("Offline initial-Findings query timeout.", request=request)
-                    content = {"queries": [{"query": upstream_query,
-                        "requirement_id": context["requirements"][0]["requirement_id"]}]}
+                    gaps = context["gap_investigation_targets"]
+                    if message_type == "initial_findings_evidence_queries":
+                        assert gaps, "Initial Findings investigation requires an actual accepted gap."
+                    query_text = (upstream_query[observed.roles.count("patch_upstream_evidence_queries") - 1]
+                        if isinstance(upstream_query, (tuple, list)) else upstream_query)
+                    content = {"queries": [{"query": query_text,
+                        "requirement_id": context["requirements"][0]["requirement_id"],
+                        "gap_ids": [gaps[0]["gap_id"]] if gaps else [],
+                        "current_fact_needed": "Existing source ownership.",
+                        "modification_impact": "Planning needs a bound current fact.",
+                        "authorized_source": "target_source",
+                        "metadata_queries": []}]}
                 else:
                     content = _formal_coverage_model_response(context)
                     if message_type == "product_requirement_findings":
@@ -2303,7 +2333,7 @@ def _public_patch_upstream_scenario(
                     observed.worker_requests.append(contexts)
                     upstream_turn = 2 if fail_first else 1
                     if request_patch_upstream and not initial_findings_gap and (
-                        len(observed.patch_contexts) == upstream_turn or (
+                        upstream_turn <= len(observed.patch_contexts) <= upstream_turn + upstream_repeat_count or (
                             repeat_upstream and len(observed.patch_contexts) > upstream_turn
                         )
                     ):
@@ -2312,7 +2342,7 @@ def _public_patch_upstream_scenario(
                         binding_id = context["required_change_units"][0]["edit_binding_id"]
                         message = {"role": "assistant", "content": "", "tool_calls": [{"function": {
                             "name": tool["name"], "arguments": {"required_owner": owner,
-                                "reason": "Offline fixture needs the unobserved shared-state source before patching.",
+                                "reason": upstream_reason,
                                 "source_refs": [f"binding://{binding_id}"]}}}]}
                         return response(request, payload, message)
                     content = json.loads(deterministic_chat(
@@ -2337,6 +2367,8 @@ def _public_patch_upstream_scenario(
         pass
 
     def run_without_approval(arguments):
+        if request_description is not None:
+            arguments = [arguments[0], request_description, *arguments[2:]]
         (tmp_path / "Example" / "SharedState.cs").write_text(
             "namespace Example;\npublic sealed class SharedState\n{\n"
             "    public void RefreshSharedState() {}\n}\n", encoding="utf-8")
@@ -2355,6 +2387,10 @@ def _public_patch_upstream_scenario(
                 "requirement_projection": 2, "requirement_findings": findings_limit, "planning": 1,
                 "initial_patch": 3 if fail_first else 2, "repair": repair_limit,
             })
+            if model_call_budget_policy is not None:
+                kwargs["model_call_budget_policy"] = model_call_budget_policy
+            if omit_approval_reader:
+                kwargs.pop("diff_approval_reader", None)
             return run_local(**kwargs)
 
         monkeypatch.setattr(cli_module, "run_local_request", run_with_budget)
@@ -2380,6 +2416,50 @@ def _public_patch_upstream_scenario(
     return observed
 
 
+@pytest.mark.parametrize("outer_whitespace", [" ", "\t\r\n", "\u3000"])
+def test_cli_run_request_preserves_feature_request_identity_with_outer_whitespace(
+    tmp_path, monkeypatch, capsys, outer_whitespace,
+):
+    request = "make Load record deterministic\nproduct  diagnostics"
+    observed = _public_patch_upstream_scenario(
+        tmp_path, monkeypatch, capsys, request_patch_upstream=False,
+        request_description=outer_whitespace + request + outer_whitespace,
+    )
+    assert observed.exit_code == 0, observed.result
+    assert observed.result["status"] == "awaiting_approval", observed.result
+    assert observed.roles == ["product_requirement_projection",
+        "product_requirement_findings", "planning", "patch"]
+    run_root = Path(observed.result["run_root"])
+    feature = json.loads(next(run_root.rglob("feature_spec.json")).read_text(encoding="utf-8"))
+    evidence = json.loads(next(run_root.rglob("evidence_pack.json")).read_text(encoding="utf-8"))
+    assert feature["data"]["user_request"] == evidence["data"]["query"] == outer_whitespace + request + outer_whitespace
+    assert "\n" in evidence["data"]["query"] and "product  diagnostics" in evidence["data"]["query"]
+    assert len(observed.planning) == len(observed.patch_contexts) == 1
+    assert observed.result["actual_write_performed"] is False
+    assert observed.result["approval_recorded"] is False
+    assert observed.result["builds_performed"] == observed.result["runtime_executions_performed"] == 0
+
+
+def test_cli_run_request_deferred_mode_can_omit_an_approval_reader(tmp_path, monkeypatch, capsys):
+    observed = _public_patch_upstream_scenario(tmp_path, monkeypatch, capsys,
+        request_patch_upstream=False, omit_approval_reader=True)
+    assert observed.exit_code == 0, observed.result
+    assert observed.result["status"] == "awaiting_approval"
+    assert observed.result["actual_write_performed"] is False
+    assert observed.result["approval_recorded"] is False
+    assert observed.result["model_call_count"] == len(observed.requests) == 4
+
+
+def test_run_request_non_deferred_mode_still_requires_approval_reader(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_entry_module.LLMFactory, "create",
+        lambda *_args, **_kwargs: pytest.fail("Missing approval reader reached model construction"))
+    with pytest.raises(local_entry_module.LocalEntryError, match="exact diff approval reader"):
+        local_entry_module.run_local_request(description="Update the configured default.",
+            target_project=tmp_path / "source", workspace_base=tmp_path / "runs",
+            settings_path="config/settings.yaml", confirm_isolated_write=True, allow_build=True,
+            allow_source_disclosure=False, local_ollama=True, task_model_call_limit=9)
+
+
 def test_cli_run_request_patch_evidence_return_executes_new_search_and_reaches_original_review(
     tmp_path, monkeypatch, capsys,
 ):
@@ -2391,6 +2471,10 @@ def test_cli_run_request_patch_evidence_return_executes_new_search_and_reaches_o
     assert len(observed.searches) == 2
     added_queries, added_pack = observed.searches[-1]
     assert [row["query"] for row in added_queries["queries"]] == ["RefreshSharedState"]
+    query_request = next(json.loads(message["content"])
+        for request in observed.requests for message in request["messages"] if message["role"] == "user"
+        and isinstance(message["content"], str) and '"patch_upstream_evidence_queries"' in message["content"])
+    assert query_request["gap_investigation_targets"] == []
     assert len(added_pack.items) == 1 and "RefreshSharedState" in added_pack.items[0].excerpt
     old_ids = {row["evidence_id"] for row in observed.findings[0]["source_observations"]}
     new_ids = {row["evidence_id"] for row in observed.findings[-1]["source_observations"]}
@@ -2415,8 +2499,9 @@ def test_cli_run_request_patch_evidence_return_executes_new_search_and_reaches_o
     assert result["canonical_source_unchanged"] is True
     budget = result["model_call_budget"]
     assert budget["maximum"] == 9 and budget["consumed"] == len(observed.requests) == 8
-    assert budget["by_stage"]["planning"] == {"maximum": 1, "consumed": 1, "remaining": 0}
-    assert budget["by_stage"]["repair"] == {"maximum": 2, "consumed": 2, "remaining": 0}
+    assert budget["policy"] == "task_total_only"
+    assert budget["by_stage"]["planning"] == {"consumed": 1}
+    assert budget["by_stage"]["repair"] == {"consumed": 2}
 
 
 def test_cli_run_request_initial_findings_gap_searches_before_first_plan_and_patch(
@@ -2449,12 +2534,9 @@ def test_cli_run_request_initial_findings_gap_searches_before_first_plan_and_pat
     assert result["builds_performed"] == result["runtime_executions_performed"] == 0
     assert result["model_call_budget"]["maximum"] == 9
     assert result["model_call_budget"]["consumed"] == len(observed.requests) == 6
-    assert result["model_call_budget"]["by_stage"]["requirement_projection"] == {
-        "maximum": 2, "consumed": 1, "remaining": 1,
-    }
-    assert result["model_call_budget"]["by_stage"]["requirement_findings"] == {
-        "maximum": 2, "consumed": 2, "remaining": 0,
-    }
+    assert result["model_call_budget"]["policy"] == "task_total_only"
+    assert result["model_call_budget"]["by_stage"]["requirement_projection"] == {"consumed": 1}
+    assert result["model_call_budget"]["by_stage"]["requirement_findings"] == {"consumed": 2}
 
 
 @pytest.mark.parametrize("stop", ["still_missing", "missing_provider", "findings_budget", "task_budget", "query_timeout"])
@@ -2466,6 +2548,8 @@ def test_cli_run_request_initial_findings_gap_stops_without_first_plan_or_patch(
         initial_provider_available=stop != "missing_provider",
         findings_limit=1 if stop == "findings_budget" else 2,
         task_limit=2 if stop == "task_budget" else 9,
+        # 为什么要有它：仅阶段额度用例显式选旧可选策略，其余检验当前任务总额度模式。
+        model_call_budget_policy="stage_and_total" if stop == "findings_budget" else "task_total_only",
         initial_query_timeout=stop == "query_timeout")
     assert observed.exit_code != 0, observed.result
     assert "product_execution_result" in observed.result, observed.result
@@ -2477,17 +2561,19 @@ def test_cli_run_request_initial_findings_gap_stops_without_first_plan_or_patch(
         "implementation_plan", "repair_plan", "patch_proposal", "proposal_review", "dry_run_result",
     } for row in machine["outputs"])
     assert not list((tmp_path / "runs").rglob("repair_plan.json"))
-    expected_calls = {"still_missing": 4, "missing_provider": 2, "findings_budget": 3,
+    expected_calls = {"still_missing": 6, "missing_provider": 2, "findings_budget": 2,
         "task_budget": 2, "query_timeout": 3}[stop]
     assert result["model_call_budget"]["consumed"] == len(observed.requests) == expected_calls
     assert observed.roles[:2] == ["product_requirement_projection", "product_requirement_findings"]
     assert observed.roles.count("product_requirement_projection") == 1
-    assert observed.roles.count("initial_findings_evidence_queries") == (1 if expected_calls > 2 else 0)
-    assert len(observed.findings) == (2 if stop == "still_missing" else 1)
-    assert len(observed.searches) == (2 if stop in {"still_missing", "findings_budget"} else 1)
+    assert observed.roles.count("initial_findings_evidence_queries") == (
+        2 if stop == "still_missing" else 1 if stop == "query_timeout" else 0)
+    assert len(observed.findings) == (3 if stop == "still_missing" else 1)
+    assert len(observed.searches) == (3 if stop == "still_missing" else 1)
     assert result["actual_write_performed"] is False
     if stop in {"task_budget", "findings_budget"}:
-        assert "PRODUCT_MODEL_CALL_BUDGET_EXHAUSTED" in json.dumps(machine["blockers"])
+        code = "PRODUCT_STAGE_MODEL_CALL_BUDGET_EXHAUSTED" if stop == "findings_budget" else "PRODUCT_MODEL_CALL_BUDGET_EXHAUSTED"
+        assert code in json.dumps(machine["blockers"])
     if stop == "still_missing":
         assert machine["execution_disposition"] == "domain_blocked"
         assert "required_requirement_unresolved" in json.dumps(machine["blockers"])
@@ -2501,6 +2587,8 @@ def test_cli_run_request_patch_upstream_stops_with_consumed_original_budget(
         owner="planning" if stop == "planning_timeout" else "evidence",
         repair_limit=1 if stop == "repair_budget" else 2,
         task_limit=6 if stop == "task_budget" else 9,
+        # 为什么要有它：这些断言检查阶段上限，不能将可选阶段策略误当默认任务策略。
+        model_call_budget_policy="stage_and_total",
         planning_timeout=stop == "planning_timeout")
     assert observed.exit_code != 0, observed.result
     assert "product_execution_result" in observed.result, observed.result
@@ -2528,14 +2616,14 @@ def test_cli_run_request_patch_upstream_stops_with_consumed_original_budget(
 
 
 def test_cli_run_request_real_public_product_executor_runtime_success(
-    tmp_path: Path,
+    short_workspace: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    target = tmp_path / "Example"
-    bepinex = tmp_path / "BepInEx"
-    workspace = tmp_path / "runs"
-    runtime_root = tmp_path / "runtime"
+    target = short_workspace / "Example"
+    bepinex = short_workspace / "BepInEx"
+    workspace = short_workspace / "runs"
+    runtime_root = short_workspace / "runtime"
     destination = runtime_root / "BepInEx" / "plugins" / "Example.dll"
     target.mkdir()
     bepinex.mkdir()
@@ -2573,7 +2661,7 @@ def test_cli_run_request_real_public_product_executor_runtime_success(
             "terminate_after_capture": True,
         }
     )
-    settings_path = tmp_path / "settings.yaml"
+    settings_path = short_workspace / "settings.yaml"
     settings_path.write_text(yaml.safe_dump(settings_payload), encoding="utf-8")
 
     digest = "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0"
@@ -2748,7 +2836,7 @@ def test_cli_run_request_real_public_product_executor_runtime_success(
 
     monkeypatch.setattr("src.mod_agent.cli.sys.stdin", ExactApprovalInput())
     planning_target_id = _read_exact_test_planning_target_id(
-        tmp_path,
+        short_workspace,
         target / "Plugin.cs",
     )
     exit_code = main(
@@ -2775,6 +2863,7 @@ def test_cli_run_request_real_public_product_executor_runtime_success(
             "--allow-game-directory-write",
             "--planning-target-evidence-id",
             planning_target_id,
+            *request_budget_args(),
         ]
     )
 

@@ -1,0 +1,34 @@
+{
+  "description": "Four question-only RFC 8259 diagnostic cases reserved from development. References and judgment details are held separately by package 4.",
+  "tier": "tier_1_public_diagnostic_reserved",
+  "source": {
+    "url": "https://www.rfc-editor.org/rfc/rfc8259.txt",
+    "sha256": "36eae5d5812250c57e31cd87e591e6fd63fa2384ac4d8c53d7e0306807c75680"
+  },
+  "authoring_origin": {
+    "type": "codex_synthesized_from_public_source",
+    "creation_task_id": "01a0bd50-c593-7780-85ae-d24e81768b8d"
+  },
+  "human_verified": false,
+  "partition": "held_out_reserved",
+  "answer_policy": "Answer from RFC 8259 and cite supplied contexts. Preserve normative strength. Alternative wording is acceptable when every required fact is retained and no contradictory claim is added.",
+  "citation_policy": "Citations must be valid context indexes and each material claim must be entailed by its cited passage.",
+  "test_cases": [
+    {
+      "case_id": "rfc8259_t1x_r01",
+      "query": "One implementation reports a length for a JSON string containing \\uD800 while another terminates with a runtime error. Does RFC 8259 make either outcome universally required?"
+    },
+    {
+      "case_id": "rfc8259_t1x_r02",
+      "query": "Does writing every 16-bit value with a \\u escape guarantee an interoperable JSON string? Address the special case of a lone surrogate."
+    },
+    {
+      "case_id": "rfc8259_t1x_r03",
+      "query": "If a receiver's JSON parser accepts comments as an extension, does that permit a conforming generator to include comments in its output? Distinguish the two obligations."
+    },
+    {
+      "case_id": "rfc8259_t1x_r04",
+      "query": "A parser enforces a 1 MiB input limit and also accepts a non-JSON extension. Which parts are parser implementation choices, and what separate conformance rule still binds a generator?"
+    }
+  ]
+}

@@ -345,17 +345,13 @@ class WorkflowCheckpointStore:
     ) -> tuple[ResumeDecision, ArtifactRef]:
         """Validate a resume payload and write a resume_report artifact."""
 
-        checkpoint, decision, write_arguments = self._resume_write_arguments(
-            checkpoint_ref,
-            payload,
-        )
+        from .resume_lock import checkpoint_resume_lock
 
-        if decision.allowed:
-            self._seen_resume_ids.add(payload.resume_id)
-            self._consumed_checkpoint_ids.add(checkpoint["checkpoint_id"])
-
-        report_ref = self.artifact_store.write(**write_arguments)
-        return decision, report_ref
+        with checkpoint_resume_lock(self.artifact_store.root, checkpoint_ref):
+            checkpoint, decision, write_arguments = self._resume_write_arguments(checkpoint_ref, payload)
+            report_ref = self.artifact_store.write(**write_arguments)
+            self._record_consumed_resume(checkpoint, payload, decision=decision, committed=True)
+            return decision, report_ref
 
     def resume_with_result(
         self,
@@ -364,15 +360,28 @@ class WorkflowCheckpointStore:
     ) -> tuple[ResumeDecision, ArtifactWriteResult]:
         """Validate one resume and return the Store-owned commit outcome."""
 
-        checkpoint, decision, write_arguments = self._resume_write_arguments(
-            checkpoint_ref,
-            payload,
-        )
-        write_result = self.artifact_store.write_with_result(**write_arguments)
-        if decision.allowed and write_result.outcome == "committed":
+        from .resume_lock import checkpoint_resume_lock
+
+        with checkpoint_resume_lock(self.artifact_store.root, checkpoint_ref):
+            checkpoint, decision, write_arguments = self._resume_write_arguments(checkpoint_ref, payload)
+            write_result = self.artifact_store.write_with_result(**write_arguments)
+            self._record_consumed_resume(checkpoint, payload, decision=decision,
+                                         committed=write_result.outcome == "committed")
+            return decision, write_result
+
+    def _record_consumed_resume(
+        self,
+        checkpoint: dict[str, Any],
+        payload: ResumePayload,
+        *,
+        decision: ResumeDecision,
+        committed: bool,
+    ) -> None:
+        """Record idempotency only after the accepted report is durable."""
+
+        if decision.allowed and committed:
             self._seen_resume_ids.add(payload.resume_id)
             self._consumed_checkpoint_ids.add(checkpoint["checkpoint_id"])
-        return decision, write_result
 
     def _resume_write_arguments(
         self,
@@ -404,10 +413,14 @@ class WorkflowCheckpointStore:
             approved_at=payload.approved_at,
             authority_request_hash=payload.authority_request_hash,
         )
+        from src.mod_agent.execution.task_delegation import delegation_resume_report_fields
+
+        report_payload = report.to_artifact_payload()
+        report_payload.update(delegation_resume_report_fields(payload, checkpoint))
         return checkpoint, decision, {
             "feature_id": checkpoint_ref.feature_id,
             "artifact_type": "resume_report",
-            "payload": report.to_artifact_payload(),
+            "payload": report_payload,
             "status": "success" if decision.allowed else "blocked",
             "upstream_refs": [checkpoint_ref],
             "allow_stale_upstreams": (
@@ -811,7 +824,7 @@ class WorkflowCheckpointStore:
             approved_by=approved_by,
         )
 
-    def _preflight_runtime_terminal_continuation_facts(
+    def _runtime_resume_preflight_facts(
         self,
         checkpoint_ref: ArtifactRef,
         *,
@@ -819,8 +832,9 @@ class WorkflowCheckpointStore:
         runtime_evidence_ref: ArtifactRef,
         resume_id: str,
         approved_by: str,
-    ) -> tuple[ResumeDecision, dict[str, Any], tuple[ArtifactRef, ...]]:
-        """Validate one exact post-Runtime terminal continuation without writes."""
+        require_exact_runtime_upstream_types: bool,
+    ) -> dict[str, Any]:
+        """Load and validate facts shared by the two post-Runtime admissions."""
 
         checkpoint_envelope = self.artifact_store.read(checkpoint_ref)
         checkpoint = checkpoint_envelope["data"]
@@ -834,13 +848,6 @@ class WorkflowCheckpointStore:
             checkpoint_ref,
             checkpoint_envelope,
         )
-        if not checkpoint_freshness.is_fresh:
-            blockers.append(
-                {
-                    "code": "RUNTIME_TERMINAL_CHECKPOINT_STALE",
-                    "message": "Post-Runtime checkpoint inputs are stale.",
-                }
-            )
 
         report_envelope = self.artifact_store.read(resume_report_ref)
         report = report_envelope["data"]
@@ -851,7 +858,7 @@ class WorkflowCheckpointStore:
         restored_state = (report.get("applied_updates") or {}).get(
             "restored_state"
         )
-        if (
+        report_valid = not (
             resume_report_ref.feature_id != checkpoint_ref.feature_id
             or report.get("checkpoint_id") != checkpoint.get("checkpoint_id")
             or report.get("run_id") != checkpoint.get("run_id")
@@ -869,26 +876,10 @@ class WorkflowCheckpointStore:
             or report_upstreams[0].get("path") != checkpoint_ref.path
             or report_upstreams[0].get("artifact_hash")
             != checkpoint_ref.artifact_hash
-        ):
-            blockers.append(
-                {
-                    "code": "RUNTIME_TERMINAL_RESUME_REPORT_INVALID",
-                    "message": (
-                        "Accepted ResumeReport does not bind the exact Build "
-                        "checkpoint and approved resume identity."
-                    ),
-                }
-            )
+        )
         report_freshness = self.artifact_store.check_freshness(
             resume_report_ref
         )
-        if not report_freshness.is_fresh:
-            blockers.append(
-                {
-                    "code": "RUNTIME_TERMINAL_RESUME_REPORT_STALE",
-                    "message": "Accepted ResumeReport inputs are stale.",
-                }
-            )
 
         runtime_envelope = self.artifact_store.read(runtime_evidence_ref)
         runtime = runtime_envelope["data"]
@@ -905,13 +896,24 @@ class WorkflowCheckpointStore:
             if isinstance(item, dict)
             and isinstance(item.get("artifact_type"), str)
         }
+        required_runtime_upstream_types = {"build_result", "feature_spec"}
+        observed_runtime_upstream_types = set(runtime_upstreams_by_type)
+        runtime_upstream_types_valid = (
+            observed_runtime_upstream_types == required_runtime_upstream_types
+            if require_exact_runtime_upstream_types
+            else required_runtime_upstream_types.issubset(
+                observed_runtime_upstream_types
+            )
+        )
         expected_build_ref = {
             "feature_id": checkpoint_ref.feature_id,
             "artifact_type": "build_result",
             "path": snapshot_artifacts.get("build_result"),
             "artifact_hash": snapshot_hashes.get("build_result"),
         }
-        if (
+        build_upstream = runtime_upstreams_by_type.get("build_result", {})
+        feature_upstream = runtime_upstreams_by_type.get("feature_spec", {})
+        runtime_lineage_valid = not (
             runtime_evidence_ref.feature_id != checkpoint_ref.feature_id
             or runtime.get("feature_id") != checkpoint_ref.feature_id
             or runtime.get("run_id") != checkpoint.get("run_id")
@@ -920,17 +922,82 @@ class WorkflowCheckpointStore:
             or runtime.get("build_artifact_ref") != expected_build_ref
             or runtime.get("build_artifact_hash")
             != snapshot_hashes.get("build_result")
-            or set(runtime_upstreams_by_type)
-            != {"build_result", "feature_spec"}
-            or runtime_upstreams_by_type["build_result"].get("path")
+            or not runtime_upstream_types_valid
+            or build_upstream.get("path")
             != snapshot_artifacts.get("build_result")
-            or runtime_upstreams_by_type["build_result"].get("artifact_hash")
+            or build_upstream.get("artifact_hash")
             != snapshot_hashes.get("build_result")
-            or runtime_upstreams_by_type["feature_spec"].get("path")
+            or feature_upstream.get("path")
             != snapshot_artifacts.get("feature_spec")
-            or runtime_upstreams_by_type["feature_spec"].get("artifact_hash")
+            or feature_upstream.get("artifact_hash")
             != snapshot_hashes.get("feature_spec")
-        ):
+        )
+        runtime_freshness = self.artifact_store.check_freshness(
+            runtime_evidence_ref
+        )
+        return {
+            "checkpoint_freshness": checkpoint_freshness,
+            "report": report,
+            "report_freshness": report_freshness,
+            "report_valid": report_valid,
+            "runtime": runtime,
+            "runtime_freshness": runtime_freshness,
+            "runtime_lineage_valid": runtime_lineage_valid,
+            "blockers": blockers,
+        }
+
+    def _preflight_runtime_terminal_continuation_facts(
+        self,
+        checkpoint_ref: ArtifactRef,
+        *,
+        resume_report_ref: ArtifactRef,
+        runtime_evidence_ref: ArtifactRef,
+        resume_id: str,
+        approved_by: str,
+    ) -> tuple[ResumeDecision, dict[str, Any], tuple[ArtifactRef, ...]]:
+        """Validate one exact post-Runtime terminal continuation without writes."""
+
+        facts = self._runtime_resume_preflight_facts(
+            checkpoint_ref,
+            resume_report_ref=resume_report_ref,
+            runtime_evidence_ref=runtime_evidence_ref,
+            resume_id=resume_id,
+            approved_by=approved_by,
+            require_exact_runtime_upstream_types=True,
+        )
+        checkpoint_freshness = facts["checkpoint_freshness"]
+        report = facts["report"]
+        report_freshness = facts["report_freshness"]
+        runtime = facts["runtime"]
+        runtime_freshness = facts["runtime_freshness"]
+        blockers = facts["blockers"]
+        if not checkpoint_freshness.is_fresh:
+            blockers.append(
+                {
+                    "code": "RUNTIME_TERMINAL_CHECKPOINT_STALE",
+                    "message": "Post-Runtime checkpoint inputs are stale.",
+                }
+            )
+
+        if not facts["report_valid"]:
+            blockers.append(
+                {
+                    "code": "RUNTIME_TERMINAL_RESUME_REPORT_INVALID",
+                    "message": (
+                        "Accepted ResumeReport does not bind the exact Build "
+                        "checkpoint and approved resume identity."
+                    ),
+                }
+            )
+        if not report_freshness.is_fresh:
+            blockers.append(
+                {
+                    "code": "RUNTIME_TERMINAL_RESUME_REPORT_STALE",
+                    "message": "Accepted ResumeReport inputs are stale.",
+                }
+            )
+
+        if not facts["runtime_lineage_valid"]:
             blockers.append(
                 {
                     "code": "RUNTIME_TERMINAL_EVIDENCE_LINEAGE_INVALID",
@@ -940,9 +1007,6 @@ class WorkflowCheckpointStore:
                     ),
                 }
             )
-        runtime_freshness = self.artifact_store.check_freshness(
-            runtime_evidence_ref
-        )
         if not runtime_freshness.is_fresh:
             blockers.append(
                 {
@@ -1025,18 +1089,20 @@ class WorkflowCheckpointStore:
     ) -> tuple[ResumeDecision, dict[str, Any], tuple[ArtifactRef, ...]]:
         """Validate one exact no-Runtime RuntimeEvidence consolidation."""
 
-        checkpoint_envelope = self.artifact_store.read(checkpoint_ref)
-        checkpoint = checkpoint_envelope["data"]
-        blockers = self._checkpoint_lineage_blockers(
+        facts = self._runtime_resume_preflight_facts(
             checkpoint_ref,
-            checkpoint_envelope,
-            allow_prior_runtime_state=True,
-            require_current_build_output=False,
+            resume_report_ref=resume_report_ref,
+            runtime_evidence_ref=prior_runtime_evidence_ref,
+            resume_id=resume_id,
+            approved_by=approved_by,
+            require_exact_runtime_upstream_types=False,
         )
-        checkpoint_freshness = self._checkpoint_freshness(
-            checkpoint_ref,
-            checkpoint_envelope,
-        )
+        checkpoint_freshness = facts["checkpoint_freshness"]
+        report = facts["report"]
+        report_freshness = facts["report_freshness"]
+        runtime = facts["runtime"]
+        runtime_freshness = facts["runtime_freshness"]
+        blockers = facts["blockers"]
         if not checkpoint_freshness.is_fresh:
             blockers.append(
                 {
@@ -1045,34 +1111,7 @@ class WorkflowCheckpointStore:
                 }
             )
 
-        report_envelope = self.artifact_store.read(resume_report_ref)
-        report = report_envelope["data"]
-        report_upstreams = report_envelope.get("inputs", {}).get(
-            "upstream_artifacts",
-            [],
-        )
-        restored_state = (report.get("applied_updates") or {}).get(
-            "restored_state"
-        )
-        if (
-            resume_report_ref.feature_id != checkpoint_ref.feature_id
-            or report.get("checkpoint_id") != checkpoint.get("checkpoint_id")
-            or report.get("run_id") != checkpoint.get("run_id")
-            or report.get("resume_stage") != checkpoint.get("checkpoint_stage")
-            or report.get("resume_id") != resume_id
-            or report.get("approved_by") != approved_by
-            or report.get("decision") != "approve"
-            or report.get("status") != "accepted"
-            or report.get("allowed") is not True
-            or restored_state != checkpoint.get("state_snapshot")
-            or not isinstance(report_upstreams, list)
-            or len(report_upstreams) != 1
-            or report_upstreams[0].get("artifact_type")
-            != "workflow_checkpoint"
-            or report_upstreams[0].get("path") != checkpoint_ref.path
-            or report_upstreams[0].get("artifact_hash")
-            != checkpoint_ref.artifact_hash
-        ):
+        if not facts["report_valid"]:
             blockers.append(
                 {
                     "code": "RUNTIME_CONSOLIDATION_RESUME_REPORT_INVALID",
@@ -1082,9 +1121,6 @@ class WorkflowCheckpointStore:
                     ),
                 }
             )
-        report_freshness = self.artifact_store.check_freshness(
-            resume_report_ref
-        )
         if not report_freshness.is_fresh:
             blockers.append(
                 {
@@ -1093,49 +1129,7 @@ class WorkflowCheckpointStore:
                 }
             )
 
-        runtime_envelope = self.artifact_store.read(
-            prior_runtime_evidence_ref
-        )
-        runtime = runtime_envelope["data"]
-        runtime_upstreams = runtime_envelope.get("inputs", {}).get(
-            "upstream_artifacts",
-            [],
-        )
-        snapshot = checkpoint.get("state_snapshot") or {}
-        snapshot_artifacts = snapshot.get("artifacts") or {}
-        snapshot_hashes = snapshot.get("artifact_hashes") or {}
-        runtime_upstreams_by_type = {
-            item.get("artifact_type"): item
-            for item in runtime_upstreams
-            if isinstance(item, dict)
-            and isinstance(item.get("artifact_type"), str)
-        }
-        expected_build_ref = {
-            "feature_id": checkpoint_ref.feature_id,
-            "artifact_type": "build_result",
-            "path": snapshot_artifacts.get("build_result"),
-            "artifact_hash": snapshot_hashes.get("build_result"),
-        }
-        if (
-            prior_runtime_evidence_ref.feature_id != checkpoint_ref.feature_id
-            or runtime.get("feature_id") != checkpoint_ref.feature_id
-            or runtime.get("run_id") != checkpoint.get("run_id")
-            or runtime.get("input_execution_mode")
-            != VERIFICATION_ONLY_INPUT_EXECUTION_MODE
-            or runtime.get("build_artifact_ref") != expected_build_ref
-            or runtime.get("build_artifact_hash")
-            != snapshot_hashes.get("build_result")
-            or "build_result" not in runtime_upstreams_by_type
-            or "feature_spec" not in runtime_upstreams_by_type
-            or runtime_upstreams_by_type["build_result"].get("path")
-            != snapshot_artifacts.get("build_result")
-            or runtime_upstreams_by_type["build_result"].get("artifact_hash")
-            != snapshot_hashes.get("build_result")
-            or runtime_upstreams_by_type["feature_spec"].get("path")
-            != snapshot_artifacts.get("feature_spec")
-            or runtime_upstreams_by_type["feature_spec"].get("artifact_hash")
-            != snapshot_hashes.get("feature_spec")
-        ):
+        if not facts["runtime_lineage_valid"]:
             blockers.append(
                 {
                     "code": "RUNTIME_CONSOLIDATION_EVIDENCE_LINEAGE_INVALID",
@@ -1145,9 +1139,6 @@ class WorkflowCheckpointStore:
                     ),
                 }
             )
-        runtime_freshness = self.artifact_store.check_freshness(
-            prior_runtime_evidence_ref
-        )
         if not runtime_freshness.is_fresh:
             blockers.append(
                 {
@@ -1562,6 +1553,9 @@ class WorkflowCheckpointStore:
 
     @staticmethod
     def _state_snapshot(state: ModAgentState) -> dict[str, Any]:
+        # This is the historical durable checkpoint projection, not a generic
+        # state clone. edit_authority_review_result remains intentionally absent
+        # from persisted checkpoint payloads.
         return {
             "run_id": state["run_id"],
             "request_id": state["request_id"],

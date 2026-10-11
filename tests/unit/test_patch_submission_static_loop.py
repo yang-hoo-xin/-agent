@@ -136,7 +136,12 @@ def test_real_prepared_submission_uses_recovery_reserve_without_editing_source(t
     result = run_patch_agent_loop(client=client, initial_messages=tuple(AgentMessage(m.role, m.content) for m in prepared.messages),
         final_response_format=AgentResponseFormat(name="patch", description="Bound output", schema=prepared.response_schema),
         source_inspector=inspector, policy=policy, reserve_model_turns=2, submission_validator=check)
-    assert result.completed and len(client.requests) == 2
-    assert result.submission_trace[0]["released_recovery_reservation"]["model_turns"] == 2
-    assert result.submission_trace[1]["status"] == "accepted"
+    assert result.completed
+    if failure == "whitespace":
+        assert len(client.requests) == 1
+        assert result.submission_trace[0]["status"] == "accepted"
+    else:
+        assert len(client.requests) == 2
+        assert result.submission_trace[0]["released_recovery_reservation"]["model_turns"] == 2
+        assert result.submission_trace[1]["status"] == "accepted"
     assert (tmp_path / "Subject.cs").read_bytes() == before.encode()

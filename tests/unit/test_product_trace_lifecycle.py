@@ -222,8 +222,14 @@ def test_nested_request_worker_reuses_only_matching_product_trace_and_shutdown_o
     assert [r["name"] for r in rows if r["kind"] == "generation"] == ["patch.generate"]
     assert not any(r["name"] in {"planning.select", "review", "product.execution"} for r in rows)
     parent_rows = list(_read(tmp_path / "run_manifest.json")["execution_observations"].values())
-    parent_generations = [r["name"] for r in parent_rows if r["kind"] == "generation"]
-    assert parent_generations == (["planning.select", "patch.generate"] if mismatch is None else ["planning.select"])
+    # Manifest dictionary keys are random IDs, written with sort_keys=True.
+    # 为什么要有它：记录时间才能验证执行先后，标识符的字典序不代表调用顺序。
+    parent_generations = sorted((r for r in parent_rows if r["kind"] == "generation"),
+                                key=lambda r: (r["started_at"], r["id"]))
+    assert [r["name"] for r in parent_generations] == (
+        ["planning.select", "patch.generate"] if mismatch is None else ["planning.select"])
+    if mismatch is None:
+        assert parent_generations[0]["finished_at"] <= parent_generations[1]["started_at"]
 
 
 def test_deferred_approval_and_build_keep_logical_session_and_distinct_invocation_traces(tmp_path):

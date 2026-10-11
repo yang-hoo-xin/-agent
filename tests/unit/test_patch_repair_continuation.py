@@ -38,7 +38,7 @@ def _repair_case(tmp_path):
         dry_run_factory=make_exact_no_write_dry_run_factory(inputs.workspace))
     assert parent.status == "terminal"
     proposal = inputs.store.semantic_read_immutable(ArtifactRef(**parent.patch_proposal_artifact))["data"]
-    receipt = json.loads(Path(parent.attempt_receipt["path"]).read_text())
+    receipt = json.loads(Path(parent.attempt_receipt["path"]).read_text(encoding="utf-8"))
     response = receipt["factory_receipt"]["model_response"]
     # The original materializer's compatibility fields are absent from Proposal
     # display metadata. Restore the known synthetic fixture's native projection.
@@ -108,7 +108,7 @@ def test_passed_proposal_behavior_failure_enters_repair_and_complete_patch(tmp_p
     assert len(client.requests) == 2
     assert _source_hashes(inputs.workspace) == before
     assert Path(parent.proposal_review_artifact["path"]).read_bytes() == old_review_bytes
-    receipt = json.loads(Path(result.attempt_receipt["path"]).read_text())
+    receipt = json.loads(Path(result.attempt_receipt["path"]).read_text(encoding="utf-8"))
     repair = inputs.store.semantic_read_immutable(ArtifactRef(**receipt["artifacts"]["repair_plan"]))
     assert repair["data"]["failure_source"] == "behavior_report"
     assert repair["data"]["semantic_decision"]["decision"] == ("investigation_ready" if owner == "unknown" else "repair_ready")
@@ -200,5 +200,5 @@ def test_repair_upstream_decision_is_persisted_without_generation(tmp_path, owne
     assert not calls
     assert result.patch_proposal_artifact is None
     assert result.proposal_review_artifact is None
-    receipt = json.loads(Path(result.attempt_receipt["path"]).read_text())
+    receipt = json.loads(Path(result.attempt_receipt["path"]).read_text(encoding="utf-8"))
     assert receipt["repair_semantic_decision"]["decision"] != "repair_ready"

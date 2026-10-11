@@ -74,13 +74,9 @@ _RUNTIME_RELOAD_TERMS = (
 
 
 def requested_scope_text(user_request: str) -> str:
-    """Return the requested behavior before explicit non-goal clauses."""
+    """Preserve the complete request; semantic projection owns clause meaning."""
 
-    return re.split(
-        r"\b(?:without|do not|don't|must not)\b",
-        user_request.lower(),
-        maxsplit=1,
-    )[0].strip()
+    return user_request
 
 
 def has_config_intent(user_request: str) -> bool:
@@ -91,9 +87,9 @@ def has_config_intent(user_request: str) -> bool:
 
 
 def has_runtime_behavior_intent(user_request: str) -> bool:
-    """Return whether the requested scope explicitly changes runtime behavior."""
+    """Return runtime investigation leads, not proof of a requested change."""
 
-    requested_scope = requested_scope_text(user_request)
+    requested_scope = requested_scope_text(user_request).lower()
     return any(
         _contains_term(requested_scope, term) for term in _RUNTIME_BEHAVIOR_TERMS
     )
@@ -102,16 +98,19 @@ def has_runtime_behavior_intent(user_request: str) -> bool:
 def has_runtime_diagnostic_intent(user_request: str) -> bool:
     """Return whether the requested scope explicitly requires runtime observation."""
 
-    requested_scope = requested_scope_text(user_request)
+    from .request_interpretation import runtime_diagnostic_clauses
+
     return any(
-        _contains_term(requested_scope, term) for term in _RUNTIME_DIAGNOSTIC_TERMS
+        _contains_term(clause.lower(), term)
+        for clause in runtime_diagnostic_clauses(user_request)
+        for term in _RUNTIME_DIAGNOSTIC_TERMS
     )
 
 
 def has_runtime_reload_intent(user_request: str) -> bool:
     """Return whether acceptance explicitly depends on restart or reload behavior."""
 
-    requested_scope = requested_scope_text(user_request)
+    requested_scope = requested_scope_text(user_request).lower()
     return any(
         _contains_term(requested_scope, term) for term in _RUNTIME_RELOAD_TERMS
     )
@@ -134,12 +133,20 @@ class RequestPlanner:
     ) -> RequestPlan:
         """Return a structured request plan."""
 
-        request = user_request.strip()
+        from .request_interpretation import interpret_request
+
+        request = user_request
+        from .clarified_request import ANCHORED_VERSION, projection_context, source_hint_text
+        clarified = projection_context(request)
+        semantic_request = source_hint_text(request) if clarified is not None and clarified["schema_version"] == ANCHORED_VERSION else request
+        # 为什么要有它：route receipt路径不是用户需求，不能触发歧义或配置启发式；完整原文仍作为FeatureSpec身份保存。
+        interpretation = interpret_request(semantic_request)
+        interpretation["raw_request"] = request
         feature_id = stable_feature_id(request)
-        terms = _TERM_RE.findall(request)
+        terms = _TERM_RE.findall(semantic_request)
         uncertainties: list[Uncertainty] = []
 
-        if self._is_ambiguous(request, terms):
+        if self._is_ambiguous(semantic_request, terms):
             uncertainties.append(
                 Uncertainty(
                     uncertainty_id="ambiguous_user_request",
@@ -153,7 +160,7 @@ class RequestPlanner:
                 route="blocked_ambiguous",
                 risk_level="blocked",
                 target_mod=target_mod,
-                requires_hook_evidence=True,
+                requires_hook_evidence=False,
                 requires_runtime_evidence=False,
                 hook_requirement={
                     "required": False,
@@ -161,25 +168,15 @@ class RequestPlanner:
                 },
                 uncertainties=tuple(uncertainties),
                 blocked=True,
+                request_interpretation=interpretation,
             )
 
-        resolved_target_mod = target_mod or self._extract_target_mod(request)
-        quick_patch = has_config_intent(request)
-        requires_hook = has_runtime_behavior_intent(request)
-        requires_runtime_diagnostics = has_runtime_diagnostic_intent(request)
-        requires_runtime = (
-            requires_hook
-            or requires_runtime_diagnostics
-            or has_runtime_reload_intent(request)
-        )
-        hook_requirement = {
-            "required": requires_hook,
-            "reason": (
-                "gameplay_method_interception"
-                if requires_hook
-                else "not_required"
-            ),
-        }
+        resolved_target_mod = target_mod or self._extract_target_mod(semantic_request)
+        quick_patch = interpretation["request_type"] == "config-only"
+        requires_hook = interpretation["hook_requirement"]["required"]
+        requires_runtime_diagnostics = has_runtime_diagnostic_intent(semantic_request)
+        requires_runtime = interpretation["requires_runtime_evidence"]
+        hook_requirement = dict(interpretation["hook_requirement"])
         route = (
             "game_hook_investigation"
             if requires_hook
@@ -212,6 +209,7 @@ class RequestPlanner:
             hook_requirement=hook_requirement,
             uncertainties=tuple(uncertainties),
             blocked=False,
+            request_interpretation=interpretation,
         )
 
     @staticmethod

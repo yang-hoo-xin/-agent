@@ -1,0 +1,125 @@
+{
+  "description": "Tier-1 development diagnostic set derived from public RFC 8259 text. It is not sealed, externally authored, or a promotion benchmark.",
+  "tier": "tier_1_public_diagnostic",
+  "purpose": "Diagnose retrieval and grounded-answer failure modes across explicit public-source question types.",
+  "source": {
+    "url": "https://www.ietf.org/ietf-ftp/rfc/rfc8259.txt.pdf",
+    "sha256": "36eae5d5812250c57e31cd87e591e6fd63fa2384ac4d8c53d7e0306807c75680"
+  },
+  "authoring_origin": {
+    "type": "codex_synthesized_from_public_source",
+    "creation_turn_id": "01a0bd24-63a6-77f0-9e15-49f69e561858",
+    "basis": "Questions, references, and labels were prepared from the cited RFC sections and the recorded 1000-character/200-overlap split."
+  },
+  "human_verified": false,
+  "answer_policy": "Answer the question under one fixed policy. Use and cite retrieved contexts when supplied; without retrieved contexts, state that no retrieved evidence was supplied. If RFC 8259 does not specify the requested value, explicitly abstain from inventing one.",
+  "citation_policy": "With retrieval enabled, cite supporting passages inline as [context:N]. RAG-off answers must not invent retrieved citations.",
+  "chunk_binding": {
+    "splitter": "recursive",
+    "chunk_size": 1000,
+    "chunk_overlap": 200,
+    "source_sha256": "36eae5d5812250c57e31cd87e591e6fd63fa2384ac4d8c53d7e0306807c75680"
+  },
+  "test_cases": [
+    {
+      "case_id": "rfc8259_t1_literals",
+      "query": "Are TRUE, FALSE, and NULL valid JSON literal spellings under RFC 8259?",
+      "expected_chunk_ids": ["doc_36eae5d5812250c5_0013_6b25ec5d"],
+      "reference_answer": "No. The three literal names are true, false, and null, and they must be lowercase.",
+      "source_sections": ["3"],
+      "source_pages": [6],
+      "diagnostic_types": ["single_hop", "semantic_rewrite"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t1_duplicate_names",
+      "query": "Why are repeated member names in a JSON object a portability problem, and how may receivers differ?",
+      "expected_chunk_ids": ["doc_36eae5d5812250c5_0014_80051ff9", "doc_36eae5d5812250c5_0015_a5f35dd1"],
+      "reference_answer": "RFC 8259 says object names should be unique. With duplicates, receiver behavior is unpredictable: implementations may keep only the last pair, report an error or fail to parse, or expose all pairs.",
+      "source_sections": ["4"],
+      "source_pages": [6],
+      "diagnostic_types": ["competing_passages", "multi_fact_recall"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t1_encoding_parser",
+      "query": "For JSON exchanged between independent systems, combine the RFC's encoding requirement with the parser's minimum acceptance obligation.",
+      "expected_chunk_ids": ["doc_36eae5d5812250c5_0023_c627f79f", "doc_36eae5d5812250c5_0026_cde12188"],
+      "reference_answer": "Such JSON text must use UTF-8, and a JSON parser must accept every text that conforms to the JSON grammar; it may also accept extensions.",
+      "source_sections": ["8.1", "9"],
+      "source_pages": [9, 10],
+      "diagnostic_types": ["cross_section", "multi_fact_recall"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t1_no_fixed_size",
+      "query": "What exact maximum JSON text size in bytes does RFC 8259 require every parser to accept?",
+      "expected_chunk_ids": ["doc_36eae5d5812250c5_0027_c55041f8"],
+      "reference_answer": "RFC 8259 does not prescribe a fixed byte maximum. It says an implementation may set a limit on the size of texts it accepts.",
+      "source_sections": ["9"],
+      "source_pages": [10],
+      "diagnostic_types": ["no_answer_abstention"],
+      "expected_behavior": "abstain_from_specific_value"
+    },
+    {
+      "case_id": "rfc8259_t1_escape_comparison",
+      "query": "Should a member name containing a reverse solidus compare equal when one spelling uses \\u005C and the other uses the short escape? Explain the interoperable comparison method.",
+      "expected_chunk_ids": ["doc_36eae5d5812250c5_0020_bff5f2e4", "doc_36eae5d5812250c5_0026_cde12188"],
+      "reference_answer": "Yes. Both spellings represent the same reverse solidus. Interoperable implementations convert textual spellings to Unicode code units and compare those units numerically; comparing unconverted escape text can give a false inequality.",
+      "source_sections": ["7", "8.3"],
+      "source_pages": [8, 10],
+      "diagnostic_types": ["semantic_rewrite", "competing_passages", "cross_section"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t1_object_array_interop",
+      "query": "State one interoperability condition for object members and one type-related rule for array elements in RFC 8259.",
+      "expected_chunk_ids": ["doc_36eae5d5812250c5_0014_80051ff9", "doc_36eae5d5812250c5_0015_a5f35dd1"],
+      "reference_answer": "Object member names should be unique for interoperable name-value mappings. Array elements are not required to have the same type.",
+      "source_sections": ["4", "5"],
+      "source_pages": [6, 7],
+      "diagnostic_types": ["cross_section", "multi_fact_recall"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t1_number_chunk_boundary",
+      "query": "How is a JSON exponent formed, and within what integer interval do binary64-based implementations agree exactly?",
+      "expected_chunk_ids": ["doc_36eae5d5812250c5_0016_e60b202e", "doc_36eae5d5812250c5_0017_874385b8", "doc_36eae5d5812250c5_0019_d7fb0ff7"],
+      "reference_answer": "An exponent starts with E or e, may include a plus or minus sign, and must then contain one or more digits. Binary64-based implementations agree exactly for integers from -(2^53)+1 through (2^53)-1.",
+      "source_sections": ["6"],
+      "source_pages": [7, 8],
+      "diagnostic_types": ["chunk_boundary", "multi_fact_recall"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t1_unpaired_surrogate",
+      "query": "What can happen when JSON contains an unpaired UTF-16 surrogate such as \\uDEAD?",
+      "expected_chunk_ids": ["doc_36eae5d5812250c5_0025_7c50de30"],
+      "reference_answer": "Receiver behavior is unpredictable. Implementations may disagree about string length or even suffer fatal runtime exceptions.",
+      "source_sections": ["8.2"],
+      "source_pages": [10],
+      "diagnostic_types": ["single_hop"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t1_eval_security",
+      "query": "Why does RFC 8259 reject using eval-like functions as a general JSON parser?",
+      "expected_chunk_ids": ["doc_36eae5d5812250c5_0030_6216279f"],
+      "reference_answer": "It is generally an unacceptable security risk because input can contain executable code alongside data declarations; JSON and the host language syntax are also not identical in every case.",
+      "source_sections": ["12"],
+      "source_pages": [12],
+      "diagnostic_types": ["semantic_rewrite"],
+      "expected_behavior": "answer"
+    },
+    {
+      "case_id": "rfc8259_t1_parser_generator_obligations",
+      "query": "Contrast the conformance obligations RFC 8259 places on a JSON parser and on a JSON generator.",
+      "expected_chunk_ids": ["doc_36eae5d5812250c5_0026_cde12188", "doc_36eae5d5812250c5_0027_c55041f8"],
+      "reference_answer": "A parser must accept every text conforming to the JSON grammar and may accept extensions. A generator's output must strictly conform to the JSON grammar.",
+      "source_sections": ["9", "10"],
+      "source_pages": [10],
+      "diagnostic_types": ["cross_section", "multi_fact_recall"],
+      "expected_behavior": "answer"
+    }
+  ]
+}

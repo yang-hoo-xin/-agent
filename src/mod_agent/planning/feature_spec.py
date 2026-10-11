@@ -28,13 +28,14 @@ class FeatureSpecBuilder:
                 feature_id=plan.feature_id,
                 user_request=plan.user_request,
                 target_behavior="",
-                non_goals=(),
+                non_goals=self._brief_non_goals(planning_brief),
                 target_mod=plan.target_mod,
                 risk_level=plan.risk_level,
                 acceptance_criteria=(),
-                evidence_requirements=(),
+                evidence_requirements=tuple(self._brief_evidence_requirements(planning_brief)),
                 runtime_verification_plan=(),
                 hook_requirement=dict(plan.hook_requirement),
+                request_interpretation=dict(plan.request_interpretation),
                 blocked=True,
                 blockers=tuple(
                     {
@@ -45,13 +46,11 @@ class FeatureSpecBuilder:
                 ),
             )
 
-        evidence_requirements = ["target source or API evidence"]
+        evidence_requirements: list[str] = []
         if plan.requires_hook_evidence:
             evidence_requirements.extend(["target method", "call timing", "side effect boundary"])
         if plan.hook_requirement.get("required") is True:
             evidence_requirements.append("concrete hook target method identity")
-        if plan.route == "quick_patch":
-            evidence_requirements.append("config or text evidence")
         evidence_requirements = self._merge_unique(
             evidence_requirements,
             self._brief_evidence_requirements(planning_brief),
@@ -76,11 +75,7 @@ class FeatureSpecBuilder:
             feature_id=plan.feature_id,
             user_request=plan.user_request,
             target_behavior=plan.user_request,
-            non_goals=(
-                "Do not perform unrelated refactors.",
-                "Do not modify files outside evidence-supported scope.",
-                "Do not claim runtime success without runtime evidence.",
-            ),
+            non_goals=self._brief_non_goals(planning_brief),
             target_mod=plan.target_mod,
             risk_level=plan.risk_level,
             acceptance_criteria=(
@@ -91,8 +86,16 @@ class FeatureSpecBuilder:
             evidence_requirements=tuple(evidence_requirements),
             runtime_verification_plan=tuple(runtime_verification),
             hook_requirement=dict(plan.hook_requirement),
+            request_interpretation=dict(plan.request_interpretation),
             blocked=False,
         )
+
+    @staticmethod
+    def _brief_non_goals(planning_brief: dict[str, Any] | None) -> tuple[str, ...]:
+        selected = planning_brief.get("selected_plan") if isinstance(planning_brief, dict) else None
+        values = selected.get("non_goals") if isinstance(selected, dict) else None
+        # 为什么要有它：明确提供的用户限制必须保留，不能按文本与平台政策相似就从语义输入中删除。
+        return tuple(str(item) for item in values) if isinstance(values, (list, tuple)) else ()
 
     @staticmethod
     def _brief_evidence_requirements(

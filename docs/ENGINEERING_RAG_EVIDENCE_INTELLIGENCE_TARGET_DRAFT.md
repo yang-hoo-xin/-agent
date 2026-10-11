@@ -7,7 +7,7 @@ execution_authority: none
 implementation_authorization: not_granted
 supersedes: none
 created_at: 2026-08-11
-last_consolidated_at: 2026-08-11
+last_consolidated_at: 2026-08-16
 promotion_target: authoritative_product_target_document
 document_purpose: capability_target_boundary_and_validation_plan
 current_scope:
@@ -15,6 +15,7 @@ current_scope:
   - engineering_evidence_retrieval
   - rag_1a_evidence_semantics
   - rag_1b_public_evidence_adoption
+linked_product_milestone: coding_agent_v0_internal_alpha
 explicitly_separate_scope:
   - trace_platform
   - evaluation_platform
@@ -31,6 +32,7 @@ decision_record_status: twelve_decisions_consolidated
 > 本文不授权修改代码、测试、ArtifactStore、产品源码或运行 Build/Runtime，也不自动授权 RAG-1A、RAG-1B 或任何后续阶段。
 > 文中的精确源码事实必须在各实施包开始前，针对届时的目标分支、HEAD、工作树和测试重新复核。
 > 本文覆盖标准文档 RAG 与工程证据检索（ER），但不复制历史模板的全部实现细节；历史能力必须在本文中获得 adopt、adapt、experimental、defer、reject 或 reference-only 的唯一裁决后，才能进入当前产品。
+> Coding Agent v0 的统一语境、模块归位、observation 定义、跨工作树归并和 internal alpha 完成门见 `docs/CODING_AGENT_V0_INTERNAL_ALPHA.md`；本文只拥有 RAG/ER 能力边界。
 
 ## 1. 文档目的
 
@@ -168,17 +170,29 @@ SHA256=BDCC6A30F817A56548627D212A299437B87C8442010993FD638E2C88FC615407
 
 ### 3.3 第一产品目标
 
-第一阶段唯一主要产品目标固定为：
+当前产品级里程碑调整为 **Coding Agent v0 纵向闭环**。它不替代或暂停 RAG/ER，也不新建通用 Agent 框架；RAG-1A 是 v0 的只读证据工具子系统。第一份可信 BetterHitFeedback EvidencePack 形成后立即进入 v0 internal alpha 的既有 Planning、Patch、Build/Test 消费链；该内部消费用于暴露真实字段需求，不替代随后用 BetterHitFeedback、WallCrawler 和最小 Eval 完成 RAG-1A。
+
+产品路径为：
 
 ```text
 自然语言 Mod 功能需求
-  → 工程证据发现
-  → Hook/实现方向备选项
-  → 证据充分性
-  → 实施规划或明确阻断
+  → RAG/ER 工程证据发现与验证
+  → EvidencePack
+  → Implementation Plan
+  → PatchProposal
+  → Review / Dry-run
+  → 隔离 Build/Test
+  → 完成，或根据真实失败调整下一步
 ```
 
-RAG/ER 不声称最终 Hook 一定正确。它负责提供可审计的证据基础和充分性结论；最终方案、人工审批和副作用继续由既有 Planner、Graph 和控制面负责。
+当前立即依赖仍是：在不读取 Golden、历史实现或已知 Hook 的条件下，让 BetterHitFeedback 真实运行完成 `source → metadata → IL → EvidencePack`。该依赖完成前不启动新的 Coding Agent 框架；完成后也不得继续孤立打磨只读证据结构，而应先接入 v0 internal alpha，再完成 WallCrawler、Hidden-Golden 和最小 Eval，形成 RAG-1A checkpoint。RAG-1B 随后负责公共入口采用，v0 public alpha 再使用该公共路径。
+
+RAG/ER 不声称最终 Hook 一定正确。它负责提供可审计的证据基础和充分性结论；模型负责工程语义与基于 observation 的方向选择，确定性代码负责身份、权限、工具参数和持久化完整性。既有 Graph 与控制层限制允许的副作用，但不预先决定工程方向。
+
+Coding Agent v0 至少证明两条路径：
+
+- 成功路径：自然语言需求形成证据、修改建议和受控 Patch，并通过 Build/Test；
+- 失败修复路径：第一次 Build/Test 失败后，Agent 读取真实诊断并改变下一步修改，而不是沿固定 Workflow 重放。
 
 ### 3.4 成果假设与存在价值
 
@@ -195,7 +209,7 @@ RAG/ER 不声称最终 Hook 一定正确。它负责提供可审计的证据基�
 
 ### 3.5 第一阶段非目标
 
-第一阶段不以以下能力为主目标：
+RAG-1A 当前工作包不以以下能力为主目标。Planning、Patch 和隔离 Build/Test 只允许在首份 committed BetterHitFeedback EvidencePack 后作为 v0 internal alpha 的真实消费者进入；公共产品采用仍在 RAG-1A checkpoint 和 RAG-1B 后进行。该内部消费不得反向扩大当前只读证据合同：
 
 - Build/Runtime diagnosis；
 - 通用知识中心产品化；
@@ -944,6 +958,19 @@ readiness 兼容层、Graph、Registry、公共入口和测试只能委托，不
 
 RAG-1A 与 RAG-1B 是同一项工程证据能力的两个实施阶段，不是两个独立子系统或两个产品：RAG-1A 固定并实现证据语义，RAG-1B 让现有产品入口采用同一语义和公共执行结果。
 
+### 12.4 领域特化与 actual 污染边界
+
+BetterHitFeedback、WallCrawler 和固定 GTFO R8 路径可以作为领域 Harness、确定性基线或 calibration fixture 保留，但不得拥有通用 Discovery、公共 Evidence executor 或 Coding Agent Runner 的语义：
+
+- 通用 Workflow 不直接检查 BetterHitFeedback 方法名、correlation 文案或 WallCrawler 缺失项；
+- 通用 intelligent evidence 结果不调用 Case 专用 post-run evaluator 解释产品终态；
+- 公共入口不默认把自然语言请求绑定为 WallCrawler；
+- 固定 `R8_IL_SYMBOLS` 和 `GTFOR8EvidenceProvider` 只能从明确的基线/领域入口调用；
+- BHF/WC 专用符号可以存在于 fixture 和聚焦测试，但不得从测试常量进入实际模型输入或检索计划；
+- 领域 Runtime、Edit Authority 和恢复代码继续受领域边界保护，不迁入通用 Runner。
+
+RAG-1B 实施前必须清点 `evidence-request`、`intelligent-evidence-request`、`run-request`、`run_local_request()`、Product Executor 和所有直接 `build_graph()` 的入口。最终每个旧入口只能标记为委托、诊断基线、领域 Harness 或退出，不能继续拥有第二套 Store 写入、充分性解释或终态投影。
+
 ## 13. RAG-1A：证据语义
 
 ### 13.1 唯一目标
@@ -1116,6 +1143,98 @@ Bounded Discovery Loop 是 RAG-1A 的实际产品能力，不是校准 runner：
 - actual 提前读取 Golden 或历史答案：本次校准无效，不计作普通能力失败；
 - Eval 或 Trace 失败：不得修改已冻结的 actual EvidencePack。
 
+### 13.6 当前偏差复盘与纠偏基线
+
+本节记录 RAG-1A 从 fixture 到真实 Agent Discovery 实施过程中已经观察到的偏差。它用于解释当前工作包和止损依据，不建立新的合同、状态机或审批链。
+
+#### 13.6.1 偏差形成过程
+
+1. **Golden/Data Readiness 阶段**：actual/expected 隔离、历史答案泄漏、当前版本来源身份、BHF/WC 正负向标准和可复现重放是必要准备；但该阶段持续过久，逐渐形成“风险 → 字段 → hash → validator → 负向门”的实现惯性，而当时尚无真实 RAG 输出消费这些结构。
+2. **第一版 RAG-1A**：已知 Hook 和 expected missing 被注入 actual，只形成“给定方向 → 验证方向”。移除注入是正确纠偏，并暴露出 discovery 缺失。
+3. **Phase 2A/2B**：Requirement Projection 和 Search Planning 补齐了“自然语言 → 决定调查什么”的必要能力；偏差从模型开始承担 requirement、question、family、source 等 identity 以及跨数组引用时出现。Agent 的工作思路逐渐变成第一次 observation 前必须一次写对的数据库拓扑。
+4. **Phase 2C**：严格 EvidencePack 回读、跨引用验证、legacy bytes/hash 保真和篡改负向门中有保护物理事实的必要部分；但主线一度从“发现真实证据”偏向“让只读 EvidencePack 的全部字段永久一致”。
+5. **Phase 3 后的真实 BHF 调试**：Search Plan 不闭合、family 引用不稳定、代码查询表示不合适、来源标识选择错误、IL 重载身份不精确、模型输出截断和 requirement identity 重复先后暴露。检索表示、来源绑定和 metadata token 精确读取属于真实能力建设；把模型质量问题持续转化为 Schema、validator、correction、版本和兼容规则则会再次偏离。
+
+准确归纳为：
+
+```yaml
+precursor: long_fixture_and_contract_phase
+clear_turning_point: phase_2b_to_phase_2c
+dominant_symptom: model_must_build_exact_topology_before_first_observation
+```
+
+#### 13.6.2 保留能力与停止扩张项
+
+已经由真实工程完整性需要证明、应继续保留的内容：
+
+- actual/expected 隔离；
+- 来源 SHA、MVID 与 metadata token；
+- IL 精确读取；
+- `observed` / `inferred` / `unknown`；
+- `support` / `conflict` / `missing`；
+- EvidencePack commit/read 与严格回读；
+- Hidden-Golden expected truth 隔离；
+- 运行内短 handle；
+- 模型不拥有 authority、tool、路径、hash 或精确工具参数身份。
+
+在第一个真实下游消费者暴露缺口前，停止继续扩展：
+
+- 模型生成内部 identity 或重复跨对象引用；
+- 新 EvidencePack 字段与持久化版本；
+- 与当前真实输入无关的 legacy 兼容扩展；
+- 新 Trace 平台、控制面或通用 parser/schema 框架；
+- 为单一模型错误增加永久产品规则。
+
+#### 13.6.3 不围绕假设优化的四问
+
+每项修改开始前只回答四个工程问题：
+
+1. **来自哪次真实运行失败**：明确请求、失败阶段、物理事实和为什么无法继续；不能只写“未来可能需要”。
+2. **是否让同一真实运行前进一层**：按 `planning → source → metadata → IL → EvidencePack → Eval` 计；新增测试、错误码、字段或版本本身不算前进。
+3. **谁真实消费持久字段**：必须指出现有消费者、被改变的决定以及删除后会失败的真实用例；否则留在运行报告，不进入 EvidencePack。
+4. **属于事实完整性还是输出质量**：来源伪造、Golden 泄漏、不存在的 observation 引用、未观察 metadata 就读取 IL、Store 回读改写需要 fail-closed；重复语义、普通 query 质量、blocker/deferred 范围、排序和表达冗长应进入 Eval 或诊断，不应永久阻止第一次只读工具调用。
+
+模型 identity 记账职责已经从 provider-facing Projection/Search Plan 中移除，确定性代码可以生成 requirement、question、lane 和 family identity 并展开到既有持久 Search Plan。最新完整 BHF 随后在 Search Planning 阶段因多个 query family 产生完全相同的物理 dispatch 而停止，错误码为 `SEARCH_PLAN_QUERY_FAMILY_DISPATCH_AMBIGUOUS`，工具调用和 observation 仍为零。该错误没有伪造工程事实，属于 planning quality；当前正确修复方向是在确定性合并层折叠同一 investigation 内物理等价的 dispatch 并记录 quality finding，而不是恢复模型 identity 或新增持久化验证。
+
+#### 13.6.4 当前唯一 RAG 能力工作包
+
+当前不扩大为完整 Coding Agent，也不继续完善证据治理。唯一能力目标是：
+
+> 自然语言 BetterHitFeedback 请求在不读取 Golden 和历史实现的条件下，实际完成 `source → metadata → IL → EvidencePack`。
+
+工作包 A：模型 identity 记账移交确定性代码。该工作已经形成当前 WIP，但尚未形成独立 checkpoint。
+
+- 模型只表达需求语义、首个工程问题、查询表达、来源选择以及 planning/deferred 的语义内容；
+- 确定性代码生成 requirement、question、family 的运行内 identity，建立引用，从 Registry 填充 authority 与实际工具，并展开到既有持久 Search Plan；
+- 模型侧优先使用嵌套语义结构，不再输出需要跨数组手工对齐的 identity；
+- 相同语义或物理 dispatch 重复由确定性代码折叠并记录 planning quality finding，不在第一次 observation 前永久阻断只读检索；
+- 不新增 EvidencePack 版本、模型分支或 Golden 修改。
+
+工作包 B：当前只允许先完成同一 investigation 内完全相同 dispatch 的确定性折叠，然后固定 Qwen 4B、当前自然语言请求、allowlist、source index 和程序集，再运行一次完整 BHF。该运行不重试、不调整 Prompt、不运行 Phi/Terminal，也不读取 annotation；必须记录：
+
+```text
+requirement_projection
+search_plan
+source_retrieval
+identifier_selection
+metadata_dispatch
+il_dispatch
+evidence_pack_commit
+strict_rehydrate
+```
+
+按第一真实失败层分流：
+
+| 第一失败事实 | 归因 | 下一所有者 |
+| --- | --- | --- |
+| 相关源码没有进入窗口 | `retrieval_relevance_failure` | RAG source/BM25/symbol 表示 |
+| 相关源码进入但模型未选择 | `source_identifier_selection_failure` | 模型或 selection 表示；不修改 validator |
+| metadata 绑定到错误方法 | `source_to_metadata_mapping_failure` | RAG/ER identity bridge |
+| IL 成功但因果关系不足 | 工程证据不足，不自动视为系统故障 | Evidence Reasoning 与 Eval，可产生 block |
+| EvidencePack 成功 | actual 已形成 | 立即运行 BHF Hidden-Golden，不再重构 |
+
+同一工作包若失败，应冻结第一失败层的物理证据并停止，不在同轮继续修改其他层。
+
 ## 14. RAG-1B：公共证据入口采用
 
 ### 14.1 唯一目标
@@ -1181,6 +1300,20 @@ RAG-1B 不得：
 - 启动 Build/Runtime；
 - 把旧入口逻辑平移到新的大型执行器。
 
+### 14.6 与 Coding Agent v0 的交接
+
+RAG-1B 不负责让检索、Planning 或充分性变得更聪明；它只让公共产品入口采用已经由 RAG-1A 证明的 Evidence executor，并消除旧入口中的重复 owner。RAG-1B 之前允许 v0 internal alpha 通过内部调用面消费 committed EvidencePack，以验证真实下游需要哪些证据字段；RAG-1B 独立 checkpoint 后，同一消费链升级为 Coding Agent v0 public alpha：
+
+```text
+公共 Evidence executor
+→ committed EvidencePack
+→ 既有 Implementation Planning
+→ 既有 Patch / Review / Dry-run
+→ 隔离 Build/Test
+```
+
+该交接不得在 RAG-1B 内修改检索、Golden、证据关系或充分性算法；若下游消费暴露 EvidencePack 缺口，必须以具体读取失败、错误计划或 Build/Test 结果为依据返回对应 owner。
+
 ## 15. 第一验证切片
 
 ### 15.1 正向切片：BetterHitFeedback Hook Discovery
@@ -1195,7 +1328,19 @@ RAG-1B 不得：
 - 达到规划就绪度时只允许进入实施规划；
 - 结果不自动获得 Apply/Build/Runtime 权限。
 
-BetterHitFeedback 的 Hidden-Golden Discovery Run 必须在没有收到 `ES_Hitreact.ActivateState` 最终身份的条件下，从自然语言和允许来源发现并精确绑定有依据的观察方向；同时不能把伤害输入单独解释为反应结果。其 `sufficient/continue` 只表示足以进入实施规划，不证明最终 Runtime 正确、严格一次触发、全部死亡路径或所有边界条件。
+BetterHitFeedback 的 Hidden-Golden Discovery Run 必须在没有收到 `ES_Hitreact.ActivateState` 最终身份的条件下，从自然语言和允许来源发现并精确绑定有依据的观察方向；同时不能把伤害输入单独解释为反应结果。BHF 在本阶段评测“是否发现并验证了正确方向”，不再以 `sufficient/continue` 作为方向评测通过条件；是否足以进入实施规划由真实 EvidencePack 的充分性与 ImplementationPlanner 独立裁决。
+
+#### 15.1.1 BHF 方向评测投影（2026-08-17 登记）
+
+BHF 的冻结 annotation v5 及 `frozen_judgment_hash=C43DA97715FF4408FF1687EBB7B4756B2F5FED8D3EBF1ADF78A53EED8F1507A1` 保持不变，不根据当前 actual 输出改写。Eval 在 annotation 之上采用显式、版本化的 Case 评分投影：
+
+- **计分**：可接受的观察方向及其当前物理身份、禁止方向未被当作唯一权威、来源/身份验证、actual/expected 隔离和泄漏检查；
+- **诊断但不决定 BHF 方向通过**：`expected_sufficiency`、`expected_control_action`、尚缺关系证据和 Patch 是否允许；
+- **合法组合**：`discovery_direction=correct`、`evidence_sufficiency=insufficient`、`planning_action=block` 可以同时成立，并可通过 BHF 方向评测；
+- **权限边界**：Hidden-Golden 比较不能授予 Patch、Apply、Build 或 Runtime 权限，ImplementationPlanner 只消费 actual EvidencePack；
+- **任务分离**：Coding Agent v0 internal alpha 的正向 Patch/Build 链使用一个当前允许来源足以支持、具有自动 Build/Test 判定的独立 actual-only 工程任务，不用 BHF 的 expected truth 补足实现依据。
+
+该评分投影只适用于 BHF 的方向校准。WallCrawler 继续按自身负向证据语义评价相关结构、关键行为缺失和 `insufficient/block`，不得自动继承 BHF 的计分字段。
 
 ### 15.2 负向切片：WallCrawler Hook 证据不足
 
@@ -1222,7 +1367,7 @@ WallCrawler 的 Hidden-Golden Discovery Run 必须在没有收到冻结缺失清
 
 ### 15.4 Hidden-Golden Discovery Run
 
-Hidden-Golden Discovery Run 是对 RAG-1A 真实 Agent Evidence Discovery 能力的 expected truth isolation protocol，不是 Discovery Loop 本身，也不得实现第二套发现逻辑。它不是 hidden test、blind benchmark 或 held-out benchmark。BetterHitFeedback 的 Golden 形成使用了历史实现和有界 Runtime 观察作为 expected 侧的参考辅助，因此不能声称严格盲测；这里的 Hidden 只表示 actual 生成期间隔离 expected truth。
+Hidden-Golden Discovery Run 是对 RAG-1A 真实 Agent Evidence Discovery 能力的 expected truth isolation protocol，不是 Discovery Loop 本身，也不得实现第二套发现逻辑。它不是 hidden test、blind benchmark 或 held-out benchmark。BetterHitFeedback 的 Golden 形成使用了历史实现和有界 Runtime 观察作为 expected 侧的参考辅助，因此不能声称严格盲测；这里的 Hidden 只表示 actual 生成期间隔离 expected truth。比较器必须显式登记 Case 评分投影，区分计分字段、诊断字段和权限字段；不得把 annotation 中存在的每个 expected 字段自动提升为同一完成门。
 
 ```text
               Golden annotation
@@ -1694,11 +1839,34 @@ RAG-1A 当前缺失能力的实施顺序是依赖链，不是三个并行开发�
 - 自然语言可以形成可审计的 Requirement Projection 和 Search Plan；
 - 至少一条无关自然语言 smoke 证明不是 BetterHitFeedback/WallCrawler 固定映射；
 - Hook/方案备选项只能从已准入 actual evidence 形成；
-- BetterHitFeedback 在 Hidden-Golden 条件下发现并验证有依据的观察方向，产生 `sufficient/continue` 并保留后续限制；
+- BetterHitFeedback 在 Hidden-Golden 条件下发现并验证有依据的观察方向，避免禁止方向成为唯一权威，并报告独立的充分性、动作和后续限制；BHF 方向通过不要求 `sufficient/continue`；
 - WallCrawler 在 Hidden-Golden 条件下发现相关结构和关键行为缺口，产生 `insufficient/block`；
 - actual 冻结前无法读取 Golden expected facts；
 - Eval 只能比较冻结结果，不能修改 actual；
 - 不新增通用 Agent router、统一 Requirement Framework、第二工作流、第二充分性 owner 或副作用权限。
+
+RAG-1A 的退出门以三组实际结果为准：
+
+```yaml
+bhf_positive:
+  actual_committed: true
+  source_to_metadata_to_il: completed
+  hidden_golden_compared: true
+  acceptable_direction_verified: true
+  forbidden_direction_not_sole_authority: true
+  sufficiency_and_action_are_diagnostics: true
+
+wall_crawler_negative:
+  actual_committed: true
+  missing_behavior_evidence_recognized: true
+  planning_action: block
+
+evaluation:
+  actual_expected_isolated: true
+  first_failure_attribution: available
+```
+
+满足该退出门后应形成 RAG-1A checkpoint，并停止增加没有真实下游消费依据的 EvidencePack 字段、版本和持久语义。此时 v0 internal alpha 已经提供第一轮内部消费事实；下一步是 RAG-1B 公共入口采用及 Coding Agent v0 public alpha。
 
 ### 21.4 RAG-1B 实施门
 
@@ -1718,7 +1886,7 @@ RAG-1A 当前缺失能力的实施顺序是依赖链，不是三个并行开发�
 - 首次失败即停止和历史兼容有真实测试；
 - 未实施延期能力。
 
-### 21.6 第一阶段产品完成门
+### 21.6 RAG/ER 第一阶段完成门
 
 - BetterHitFeedback 正向链可复现；
 - WallCrawler 不充分链可复现；
@@ -1727,64 +1895,229 @@ RAG-1A 当前缺失能力的实施顺序是依赖链，不是三个并行开发�
 - 与标准文档 RAG 基线的关系可解释；
 - 没有以测试数量、模块存在或 Dashboard 展示代替质量证明。
 
+### 21.7 能力优先与证据驱动推进原则（指导性，不新增 Gate）
+
+本节用于帮助实现智能体保持产品交付方向，不新增 Artifact、Schema、Approval、质量门或状态机，也不替代各阶段既有完成门。
+
+#### 21.7.1 默认推进方式
+
+每个工作包默认从一次真实运行中已经观察到的第一失败层开始，并以让同一真实运行前进到下一能力阶段为目标：
+
+```text
+request
+→ planning
+→ source observation
+→ metadata
+→ IL
+→ EvidencePack
+→ Eval
+→ Implementation Plan
+→ Patch
+→ Build/Test
+→ Runtime
+```
+
+新增测试、错误码、字段、hash 或文档本身不构成能力阶段前进。它们可以支持能力交付，但不能替代真实运行结果。
+
+#### 21.7.2 模型与确定性代码的默认分工
+
+模型默认负责：
+
+- 需求语义；
+- 工程问题；
+- 查询与调查方向；
+- observation 的相关性判断；
+- 下一步行动；
+- 推断、限制和停止理由。
+
+确定性代码默认负责：
+
+- 运行内 identity；
+- 路径、hash、MVID 和 token；
+- 跨对象引用；
+- source authority；
+- 工具参数展开；
+- 权限、预算和副作用；
+- Artifact commit 与严格回读。
+
+当模型因复制 identity、路径、hash 或跨引用而在第一次 observation 前停止时，优先检查责任分配，不优先增加 Prompt、Schema 或 correction 分支。
+
+#### 21.7.3 尽早观察真实环境
+
+Planning 默认只需形成足以支持第一次只读调查的最小语义，不要求在第一次工具调用前完整描述全部实现、验证和 Runtime 问题。
+
+Planning 可以随着真实 observation 被修正；持久化拓扑由确定性代码从已经发生的事实中形成。
+
+#### 21.7.4 持久字段的进入依据
+
+一个字段进入持久 Artifact 前，至少应满足以下一项：
+
+- 保存不可重新推断的物理事实；
+- 保护 actual/expected 隔离；
+- 保护来源、权限或副作用完整性；
+- 已有真实下游消费者读取它并改变决定；
+- 删除它会使已运行的真实用例失去可复现性。
+
+仅用于单次诊断、模型质量分析或未来可能使用的信息，优先保存在运行报告中，不立即提升为 EvidencePack 或产品 Schema。
+
+#### 21.7.5 Workflow 与 Agent 的边界
+
+Workflow、Graph 和控制层可以限制：
+
+- 允许调用什么；
+- 哪些前置物理事实必须存在；
+- 哪些动作需要授权；
+- 如何持久化和恢复。
+
+它们不应预先决定：
+
+- 搜索什么工程方向；
+- 选择哪个方法；
+- 如何解释 observation；
+- Build/Test 失败后采用什么修复方向。
+
+下一步是否随 observation 改变，是判断系统是否仍具有 Agent 行为的主要依据。
+
+#### 21.7.6 只读子系统退出原则
+
+首份 committed BHF EvidencePack 形成后，默认停止增加新的持久语义并进入 v0 internal alpha 的首个真实下游消费者；BHF/WC 与最小 Eval 随后关闭 RAG-1A，再由 RAG-1B 完成公共入口采用。
+
+只有真实 Planner、Patch、Build 或 Runtime 使用暴露缺口时，才重新修改 EvidencePack；不能仅根据预想的未来需要继续扩展。
+
+#### 21.7.7 偏移触发复核
+
+以下情况不自动阻止工作，但应触发一次简短方向复核：
+
+- 连续工作包没有推动真实运行进入下一阶段；
+- 模型反复在第一次 observation 前因格式或 identity 失败；
+- 新增持久字段没有当前消费者；
+- 测试和 validator 增长明显，但完整真实切片没有前进；
+- 同一失败被连续解释为新的 Schema、版本或控制要求；
+- 只读子系统已满足完成门，却仍未进入下游采用。
+
+复核只回答：
+
+```text
+observed_failure:
+current_stage:
+expected_next_stage:
+change_adds_real_information:
+existing_consumer:
+why_durable_state_is_needed:
+```
+
+该复核不创建新 Artifact，不需要独立审批，也不应发展成新的控制流程。
+
+#### 21.7.8 合理例外
+
+以下情况可以在 observation 前保持严格验证：
+
+- 防止 Golden 或历史答案进入 actual；
+- 防止伪造来源身份；
+- 防止不存在的引用进入工具；
+- 防止未经当前 metadata 观察直接读取 IL；
+- 防止未授权写入、Build 或 Runtime；
+- 防止 Store 回读改写已冻结事实。
+
+例外需要说明它保护的具体事实或副作用，而不能只使用“未来可能需要”作为理由。
+
+### 21.8 Coding Agent v0 纵向闭环及后续能力顺序
+
+Coding Agent v0 是当前上位产品里程碑，不是 RAG-1A 之后才启动的独立 Agent SDK。RAG-1A 是它内部的证据能力；首份可信 BHF EvidencePack 形成后，v0 internal alpha 立即复用现有 Implementation Planning、Patch、Review/Dry-run、Build/Test 和 Repair 能力，形成一条最小受控纵向链：
+
+```text
+自然语言需求
+→ RAG/ER EvidencePack
+→ Implementation Plan
+→ PatchProposal
+→ Review / Dry-run
+→ 隔离 Build/Test
+→ 完成，或根据真实诊断修复一次
+```
+
+v0 完成至少要求：
+
+- `natural_language_to_evidence`；
+- `evidence_to_patch`；
+- `patch_to_build_test`；
+- `build_failure_changes_next_action`。
+
+RAG/ER 的后续改进必须由该消费者的真实失败归因驱动：源码未进入窗口归 RAG 检索；源码存在但当前身份缺失归 metadata/IL；Planner 缺关系归 Evidence Reasoning；从未被消费者读取的持久字段应删除或降级；Build 失败后无法回到相关源码归 Agent Loop；只在 Runtime 暴露的问题归 Runtime evidence。
+
+Eval 与最小可追溯从 v0 首次运行开始伴随记录，但不先建设平台：关联 request、EvidencePack、plan、patch、build attempt、repair attempt 和 final result；比较范围外修改、Build/Test 结果、是否使用真实诊断、证据不足时是否停止。完整 Trace 平台、Dashboard、CI 晋级门和正式多模型排名仍延期。
+
+v0 必须拥有运行内工作记忆：当前请求、已读文件、tool observations、已尝试修改、Build 失败和当前待解决问题。跨任务长期记忆只在多个独立真实任务反复证明需要后进入，且不得保存 Golden、历史 Hook、旧 Agent 错误或临时协议结论作为当前事实。
+
+后续顺序固定为：
+
+```text
+跨工作树/WIP 归并基线
+→ 重复物理 query dispatch 的确定性折叠
+→ BHF EvidencePack
+→ Coding Agent v0 internal alpha Evidence/Plan/Patch/Build
+→ 一次 observation-driven repair
+→ BHF/WC Hidden-Golden 与最小 Eval
+→ RAG-1A checkpoint
+→ RAG-1B 公共入口采用
+→ Coding Agent v0 public alpha
+→ 根据 v0 真实失败改进 RAG/ER
+→ Runtime 闭环
+→ 端到端 Trace / 回归 Eval
+→ 有数据后再决定长期记忆、MCP 扩展、Skills 与子智能体
+```
+
 ## 22. 十二项决策登记
 
 | 编号 | 已选决定 | 解决的问题 | 明确排除 |
 | --- | --- | --- | --- |
-| 1 | 第一目标为自然语言需求到工程证据发现、Hook/方案备选项和充分性 | 以正负切片验证 ER 能否减少无证据支持的工程决策 | Build/Runtime 诊断、知识中心第一优先 |
+| 1 | 当前产品目标为 Coding Agent v0 纵向闭环；自然语言到 EvidencePack 的 RAG/ER 是其第一个工具子系统 | 让证据产生真实 Planning/Patch/Build 消费，避免孤立优化只读系统 | 暂停 RAG 后另建 Agent SDK、知识中心第一优先 |
 | 2 | EvidencePack 是可持久化证据决策包，但“决策”只属于证据层 | 保存当时为什么值得考虑/拒绝 | Approval、执行、Trace/Eval 事实 |
 | 3 | 来源感知的多路检索，证据准入在排名之前 | 防止共享容量和分数掩盖来源差异 | top-1/总分决定 Hook |
 | 4 | 检索、工程、规划三层充分性；运行时观察按需使用 | 防止“充分”等于“可以修改” | 通用 Runtime 前置、巨型需求框架 |
 | 5 | 索引只发现位置，绑定当前身份的来源才形成事实 | 防止过期索引和社区内容升级 | 索引命中等于证据 |
-| 6 | 第一阶段采用 RAG-1A + RAG-1B 有界垂直切片，两者是同一能力的两个实施阶段 | 先证明 ER 对 Agent 有价值并完成产品入口采用 | 两个独立产品、完整 RAG 平台、Trace/Eval、P2.4/P3 |
+| 6 | BHF EvidencePack 用于 RAG/ER 方向校准；v0 internal alpha 的正向 Patch/Build 链使用独立 actual-only 工程任务；BHF/WC 与最小 Eval 随后关闭 RAG-1A；RAG-1B 再完成公共入口采用并形成 v0 public alpha | 防止把方向 Golden 当作 Patch 授权，同时让证据字段尽快接受真实下游消费 | 用 BHF expected truth 补足实现依据、两个独立 RAG 产品、无限延长只读合同期、完整 Trace/Eval 平台前置 |
 | 7 | 复用 EvidencePack，新增严格版本化 Hook Discovery 语义；旧包不自动升级 | 避免第二 Artifact 和历史重解释 | 第二充分性所有者、Store/Graph 扩张 |
 | 8 | 历史 `EVIDENCE_RAG_MCP_SPEC.md` 是适配稿；兼容原则可继承，导入蓝图只供参考 | 解决文档内部权威冲突 | 整体照搬 §4 以后路线 |
 | 9 | 原始 `DEV_SPEC.md` 是外部通用 RAG 模板，不是当前产品完成状态 | 保留专业通用 RAG 工程价值 | 由模板决定当前产品和默认算法 |
 | 10 | 标准文档 RAG 与 ER 共享检索机制和基础设施能力，但不共享 score 含义、证据语义或充分性权威 | 防止 ER 吞掉普通 RAG或重复建设两套平台 | 相关性等于证据事实、共享基础等于共享语义权威 |
 | 11 | 原草案未完全覆盖普通 RAG，需要覆盖数据摄取、切块、检索、过滤和引用，并对 provider、MCP、多模态作有限边界裁决 | 形成完整但不过度扩张的 RAG+ER 目标 | 重建大型知识平台、只写 ER 控制衔接而遗忘普通 RAG |
-| 12 | 将全部裁决整合进同一文档；Trace/Eval 独立；实施继续分包审核 | 防止继续增加并行文档和隐式实现决定 | 讨论记录堆叠、一次性大迁移 |
+| 12 | 将能力边界和当前路线整合进同一文档；最小 Eval/运行事实伴随纵向切片，完整 Trace/Eval 平台独立延期 | 防止讨论记录堆叠，也防止无评测地推进真实修改 | 一次性大迁移、Dashboard 或治理建设替代能力交付 |
 
 ## 23. 当前未决事项
 
-产品和架构方向已经闭合。剩余内容属于实施前源码 inventory 或独立合同，不得在编码阶段隐式决定：
+产品方向已经闭合。当前未决项来自真实运行和首个下游消费者，必须按 §21.7 逐项推进，不得重新扩张为实施前总合同：
 
 ```yaml
-unresolved_implementation_contract_items:
-  - standard RAG insufficient-evidence and bounded-partial-answer exact result projection
-  - reproducibility identity projection exact fields, owner, serialization, nullability, and compatibility
-  - current EvidencePack exact schema and serializer compatibility
-  - versioned Hook Discovery semantic section exact fields and version value
-  - first profile exact source roles and coverage representation
-  - single semantic owner exact module boundary
-  - Registry delegation point
-  - retrieval lane budget and failure representation
-  - can_generate_patch exact compatibility projection path
-  - existing mod_agent Trace/Eval asset adoption matrix and exact adapt/defer/reject boundaries
-  - RAG-1A actual facts to existing AgentQuality CaseObservation/RunManifest compatibility projection
-  - first-slice BetterHitFeedback and WallCrawler protocol identities, actual/expected fact binding, and reproducible baseline report
-  - later-stage development/held-out dataset identities, benchmark scope, and promotion eligibility
-  - RAG-1B public preflight_execute_result schema
-  - BetterHitFeedback and WallCrawler exact ground-truth source identities
+current_capability_items:
+  - reconcile current WIP with non-ancestor delivery hardening before v0 integration
+  - collapse physically identical query dispatches without blocking first read-only observation
+  - complete BetterHitFeedback source-to-metadata-to-IL-to-EvidencePack actual
+  - Coding Agent v0 internal alpha consumes committed EvidencePack through Plan/Patch/Build
+  - one observation-driven Build/Test repair path
+  - BetterHitFeedback Hidden-Golden comparison after committed actual
+  - WallCrawler real negative discovery and committed actual
+  - minimal relation-level Eval mapping and first-failure attribution
+  - RAG-1A checkpoint
+  - RAG-1B public Evidence executor adoption without duplicate owner
+  - Coding Agent v0 public alpha through the unique public entry
+  - minimal run-local correlation across request/evidence/plan/patch/build/result
 ```
 
 以下不属于本文未决事项，将由其他文档或未来实验决定：
 
-- Trace schema/exporter；
-- Eval dataset runner/metrics/thresholds；
+- 完整 Trace schema/exporter、统一 span 平台与 Dashboard；
+- 正式 Eval dataset runner、长期指标阈值和 CI promotion；
 - Dense/RRF/reranker provider 和默认采用；
 - MCP/HTTP/Dashboard 产品化；
 - Multimodal；
 - Knowledge Hub 用户界面。
+- 跨任务长期记忆、Skills 和子智能体扩展；
 
 ## 24. 当前准确状态
 
 ```yaml
+as_of: 2026-08-16
 standard_rag_engineering_skeleton: implemented_in_parts
-contract_materialization: complete
-architecture_direction: approved
-joint_contract: design_and_boundary_input
-rag_1a_contract: draft_changes_required
-calibration_eval_contract: draft_changes_required
 data_readiness: bounded_fixture_review_passed_no_independent_data_readiness_verdict
 general_hybrid_retrieval: implemented_but_not_currently_proven_as_default
 dense_capability: implemented_but_disabled_by_default
@@ -1792,50 +2125,103 @@ reranker_capability: implemented_but_disabled_by_default
 citations: implemented_at_retrieval_source_level
 query_and_ingestion_trace: implemented_locally
 mod_agent_workflow_event_trace: implemented_locally_not_unified_span_trace
+agent_evidence_trace_facts: partially_present
+end_to_end_agent_trace: incomplete
 ordinary_rag_quality_evidence: insufficient_due_to_non_authoritative_goldens
 mod_agent_agent_quality_evaluator: implemented_as_evaluation_control_skeleton
 mod_agent_retrieval_regression_and_quality_policy: implemented_not_formal_product_evidence
 mod_agent_arm_a_rg_live_read_baseline: implemented_as_reproducible_experimental_baseline
 mod_agent_transition_eval_gate: implemented_for_existing_workflow_transition_boundaries
 trusted_held_out_agent_retrieval_quality_evidence: not_established
-trace_eval_asset_adoption_matrix: materialized_contract_review_changes_required
-rag_1a_existing_agent_eval_schema_compatibility_review: completed_requires_versioned_adaptation
-mod_agent_evidence_retrieval: deterministic_symbol_and_text_baseline
-hook_discovery_versioned_semantics: uncommitted_initial_wip_with_oracle_injection_not_closed
-engineering_evidence_multi_lane_admission: uncommitted_initial_wip_not_closed
-rag_1a_inventory: completed
-rag_1a_contract_review_object: materialized_changes_required
-minimal_eval_adoption_findings: materialized_and_reviewed_within_changes_required_contract_not_adoption_approved
-minimal_eval_contract_review_object: materialized_changes_required
+
 better_hit_feedback_environment_source: hash_bound_current_api_il_historical_implementation_and_bounded_runtime_inputs_replayed
 better_hit_feedback_formal_positive_golden: bounded_fixture_review_passed_reference_assisted_calibration_sufficient_continue
 wall_crawler_negative_source: bounded_fixture_review_passed_independent_calibration_insufficient_block
+
 rag_1a_code_implementation:
-  status: uncommitted_wip_after_fixture_handoff
+  status: uncommitted_wip_real_discovery_not_closed
   worktree: rag_capability_mainline
-  base_commit: d86770ac649a77b5be64c465b8027f2e52ccd923
-  retrieval_and_precise_verification: initial_working_slice
-  evidence_reasoning: initial_working_slice
-  actual_execution_isolation: not_completed
-  requirement_projection: not_implemented
-  search_planning: not_implemented
-  bounded_discovery_loop: not_implemented
-  hidden_golden_discovery_validation: not_run
+  branch: codex/rag-capability-mainline
+  current_head: c48b5e82fe3eed524d5c9f868980748136e28bfd
+  implementation_tracked_unstaged_files_before_document_sync: 12
+  documentation_sync_tracked_files: 6
+  total_tracked_unstaged_files_after_document_sync: 17
+  untracked_files_after_document_sync: 2
+  implementation_diff_stat_before_document_sync: +3258/-208
+  actual_execution_isolation: implemented
+  requirement_projection: implemented_with_provider_semantics_and_deterministic_identity_materialization
+  search_planning: implemented_but_real_full_bhf_stops_on_duplicate_physical_dispatch
+  deterministic_source_retrieval: implemented_multi_lane_with_bounded_identifier_expansion
+  metadata_tool: implemented
+  dynamic_single_method_il_by_metadata_token: implemented_in_uncommitted_wip
+  evidence_reasoning: implemented_initial_working_slice
+  evidence_pack_strict_roundtrip: implemented
+  bounded_discovery_loop: implemented_in_tests_and_partial_real_runs_not_end_to_end_proven
+  hidden_golden_protocol: minimal_eval_implemented
+  hidden_golden_complete_bhf_actual: not_available
+
+latest_real_bhf:
+  report_sha256: 2B4AD4946656848672D9140DE506FEFFADC29ECA9F8B79AAA84490B511513247
+  model: qwen3_4b_instruct
+  ollama_version: 0.32.13
+  status: failed
+  failure_stage: search_planning
+  failure_code: SEARCH_PLAN_QUERY_FAMILY_DISPATCH_AMBIGUOUS
+  physical_cause: semantically_duplicate_query_families_produce_same_dispatch
+  provider_tool_calls: 0
+  observations: 0
+  evidence_pack_commit: false
+
+current_first_blocker: duplicate_physical_query_dispatch_blocks_first_observation
+current_only_capability_goal: natural_language_bhf_to_source_metadata_il_evidence_pack
+next_change:
+  deterministic_code: collapse_exact_duplicate_dispatches_within_one_investigation
+  evaluation_record: planning_quality_finding
+  then: one_fixed_qwen_bhf_actual
+  forbidden_expansion: new_evidencepack_version_new_artifact_new_registry_store_trace_control_or_golden_change
+
+cross_worktree_reconciliation:
+  required_before_v0_integration: true
+  non_ancestor_heads:
+    - 9bce437
+    - 9a237b7
+    - c000021
+  highest_priority: 9bce437_delivery_hardening_29_files
+
+rag_1a_exit: not_reached
+rag_1b: not_started_follows_rag_1a_runnable_capability
+coding_agent_v0:
+  role: current_product_vertical_milestone
+  immediate_dependency: committed_actual_only_task_evidence_pack_with_current_source_support
+  bhf_role: rag_er_discovery_direction_calibration_not_patch_authority
+  internal_alpha: uses_independent_actual_only_positive_task_before_rag_1a_public_closure
+  public_alpha: follows_rag_1a_checkpoint_and_rag_1b_public_adoption
+  implementation_strategy: compose_existing_planning_patch_review_build_and_repair_modules
+  completion_requires:
+    - natural_language_to_evidence
+    - evidence_to_patch
+    - patch_to_build_test
+    - build_failure_changes_next_action
+
+minimal_eval: accompanies_v0_without_new_platform
+minimal_trace: run_fact_correlation_required_without_full_trace_platform
+run_local_working_memory: required_for_v0
+cross_task_long_term_memory: deferred_until_repeated_real_task_evidence
+
 p2_2_option_b_product_executor: independently_verified_and_committed
 p2_2_option_b_implementation_commit: f57045bb5b3f671f60bdd107308ba9fe3f3c3293
 p2_2_follow_up_completion: independently_verified_and_committed
 p2_2_follow_up_implementation_commit: 20b6ccb34e9322f4c73d7556130e7da043aff110
 p2_2_follow_up_checkpoint_commit: 14db12ea429233bb3c8378cdfb20bd6be63fbbfc
-rag_1b: follows_rag_1a_runnable_capability
-trace_eval_platform: separate_future_document
-trace_cross_system_correlation_and_propagation_contract: not_implemented
-target_document_review_verdict: approved
-target_document_reviewed_sha256: 02CEC26C2A9328AEC0DC3ED262587C9CAD5732B756B2E03B9CAE7D8EFFDBC85D
-target_document_checkpoint_commit: c4152675a14924f408f611f126d610775a9b64c6
-current_agent_discovery_clarification: recorded_in_current_document_checkpoint_pending_independent_review
-overall: two_feature_specific_calibration_fixtures_bounded_review_passed_without_data_readiness_verdict_then_capability_first_standard_rag_and_rag_1a
+
+previous_target_document_review_verdict: approved
+previous_target_document_checkpoint_commit: c4152675a14924f408f611f126d610775a9b64c6
+current_document_update: pending_sync_checkpoint_and_review
+overall: finish_bhf_actual_feed_v0_internal_close_rag_1a_adopt_via_rag_1b_then_v0_public
 ```
 
-目标文档已完成独立审核并纳入 Git。BetterHitFeedback / WallCrawler 两切片已形成分层 fixture：manifest 只拥有输入世界与 allowlist 身份，projection 只拥有从内容身份绑定输入重算的物理事实，annotation 的 judgment hash 只覆盖七项技术判断，provenance 与 replay metadata 不进入 judgment hash。BHF 冻结结论为 `sufficient/continue`，只允许选择 `ES_Hitreact.ActivateState` 观察方向并进入实施规划；WallCrawler 冻结结论为 `insufficient/block`。10f8 本地与精确 `207c0572d7f78dffffe498140c0ad1fcb76c5d23` clean checkout 已使用相同合法外部输入完成机械重放；独立有界 fixture 审核已通过。机械重放与该有界审核均不授予独立 Data Readiness、产品质量或副作用 verdict。
+此前目标文档版本已完成独立审核并纳入 Git。本次更新重新编排能力优先原则、RAG-1A 偏差复盘和 Coding Agent v0 路线，在形成新的文档 checkpoint 与审核前，不继承此前文档 hash 的审核结论。
 
-有界 fixture 验收后，后续直接按本文的能力目标、语义边界、失败边界与顺序推进可运行、可验证的标准 RAG 与 RAG/ER：共享一次来源身份、摄取/切块、索引、确定性 BM25/live-read、引用/coverage 和配置身份基础；标准 RAG 使用自身的文档问答、引用与证据不足数据；RAG-1A 使用 BHF/WC calibration 验证 Hook Discovery、证据准入、lane coverage、关系、三层充分性与 planning continue/block，随后由 RAG-1B 接入活跃产品入口。不得继续用合同、authorization/status、Trace/Eval、Dashboard 或状态回填替代能力交付；Dense/Fusion/reranker 仍由实测决定，完整 Trace、CI promotion、held-out 和 Dashboard 延期。
+BetterHitFeedback / WallCrawler 两切片的分层 fixture 与冻结 judgment 继续作为独立 expected 尺子；当前 RAG 输出不反向修改 Golden。模型 identity 记账已经移交确定性代码。最新完整 BHF 在 Search Planning 阶段因多个 query family 产生完全相同的物理 dispatch 而零工具调用；这属于 planning quality，不属于 source、metadata、IL 或 EvidencePack 事实失败。
+
+下一工作包先核对当前 WIP 与三个非祖先提交，形成可恢复基线；随后只折叠同一 investigation 内物理等价的 query dispatch，并立即重跑固定 Qwen BHF。EvidencePack 成功后先进入 v0 internal alpha 的 Planning/Patch/Build 消费，再完成 BHF/WC Hidden-Golden 与最小 Eval，形成 RAG-1A checkpoint；RAG-1B 随后完成公共采用和 v0 public alpha。不再以预想需求扩充只读结构。

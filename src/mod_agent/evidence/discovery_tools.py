@@ -355,7 +355,11 @@ class LocalAssemblyEvidenceToolExecutor:
         )
         while _model_view_size(observation) > self.max_model_observation_bytes:
             removable = None
-            for field_name in ("fields", "types", "methods", "assemblies"):
+            # The assembly inventory is provenance context, while the matched
+            # rows are the result the caller needs in order to bind a later
+            # exact inspection.  Large dependency folders can otherwise evict
+            # every matched method before one inventory row is removed.
+            for field_name in ("assemblies", "fields", "types", "methods"):
                 rows = data[field_name]
                 assert isinstance(rows, list)
                 if rows:

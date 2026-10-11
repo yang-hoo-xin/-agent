@@ -1875,8 +1875,9 @@ def test_recover_pending_write_restores_latest_from_revision(
 
 
 def test_write_reuses_valid_legacy_revision_without_copying_it(
-    tmp_path: Path,
+    short_workspace: Path,
 ) -> None:
+    tmp_path = short_workspace
     store = ArtifactStore(tmp_path / "artifacts")
     first = store.write(
         feature_id="feature_001",
@@ -2324,8 +2325,9 @@ def test_new_write_rejects_nonrevision_and_drifted_upstream_refs(
 
 
 def test_legacy_immutable_revision_is_accepted_as_new_upstream(
-    tmp_path: Path,
+    short_workspace: Path,
 ) -> None:
+    tmp_path = short_workspace
     store = ArtifactStore(tmp_path / "artifacts")
     feature_spec = store.write(
         feature_id="feature_001",

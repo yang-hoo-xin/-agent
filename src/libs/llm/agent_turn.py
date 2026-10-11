@@ -11,8 +11,17 @@ from hashlib import sha256
 from typing import Any, Literal, Protocol
 from urllib.parse import urlsplit
 
-from src.libs.llm.ollama_llm import build_ollama_context_admission
-from src.libs.llm.transport_observation import transport_request_prepared, transport_response_received, transport_started
+from src.libs.llm.ollama_llm import (
+    build_ollama_context_admission,
+    nonnegative_token_count,
+    ollama_cached_input_tokens,
+)
+from src.libs.llm.transport_observation import (
+    transport_local_request_body,
+    transport_request_prepared,
+    transport_response_received,
+    transport_started,
+)
 
 
 @dataclass(frozen=True)
@@ -88,25 +97,27 @@ class AgentToolCall:
 
 @dataclass(frozen=True)
 class AgentUsage:
-    """Normalized token accounting; unavailable values remain zero."""
+    """Normalized totals; a missing cache measurement is explicitly unknown."""
 
     input_tokens: int = 0
     output_tokens: int = 0
     reasoning_tokens: int = 0
-    cached_input_tokens: int = 0
+    cached_input_tokens: int | None = None
 
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
 
     def to_dict(self) -> dict[str, int]:
-        return {
+        usage = {
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "reasoning_tokens": self.reasoning_tokens,
-            "cached_input_tokens": self.cached_input_tokens,
             "total_tokens": self.total_tokens,
         }
+        if self.cached_input_tokens is not None:
+            usage["cached_input_tokens"] = self.cached_input_tokens
+        return usage
 
 
 @dataclass(frozen=True)
@@ -236,6 +247,7 @@ class _LoopbackHttpJsonSender:
                 timeout=self.timeout_seconds,
                 follow_redirects=False,
                 trust_env=False,
+                event_hooks={"request": [transport_local_request_body]},
             ) as client:
                 transport_started()
                 response = client.post(url, json=payload, headers=headers)
@@ -272,6 +284,16 @@ def _httpx_json_body_identity(url: str, payload: dict[str, object]) -> dict[str,
         "provider_body_utf8_bytes": len(body),
         "hash_basis": "httpx_json_body_bytes",
     }
+
+
+@dataclass(frozen=True)
+class OllamaContextCalibration:
+    """Detached observations only: no client, sender, recorder or replay state."""
+
+    model_identity: tuple[str, str, str, str]
+    adapter_profile: tuple[object, ...]
+    owner_profile_sha256: str
+    observations: tuple[tuple[int, int], ...]
 
 
 class OllamaChatAgentAdapter:
@@ -316,6 +338,38 @@ class OllamaChatAgentAdapter:
             timeout_seconds=request_timeout_seconds
         )
         self._prompt_token_calibrations: list[tuple[int, int]] = []
+        self._transferable_prompt_calibrations: list[tuple[int, int]] = []
+
+    def _calibration_binding(self, model_identity, owner_profile_sha256):
+        identity = tuple(model_identity.get(key) for key in ("base_url", "name", "model", "digest"))
+        if (identity[:3] != (self.base_url, self.model, self.model)
+                or not isinstance(identity[3], str) or len(identity[3]) != 64
+                or any(c not in "0123456789abcdef" for c in identity[3])
+                or not isinstance(owner_profile_sha256, str) or len(owner_profile_sha256) != 64
+                or any(c not in "0123456789abcdef" for c in owner_profile_sha256)):
+            raise AgentTurnProviderError("OLLAMA_CONTEXT_CALIBRATION_IDENTITY_INVALID")
+        profile = (self.provider, self.base_url, self.model, self.context_window,
+                   self.max_output_tokens, self.seed, self.request_timeout_seconds)
+        return identity, profile, owner_profile_sha256
+
+    def export_context_calibration(self, *, model_identity, owner_profile_sha256):
+        """Bind previously observed native counts to the admitted identity/profile."""
+        binding = self._calibration_binding(model_identity, owner_profile_sha256)
+        return OllamaContextCalibration(*binding, tuple(self._transferable_prompt_calibrations))
+
+    def inherit_context_calibration(self, calibration, *, model_identity, owner_profile_sha256):
+        # 为什么要有它：同 Plan 可续用实测 tokenizer 比例，但模型/配置漂移不能借用旧样本绕过原上下文门禁。
+        if type(calibration) is not OllamaContextCalibration or self._prompt_token_calibrations:
+            raise AgentTurnProviderError("OLLAMA_CONTEXT_CALIBRATION_IMPORT_INVALID")
+        if self._calibration_binding(model_identity, owner_profile_sha256) != (
+                calibration.model_identity, calibration.adapter_profile, calibration.owner_profile_sha256):
+            return False
+        if any(len(row) != 2 or any(type(value) is not int or value <= 0 for value in row)
+               for row in calibration.observations):
+            raise AgentTurnProviderError("OLLAMA_CONTEXT_CALIBRATION_OBSERVATIONS_INVALID")
+        self._prompt_token_calibrations = list(calibration.observations)
+        self._transferable_prompt_calibrations = list(calibration.observations)
+        return True
 
     def complete_turn(self, request: AgentTurnRequest) -> AgentTurnResponse:
         messages = [_chat_message(item) for item in request.messages]
@@ -395,11 +449,7 @@ class OllamaChatAgentAdapter:
         prompt_eval_count = _int_value(data.get("prompt_eval_count"))
         if prompt_eval_count > 0:
             self._prompt_token_calibrations.append(
-                (
-                    int(context_admission["provider_body_utf8_bytes"]),
-                    prompt_eval_count,
-                )
-            )
+                (int(context_admission["provider_body_utf8_bytes"]), prompt_eval_count))
         message = data.get("message")
         if not isinstance(message, dict):
             raise AgentTurnProviderError(
@@ -427,6 +477,12 @@ class OllamaChatAgentAdapter:
             raise AgentTurnProviderError(
                 str(exc), diagnostic={**exc.diagnostic, "request_identity": request_identity},
             ) from exc
+        # 为什么要有它：只有完整同名模型响应中的真实正整数计数才形成可跨 worker 携带的校准，未知/畸形计数不填零冒充观测。
+        prompt_eval_count = data.get("prompt_eval_count")
+        if (data.get("model") == self.model and data.get("done") is True
+                and type(prompt_eval_count) is int and prompt_eval_count > 0):
+            self._transferable_prompt_calibrations.append(
+                (int(context_admission["provider_body_utf8_bytes"]), prompt_eval_count))
         return AgentTurnResponse(
             provider=self.provider,
             model=str(data.get("model") or self.model),
@@ -436,6 +492,7 @@ class OllamaChatAgentAdapter:
             usage=AgentUsage(
                 input_tokens=_int_value(data.get("prompt_eval_count")),
                 output_tokens=_int_value(data.get("eval_count")),
+                cached_input_tokens=ollama_cached_input_tokens(data),
             ),
             provider_state={
                 "content": message.get("content"),
@@ -592,9 +649,7 @@ class QwenChatAgentAdapter:
                     "reasoning_tokens"
                 )
             ),
-            cached_input_tokens=_int_value(
-                (usage_data.get("prompt_tokens_details") or {}).get("cached_tokens")
-            ),
+            cached_input_tokens=_cached_detail_count(usage_data.get("prompt_tokens_details")),
         )
         stop_reason = "refusal" if message.get("refusal") else str(choice.get("finish_reason") or "") or None
         stopped = stop_reason in {"length", "max_tokens", "max_output_tokens", "incomplete", "content_filter", "refusal"}
@@ -745,7 +800,7 @@ class OpenAIResponsesAgentAdapter:
             input_tokens=_int_value(usage_data.get("input_tokens")),
             output_tokens=_int_value(usage_data.get("output_tokens")),
             reasoning_tokens=_int_value(output_details.get("reasoning_tokens")),
-            cached_input_tokens=_int_value(input_details.get("cached_tokens")),
+            cached_input_tokens=_cached_detail_count(input_details),
         )
         incomplete = data.get("incomplete_details") or {}
         stop_reason = incomplete.get("reason") or data.get("status")
@@ -938,9 +993,14 @@ def _ollama_provider_diagnostic(
         if eval_count > 0 and eval_duration_ns > 0
         else None
     )
+    measured_usage = None
+    cached = ollama_cached_input_tokens(data)
+    if all(type(data.get(key)) is int and data[key] >= 0 for key in ("prompt_eval_count", "eval_count")):
+        measured_usage = {"input_tokens": data["prompt_eval_count"], "output_tokens": data["eval_count"]}
+        if cached is not None:
+            measured_usage["cached_input_tokens"] = cached
     return {
-        "measured_usage": ({"input_tokens": data["prompt_eval_count"], "output_tokens": data["eval_count"]}
-            if all(type(data.get(key)) is int and data[key] >= 0 for key in ("prompt_eval_count", "eval_count")) else None),
+        "measured_usage": measured_usage,
         "api_type": "ollama_native_chat",
         "streaming": False,
         "thinking": False,
@@ -969,6 +1029,7 @@ def _ollama_provider_diagnostic(
         "usage": AgentUsage(
             input_tokens=_int_value(data.get("prompt_eval_count")),
             output_tokens=eval_count,
+            cached_input_tokens=cached,
         ).to_dict(),
     }
 
@@ -995,6 +1056,10 @@ def _json_text(value: object) -> str:
 
 def _int_value(value: object) -> int:
     return int(value) if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def _cached_detail_count(details: object) -> int | None:
+    return nonnegative_token_count(details.get("cached_tokens")) if isinstance(details, Mapping) else None
 
 
 def _tool_exchanges(request: AgentTurnRequest, message_count: int) -> tuple[AgentToolExchange, ...]:

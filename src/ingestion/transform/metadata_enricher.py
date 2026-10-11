@@ -8,7 +8,7 @@ from pathlib import Path
 from src.core.settings import Settings, resolve_path
 from src.core.types import Chunk
 from src.core.trace.trace_context import TraceContext
-from src.ingestion.transform.base_transform import BaseTransform
+from src.ingestion.transform.base_transform import BaseTransform, measured_chunk_call, measured_model_chat
 from src.libs.llm.llm_factory import LLMFactory
 from src.libs.llm.base_llm import BaseLLM, Message
 from src.observability.logger import get_logger
@@ -78,7 +78,7 @@ class MetadataEnricher(BaseTransform):
         """Lazy-load LLM instance."""
         if self.use_llm and self._llm is None:
             try:
-                self._llm = LLMFactory.create(self.settings)
+                self._llm = LLMFactory.create(self.settings, **({"base_url": self.settings.llm.base_url} if getattr(self.settings.llm, "base_url", None) else {}))
                 logger.info("LLM initialized for metadata enrichment")
             except Exception as e:
                 logger.warning(f"Failed to initialize LLM: {e}. Falling back to rule-based only.")
@@ -182,7 +182,7 @@ class MetadataEnricher(BaseTransform):
         trace: Optional[TraceContext] = None
     ) -> List[Chunk]:
         """Process chunks in parallel using ThreadPoolExecutor."""
-        max_workers = min(DEFAULT_MAX_WORKERS, len(chunks))
+        max_workers = min(getattr(self.settings.ingestion, "max_workers", DEFAULT_MAX_WORKERS), len(chunks))
         enriched_chunks = [None] * len(chunks)
         llm_enhanced_count = 0
         fallback_count = 0
@@ -191,7 +191,7 @@ class MetadataEnricher(BaseTransform):
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_idx = {
-                executor.submit(self._enrich_single_chunk, chunk, trace): idx
+                executor.submit(measured_chunk_call, "metadata_enrichment", self._enrich_single_chunk, chunk, trace): idx
                 for idx, chunk in enumerate(chunks)
             }
             
@@ -475,7 +475,7 @@ class MetadataEnricher(BaseTransform):
             
             # Call LLM
             messages = [Message(role="user", content=formatted_prompt)]
-            response = self.llm.chat(messages)
+            response = measured_model_chat("metadata_enricher", self.llm, messages, trace)
             
             if not response:
                 logger.warning("LLM returned empty response for metadata enrichment")

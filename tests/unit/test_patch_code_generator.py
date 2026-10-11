@@ -2400,10 +2400,10 @@ def test_native_schema_in_prompt_and_provider_format_share_one_object() -> None:
         "rollback_hint",
         "after_text",
     ]
-    assert set(item_schema["properties"]) == set(item_schema["required"])
+    assert set(item_schema["properties"]) == set(item_schema["required"]) | {"before_text"}
     assert "patch" not in item_schema["properties"]
     assert "expected_validation" not in item_schema["properties"]
-    assert "before_text" not in json.dumps(item_schema)
+    assert item_schema["properties"]["before_text"] == {"type": "string", "minLength": 1}
     assert "kind" not in json.dumps(item_schema)
     assert "expected_occurrences" not in json.dumps(item_schema)
     assert recorded_requests == [{"body_sha256": "bound", "body_utf8": "{}"}]

@@ -9,13 +9,6 @@ from .state import ModAgentState
 RouteRegistry = Mapping[str, Mapping[str, str]]
 
 
-def is_vague_request(user_request: str) -> bool:
-    """Return whether a request is too vague for safe planning."""
-
-    normalized = " ".join(user_request.strip().lower().split())
-    return normalized in {"", "test", "do it", "make it better", "something", "whatever"}
-
-
 def route_after_plan_request(state: ModAgentState) -> str:
     """Route from plan_request based on structured planning blockers."""
 
@@ -233,12 +226,6 @@ def route_registry() -> RouteRegistry:
             "continue": "done",
         },
     }
-
-
-def continue_route(_: ModAgentState) -> str:
-    """Route label for unconditional Phase A transitions."""
-
-    return "continue"
 
 
 def _is_eval_gate_blocker(blocker: object) -> bool:

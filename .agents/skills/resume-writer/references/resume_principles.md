@@ -1,51 +1,41 @@
-# 简历编写原则（大模型工程师方向）
+# Resume Writing Principles
 
-## 1. 项目描述四段式结构
+Use these principles for every resume claim.
 
-遵循"背景 → 目标 → 过程 → 结果"逻辑：
+## Claim construction
 
-- **背景**：项目所属业务场景、模型目标、使用需求。例：*本项目旨在构建面向医疗文档自动问答的大语言模型系统，服务于某医疗机构智能客服平台。*
-- **目标**：技术目标或改进方向（提升准确率、缩短推理时间、优化参数量等）。例：*通过微调预训练模型提升医学术语准确率，实现私有部署。*
-- **过程**：关键技术方案和工程实现细节，明确候选人负责部分、使用工具、面临挑战。例：*负责样本构造与指令模板设计，使用 LoRA 微调，基于 FastAPI 封装推理服务。*
-- **结果**：量化数据展示最终效果。例：*微调后模型在内部医学问答集上准确率提升 15%，平均响应时延降低至 600ms。*
+- Connect the problem, decision, action, verification, and boundary in the order
+  that makes the technical contribution clear. 为什么要有它： a tool list does
+  not show engineering judgment.
+- State the user's contribution separately from the repository's capability.
+  为什么要有它： code ownership and personal authorship are different facts.
+- Prefer concrete mechanisms and observed effects over broad adjectives. Why
+  this exists: specific relationships are easier to verify and defend.
+- Match detail to the target role and available space. 为什么要有它： the same
+  verified work supports different emphasis without changing the facts.
 
-## 2. 技术标签维度
+## Evidence rules
 
-简历需显式体现与岗位匹配度较高的技术要素，覆盖以下维度：
+- Use metrics only from user-provided facts or a current bound source such as a
+  test result, build receipt, trace, or evaluation report. 为什么要有它：
+  plausible values are still fabricated values.
+- Identify what each evidence type proves. 为什么要有它： source proves
+  implementation, a focused test proves its assertions, and runtime evidence
+  proves only the observed run.
+- Omit or mark not demonstrated when evidence is missing. 为什么要有它：
+  uncertainty should remain visible instead of becoming stronger prose.
+- Preserve the environment, revision, and scope attached to a result when they
+  materially limit it. 为什么要有它： a result can become misleading when
+  detached from its conditions.
 
-| 维度 | 关键词示例 |
-|------|-----------|
-| 模型层面 | Transformer, BERT, GPT, GLM, Qwen, Baichuan, ChatGLM |
-| 训练与调优 | LoRA, QLoRA, RLHF, SFT, Prefix Tuning, Loss 函数设计 |
-| 推理部署 | LLM, Triton, ONNX, INT8 量化, TensorRT, FastAPI, Docker, K8s |
-| 系统组件 | LangChain, RAG, 向量检索, 插件调用, 多 Agent 协同, MCP |
-| 数据处理 | 分词, Token 控制, 数据增强, Prompt 构造, 语料清洗, HNSW 索引 |
-| 工程工具 | PyTorch, Transformers 库, W&B, MLflow, Redis, MongoDB |
+## Style
 
-这些关键词既可作为项目描述中的术语，也可在"技术栈"部分单独列出，便于 ATS 系统和招聘者快速识别。
-
-## 3. 亮点挖掘与差异化策略
-
-面试官关注候选人主导了什么、有哪些独到之处、是否体现技术判断力：
-
-1. **介绍决策过程**：说明选择某方案的原因，对比过哪些方案，最终决策背后的技术判断。
-2. **展示问题解决能力**：描述遇到的技术难点与解决方法（如稳定性不足→优化策略提升鲁棒性）。
-3. **强调可复用性/通用性**：项目成果若具有通用价值或被团队复用，作为重点亮点。
-4. **突出结果与影响力**：用量化指标体现项目价值（日处理请求 10 万条，准确率 92.3%）。
-
-## 4. 常见误区
-
-| 误区 | 说明 |
-|------|------|
-| 大而空 | 不要用"负责大模型微调""参与多模态部署"等泛化描述 |
-| 工具堆砌 | 仅列工具名而不解释实际作用与价值 |
-| 缺乏结果 | 没有量化指标的项目难以评估价值 |
-| 逻辑混乱 | 过程描述过长但缺乏主线 |
-
-## 5. 改进建议
-
-- 多用"**设计**""**主导**""**实现**""**优化**"等主动表达，少用"参与""协助"
-- 按"背景 → 问题 → 技术方案 → 结果"结构描述
-- 明确区分个人贡献与团队成果
-- 每个 bullet point 以**动词开头**（设计、实现、优化、构建、集成...）
-- 量化一切可量化的内容（文档数、chunk 数、准确率、延迟、QPS...）
+- Start bullets with a precise action when the user's contribution supports that
+  action. 为什么要有它： direct verbs make responsibility legible.
+- Explain why a technology or design was used. 为什么要有它： naming a
+  framework without its role adds little information.
+- Avoid duplicated metrics in both bullets and a summary unless the requested
+  format needs both. 为什么要有它： repetition consumes resume space without
+  adding evidence.
+- Keep interview claims within what the user can explain and what the evidence
+  supports. 为什么要有它： unsupported detail creates a verification risk.

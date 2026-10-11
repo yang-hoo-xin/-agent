@@ -8,6 +8,9 @@ Performance Optimizations:
 """
 
 import re
+import hashlib
+import json
+import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -52,6 +55,9 @@ class ImageCaptioner(BaseTransform):
         self.llm = None
         # Caption cache: image_id -> caption string (thread-safe with lock)
         self._caption_cache: Dict[str, str] = {}
+        self._captions_by_id = {}
+        self._key_locks = {}
+        self.last_observation = {"api_calls": 0, "cache_hits": 0, "failed": 0, "status": "not_run"}
         self._cache_lock = threading.Lock()
         
         # Check if vision LLM is enabled in settings
@@ -104,11 +110,32 @@ class ImageCaptioner(BaseTransform):
         Returns:
             Caption string or None if failed
         """
-        # Check cache first (thread-safe read)
+        if not img_path or not Path(img_path).is_file():
+            with self._cache_lock:
+                self.last_observation["failed"] += 1
+            return None
+        identity = {"image_sha256": hashlib.sha256(Path(img_path).read_bytes()).hexdigest(),
+            "prompt_sha256": hashlib.sha256(self.prompt.encode()).hexdigest(),
+            "provider": self.settings.vision_llm.provider, "model": self.settings.vision_llm.model,
+            "model_revision": getattr(self.settings.vision_llm, "model_revision", None),
+            "context_window": getattr(self.settings.vision_llm, "context_window", None),
+            "max_tokens": getattr(self.settings.vision_llm, "max_tokens", None),
+            "base_url": getattr(self.settings.vision_llm, "base_url", None)}
+        key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
         with self._cache_lock:
-            if img_id in self._caption_cache:
-                logger.debug(f"Caption cache hit for image {img_id}")
-                return self._caption_cache[img_id]
+            lock = self._key_locks.setdefault(key, threading.Lock())
+        with lock:
+            return self._caption_bound(img_id, img_path, key, identity, trace)
+
+    def _caption_bound(self, img_id, img_path, key, identity, trace):
+        started = time.perf_counter()
+        with self._cache_lock:
+            if key in self._caption_cache:
+                self.last_observation["cache_hits"] += 1
+                self._captions_by_id[img_id] = self._caption_cache[key]
+                if trace is not None:
+                    trace.record_stage("image_caption_cache", {**identity, "cache_hit": True, "api_calls": 0})
+                return self._caption_cache[key]
         
         # Validate path
         if not img_path or not Path(img_path).exists():
@@ -116,6 +143,8 @@ class ImageCaptioner(BaseTransform):
             return None
         
         try:
+            with self._cache_lock:
+                self.last_observation["api_calls"] += 1
             image_input = ImageInput(path=img_path)
             response = self.llm.chat_with_image(
                 text=self.prompt,
@@ -123,15 +152,29 @@ class ImageCaptioner(BaseTransform):
                 trace=trace
             )
             caption = response.content
+            if not isinstance(caption, str) or not caption.strip():
+                raise ValueError("IMAGE_CAPTION_EMPTY")
+            if hashlib.sha256(Path(img_path).read_bytes()).hexdigest() != identity["image_sha256"]:
+                raise ValueError("IMAGE_CHANGED_DURING_CAPTION")
             
             # Cache the result (thread-safe write)
             with self._cache_lock:
-                self._caption_cache[img_id] = caption
+                self._caption_cache[key] = caption
+                self._captions_by_id[img_id] = caption
+            if trace is not None:
+                trace.record_stage("image_caption_call", {**identity, "cache_hit": False, "api_calls": 1,
+                    "status": "succeeded", "usage": getattr(response, "usage", None)},
+                    elapsed_ms=(time.perf_counter() - started) * 1000)
             logger.debug(f"Generated and cached caption for image {img_id}")
             
             return caption
             
         except Exception as e:
+            with self._cache_lock:
+                self.last_observation["failed"] += 1
+            if trace is not None:
+                trace.record_stage("image_caption_call", {**identity, "cache_hit": False, "api_calls": 1,
+                    "status": "failed", "error_type": type(e).__name__}, elapsed_ms=(time.perf_counter() - started) * 1000)
             logger.error(f"Failed to caption image {img_path}: {e}")
             return None
 
@@ -147,6 +190,7 @@ class ImageCaptioner(BaseTransform):
         Parallel processing for unique images.
         """
         if not self.llm:
+            self.last_observation = {"status": "disabled_or_initialization_failed", "api_calls": 0, "cache_hits": 0, "failed": 0}
             return chunks
         
         # Build image lookup from all chunks' metadata
@@ -160,9 +204,9 @@ class ImageCaptioner(BaseTransform):
         
         logger.info(f"Found {len(image_lookup)} unique images in document")
         
-        # Clear cache for new document processing
         with self._cache_lock:
-            self._caption_cache.clear()
+            self._captions_by_id.clear()
+            self.last_observation = {"status": "running", "api_calls": 0, "cache_hits": 0, "failed": 0}
         
         # First pass: collect all unique image IDs that need captioning
         images_to_caption: Dict[str, str] = {}  # img_id -> img_path
@@ -197,7 +241,7 @@ class ImageCaptioner(BaseTransform):
                 
                 # Get caption from cache (already populated by parallel processing)
                 with self._cache_lock:
-                    caption = self._caption_cache.get(img_id_stripped)
+                    caption = self._captions_by_id.get(img_id_stripped)
                 
                 if caption:
                     captions.append({"id": img_id_stripped, "caption": caption})
@@ -217,7 +261,9 @@ class ImageCaptioner(BaseTransform):
             processed_chunks.append(chunk)
         
         with self._cache_lock:
-            api_calls = len(self._caption_cache)
+            api_calls = self.last_observation["api_calls"]
+            self.last_observation.update(status="partial" if self.last_observation["failed"] else "completed",
+                images_requested=len(images_to_caption), images_captioned=len(self._captions_by_id))
         logger.info(f"Added {total_captions_added} captions, API calls: {api_calls}")
             
         return processed_chunks
@@ -236,7 +282,7 @@ class ImageCaptioner(BaseTransform):
         if not images_to_caption:
             return
         
-        max_workers = min(DEFAULT_MAX_WORKERS, len(images_to_caption))
+        max_workers = min(getattr(self.settings.ingestion, "image_max_workers", DEFAULT_MAX_WORKERS), len(images_to_caption))
         logger.debug(f"Generating captions for {len(images_to_caption)} images (max_workers={max_workers})")
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:

@@ -216,6 +216,36 @@ class TestHybridSearchBasic:
         assert hybrid.config.sparse_top_k == 30
         assert hybrid.config.fusion_top_k == 15
         assert hybrid.config.parallel_retrieval is False
+
+    def test_settings_disable_dense_retrieval_without_query_embedding(self):
+        """The public settings flag must own whether dense retrieval runs."""
+        from types import SimpleNamespace
+
+        dense = MockDenseRetriever(results=[])
+        sparse = MockSparseRetriever(results=[
+            RetrievalResult(chunk_id="sparse", score=1.0, text="context", metadata={}),
+        ])
+        settings = SimpleNamespace(retrieval=SimpleNamespace(
+            dense_enabled=False,
+            dense_top_k=3,
+            sparse_top_k=3,
+            fusion_top_k=3,
+        ))
+        hybrid = HybridSearch(
+            settings=settings,
+            query_processor=QueryProcessor(),
+            dense_retriever=dense,
+            sparse_retriever=sparse,
+            fusion=RRFFusion(k=60),
+        )
+
+        results = hybrid.search("sparse context", top_k=3)
+
+        assert [result.chunk_id for result in results] == ["sparse"]
+        assert dense.call_count == 0
+        assert sparse.call_count == 1
+        assert hybrid.config.enable_dense is False
+        assert hybrid.config.parallel_retrieval is False
     
     def test_search_returns_results(
         self,

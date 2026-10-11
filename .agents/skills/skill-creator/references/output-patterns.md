@@ -1,5 +1,9 @@
 # Output Patterns
 
+These examples are not mandatory output templates. Use one only when the target
+interface or the user's output contract requires that shape. 为什么要有它：a
+sample format must not become an unrelated task-wide constraint.
+
 Use these patterns when skills need to produce consistent, high-quality output.
 
 ## Template Pattern

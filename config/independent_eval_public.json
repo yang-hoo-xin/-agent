@@ -1,0 +1,57 @@
+{
+  "schema_version": "independent_public_calibration_v1",
+  "scope": "engineering_calibration_only",
+  "model": "controlled-responses-no-model",
+  "budget": {"max_total_model_turns": 3, "max_tool_rounds": 2, "max_observation_bytes": 4096, "timeout_seconds": 20, "max_response_bytes": 16384},
+  "experiment_axes": {"memory": "off", "base_model": "controlled", "training": "none"},
+  "sealed_inventory": {"recorded_count": 3, "verified_count": 3, "status": "public_metadata_verified_execution_not_verified", "public_inventory": "config/independent_eval_sealed_public.json", "missing": ["answer-free source publication", "exact compiler/runtime versions (public metadata provides only hash)", "independent read-only verifier endpoint", "current full Graph versus simple strategy adapter"]},
+  "known_exposed_exclusions": ["First Shot", "分页", "嵌套快照", "dsh_cfg_20260914_002", "快捷键功能"],
+  "tasks": [
+    {
+      "task_id": "public-clamp-repair",
+      "root_cause_family": "numeric_range",
+      "split": "development",
+      "exposure": "public_engineering_calibration",
+      "request": "Make clamp(value, low, high) return the nearest bound outside the inclusive range; preserve values inside it. Inputs are finite integers and low <= high. Preserve increment(value).",
+      "required_action": "submit",
+      "search_patterns": ["clamp"],
+      "files": {"numbers.py": "def clamp(value, low, high):\n    return value\n", "utility.py": "def increment(value):\n    return value + 1\n"},
+      "checks": [
+        {"check_id": "lower", "kind": "target", "file": "numbers.py", "function": "clamp", "arguments": [-8, -2, 4], "expected": -2},
+        {"check_id": "upper", "kind": "target", "file": "numbers.py", "function": "clamp", "arguments": [8, -2, 4], "expected": 4},
+        {"check_id": "interior", "kind": "preservation", "file": "numbers.py", "function": "clamp", "arguments": [1, -2, 4], "expected": 1},
+        {"check_id": "equal_bounds", "kind": "target", "file": "numbers.py", "function": "clamp", "arguments": [8, 3, 3], "expected": 3},
+        {"check_id": "increment", "kind": "preservation", "file": "utility.py", "function": "increment", "arguments": [7], "expected": 8}
+      ],
+      "controlled_submission": {"action": "submit", "files": {"numbers.py": "def clamp(value, low, high):\n    return min(high, max(low, value))\n"}}
+    },
+    {
+      "task_id": "public-absolute-no-change",
+      "root_cause_family": "sign_normalization",
+      "split": "validation",
+      "exposure": "public_engineering_calibration",
+      "request": "Ensure magnitude(value) returns the non-negative magnitude of a finite integer, preserving zero. No edit is required when already correct.",
+      "required_action": "submit",
+      "search_patterns": ["magnitude"],
+      "files": {"numbers.py": "def magnitude(value):\n    return abs(value)\n"},
+      "checks": [
+        {"check_id": "negative", "kind": "target", "file": "numbers.py", "function": "magnitude", "arguments": [-8], "expected": 8},
+        {"check_id": "positive", "kind": "preservation", "file": "numbers.py", "function": "magnitude", "arguments": [8], "expected": 8},
+        {"check_id": "zero", "kind": "preservation", "file": "numbers.py", "function": "magnitude", "arguments": [0], "expected": 0}
+      ],
+      "controlled_submission": {"action": "no_change", "files": {}}
+    },
+    {
+      "task_id": "public-missing-requirement",
+      "root_cause_family": "missing_semantic_requirement",
+      "split": "final",
+      "exposure": "public_engineering_calibration",
+      "request": "Change threshold(value) to use the requested threshold. The threshold was not supplied. Ask for it and stop without modifying source.",
+      "required_action": "stop",
+      "search_patterns": ["threshold"],
+      "files": {"numbers.py": "def threshold(value):\n    return value\n"},
+      "checks": [],
+      "controlled_submission": {"action": "stop", "files": {}}
+    }
+  ]
+}

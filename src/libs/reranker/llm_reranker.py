@@ -7,11 +7,16 @@ config/prompts/rerank.txt and structures LLM outputs for downstream processing.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import time
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
-from src.core.settings import resolve_path
+from src.core.settings import resolve_path, resolve_storage_path
 from src.libs.llm.base_llm import BaseLLM, Message
 from src.libs.llm.llm_factory import LLMFactory
 from src.libs.reranker.base_reranker import BaseReranker
@@ -103,11 +108,11 @@ class LLMReranker(BaseReranker):
         candidates_str = "\n".join(candidates_text)
         
         # Construct full prompt
-        full_prompt = f"{self.prompt_template}\n\nQuery: {query}\n\nPassages:\n{candidates_str}\n\nOutput your response as a JSON array of objects, one per passage."
+        full_prompt = f"{self.prompt_template}\n\nQuery: {query}\n\nPassages:\n{candidates_str}\n\nOutput only a JSON array: exactly one passage_id and integer score (0-3) per candidate, no reasoning or other fields."
         
         return full_prompt
     
-    def _parse_llm_response(self, response_text: str) -> List[Dict[str, Any]]:
+    def _parse_llm_response(self, response_text: str, *, native=False) -> List[Dict[str, Any]]:
         """Parse and validate LLM response.
         
         Args:
@@ -123,17 +128,22 @@ class LLMReranker(BaseReranker):
         text = response_text.strip()
         
         # Remove markdown code blocks if present
-        if text.startswith("```json"):
+        if not native and text.startswith("```json"):
             text = text[7:]
-        elif text.startswith("```"):
+        elif not native and text.startswith("```"):
             text = text[3:]
-        if text.endswith("```"):
+        if not native and text.endswith("```"):
             text = text[:-3]
         text = text.strip()
         
         # Parse JSON
+        def unique_fields(pairs):
+            # 为什么要有它：重复JSON键不能靠解码器的最后一个值覆盖前值而绕过严格输出合同。
+            if len(dict(pairs)) != len(pairs):
+                raise LLMRerankError("Rerank response has duplicate object fields")
+            return dict(pairs)
         try:
-            parsed = json.loads(text)
+            parsed = json.loads(text, object_pairs_hook=unique_fields)
         except json.JSONDecodeError as e:
             raise LLMRerankError(
                 f"LLM response is not valid JSON: {e}\nResponse: {response_text[:200]}"
@@ -155,12 +165,15 @@ class LLMReranker(BaseReranker):
                 raise LLMRerankError(f"Item {i} missing required field 'passage_id'")
             if "score" not in item:
                 raise LLMRerankError(f"Item {i} missing required field 'score'")
-            
-            # Validate score is numeric
+            # 为什么要有它：紧凑合同禁止解释字段消耗输出预算，也不能将布尔值或越界分数当合法评分。
+            if set(item) != {"passage_id", "score"}:
+                raise LLMRerankError("Rerank records allow only passage_id and score")
+            if not isinstance(item["passage_id"], str) or not item["passage_id"]:
+                raise LLMRerankError("Rerank passage_id must be a non-empty string")
             score = item["score"]
-            if not isinstance(score, (int, float)):
+            if type(score) is not int or not 0 <= score <= 3:
                 raise LLMRerankError(
-                    f"Item {i} score must be numeric, got {type(score).__name__}: {score}"
+                    f"Item {i} score must be numeric integer 0-3"
                 )
         
         return parsed
@@ -184,6 +197,12 @@ class LLMReranker(BaseReranker):
         for i, candidate in enumerate(candidates):
             candidate_id = candidate.get("id", f"passage_{i}")
             id_to_candidate[candidate_id] = candidate
+
+        # 为什么要有它：缺失、重复或陌生ID不能静默丢弃候选并伪装成功重排。
+        actual_ids = [result["passage_id"] for result in parsed_results]
+        if (len(actual_ids) != len(candidates) or len(set(actual_ids)) != len(actual_ids)
+                or set(actual_ids) != set(id_to_candidate)):
+            raise LLMRerankError("Rerank response must cover every candidate exactly once")
         
         # Build reranked list
         reranked = []
@@ -201,6 +220,36 @@ class LLMReranker(BaseReranker):
         reranked.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
         
         return reranked
+
+    @staticmethod
+    def _candidate_ids(candidates):
+        ids = [candidate.get("id", f"passage_{i}") for i, candidate in enumerate(candidates)]
+        if any(not isinstance(value, str) or not value for value in ids) or len(set(ids)) != len(ids):
+            raise LLMRerankError("Rerank candidate IDs must be non-empty unique strings")
+        return ids
+
+    @staticmethod
+    def _response_schema(ids):
+        # 为什么要有它：原生输出只需候选ID与四档分数，减少无用解释；逐ID覆盖仍由宿主严格验证。
+        return {"type": "array", "minItems": len(ids), "maxItems": len(ids),
+                "items": {"type": "object", "additionalProperties": False,
+                          "properties": {"passage_id": {"type": "string", "enum": ids},
+                                         "score": {"type": "integer", "enum": [0, 1, 2, 3]}},
+                          "required": ["passage_id", "score"]}}
+
+    def _persist_evidence(self, evidence_id, kind, value):
+        # 为什么要有它：请求须在发送前落盘，响应和调用索引保持私有且逐调用隔离，公共trace只带hash。
+        directory = resolve_storage_path(self.settings, "rerank_requests")
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{evidence_id}.{kind}.json"
+        raw = json.dumps(value, ensure_ascii=False, sort_keys=True, allow_nan=False).encode("utf-8")
+        with path.open("xb") as stream:
+            stream.write(raw)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if path.read_bytes() != raw:
+            raise LLMRerankError("Rerank evidence persistence verification failed")
+        return {"path": str(path.resolve()), "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw)}
     
     def rerank(
         self,
@@ -228,6 +277,7 @@ class LLMReranker(BaseReranker):
         # Validate inputs
         self.validate_query(query)
         self.validate_candidates(candidates)
+        ids = self._candidate_ids(candidates)
         
         # If only one candidate, no need to rerank
         if len(candidates) == 1:
@@ -240,26 +290,89 @@ class LLMReranker(BaseReranker):
             raise LLMRerankError(f"Failed to build rerank prompt: {e}") from e
         
         # Call LLM
+        from src.libs.llm.ollama_llm import OllamaLLM
+        from src.libs.llm.transport_observation import observe_transport
+        from src.observability.evaluation.answer_generation import observed_usage
+        begun = time.perf_counter()
+        transport = {"starts": 0, "observed": False}
+        response = None
+        native_response = None
+        native = isinstance(self.llm, OllamaLLM)
+        evidence_id = uuid4().hex if native else None
+        private = {"schema_version": "compact-rerank-evidence.v1", "evidence_id": evidence_id,
+                   "trace_id": getattr(trace, "trace_id", None), "candidate_ids": ids}
+        public = {"contract": "compact-rerank.v1", "evidence_id": evidence_id, "status": "failed"}
+        def sent():
+            transport["starts"] += 1
+            transport["observed"] = True
+        def prepared(**facts):
+            if "transport_started" in facts:
+                transport["observed"] = True
+        def record_request(frozen):
+            transport["observed"] = True
+            private["request_ref"] = self._persist_evidence(evidence_id, "request", frozen)
+            public.update(request_body_sha256=frozen["body_sha256"],
+                          request_body_bytes=frozen["body_size_bytes"], persisted_before_transport=True)
+        def record_response(raw):
+            nonlocal native_response
+            native_response = deepcopy(raw)
+            private["response_ref"] = self._persist_evidence(evidence_id, "response", raw)
+            public.update(response_sha256=private["response_ref"]["sha256"],
+                          response_bytes=private["response_ref"]["bytes"])
         try:
             messages = [Message(role="user", content=prompt)]
-            response = self.llm.chat(messages, trace=trace, **kwargs)
+            call_kwargs = dict(kwargs)
+            if native:
+                call_kwargs.update(response_format=self._response_schema(ids),
+                                   provider_request_recorder=record_request,
+                                   provider_response_recorder=record_response)
+            with observe_transport(sent, request_callback=prepared):
+                response = self.llm.chat(messages, trace=trace, **call_kwargs)
             response_text = response.content
-        except Exception as e:
-            # Return fallback signal - let upstream decide how to handle
-            raise LLMRerankError(f"LLM call failed during reranking: {e}") from e
-        
-        # Parse response
-        try:
-            parsed_results = self._parse_llm_response(response_text)
-        except LLMRerankError:
-            raise
-        except Exception as e:
-            raise LLMRerankError(f"Failed to parse LLM rerank response: {e}") from e
-        
-        # Map back to candidates and sort
-        try:
+            raw = response.raw_response
+            # 为什么要有它：即使截断内容恰好是合法JSON，也不能把未完成的模型响应当成功评分。
+            if isinstance(raw, dict) and (raw.get("done") is False or raw.get("done_reason") in {"length", "max_tokens"}
+                    or any(c.get("finish_reason") in {"length", "max_tokens"} for c in raw.get("choices", []) if isinstance(c, dict))):
+                raise LLMRerankError("Rerank response incomplete or truncated")
+            if native and not {"request_ref", "response_ref"} <= private.keys():
+                raise LLMRerankError("Rerank native evidence missing")
+            parsed_results = self._parse_llm_response(response_text, native=native)
             reranked = self._map_results_to_candidates(parsed_results, candidates)
+            public["status"] = "validated"
+            return reranked
         except Exception as e:
-            raise LLMRerankError(f"Failed to map LLM results to candidates: {e}") from e
-        
-        return reranked
+            private["failure_type"] = type(e).__name__
+            diagnostics = getattr(e, "diagnostics", None)
+            if isinstance(diagnostics, dict):
+                private["failure_diagnostics"] = diagnostics
+                public["failure_classification"] = diagnostics.get("failure_classification")
+            if isinstance(e, LLMRerankError):
+                raise
+            raise LLMRerankError(f"LLM call failed during reranking: {e}") from e
+        finally:
+            usage = observed_usage(response) if response is not None else None
+            if native_response is not None:
+                public.update(done=native_response.get("done"), done_reason=native_response.get("done_reason"))
+                if all(type(native_response.get(k)) is int and native_response[k] >= 0 for k in ("prompt_eval_count", "eval_count")):
+                    usage = {"prompt_tokens": native_response["prompt_eval_count"],
+                             "completion_tokens": native_response["eval_count"],
+                             "total_tokens": native_response["prompt_eval_count"] + native_response["eval_count"]}
+            public.update(model=getattr(self.llm, "model", None), calls_reserved=1,
+                          transport_calls=transport["starts"] if transport["observed"] else None,
+                          response_received=response is not None or native_response is not None, usage=usage)
+            persistence_error = None
+            if native:
+                private["observation"] = deepcopy(public)
+                try:
+                    observation_ref = self._persist_evidence(evidence_id, "observation", private)
+                    public["observation_sha256"] = observation_ref["sha256"]
+                except Exception as error:
+                    # 为什么要有它：证据写入失败也要保留实际发送计数，但不能把未落盘索引宣称为可查原件。
+                    persistence_error = error
+                    public.update(status="failed", failure_classification="rerank_evidence_persistence_failed")
+            if trace is not None:
+                # 为什么要有它：重排也可能调用模型，完整查询成本不能只统计最终回答；未知传输或usage不填零。
+                trace.record_stage("rerank_model", public,
+                    elapsed_ms=(time.perf_counter() - begun) * 1000)
+            if persistence_error is not None:
+                raise LLMRerankError("Rerank evidence persistence failed") from persistence_error

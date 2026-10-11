@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +140,18 @@ class DocumentManager:
     # ------------------------------------------------------------------
     # get_document_detail
     # ------------------------------------------------------------------
+
+    def chunk_ids_for_source_path(self, source_path: str, collection: str) -> List[str]:
+        """Return exact vector IDs for one path in the manager's bound collection."""
+        if type(source_path) is not str or not source_path:
+            raise ValueError("source_path must be a nonempty string.")
+        if type(collection) is not str or getattr(self.chroma, "collection_name", None) != collection:
+            raise ValueError("ChromaDB collection does not match the selected source scope.")
+        rows = self.chroma.collection.get(where={"source_path": source_path}, include=[])
+        ids = rows.get("ids") if isinstance(rows, dict) else None
+        if not isinstance(ids, list) or any(type(value) is not str or not value for value in ids):
+            raise ValueError("ChromaDB returned invalid source-path chunk identities.")
+        return ids
 
     def get_document_detail(self, doc_id: str, collection: Optional[str] = None) -> Optional[DocumentDetail]:
         """Get detailed information about a single document.

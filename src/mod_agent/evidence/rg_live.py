@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
+import stat
 import subprocess
 import time
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 
 from src.core.trace.execution_trace import trace_operation
-from src.mod_agent.upstream_trace import material_identities, payload_sha256, update_observation
+from src.mod_agent.upstream_trace import (
+    material_identities,
+    observe_local_tool_bodies,
+    payload_sha256,
+    update_observation,
+)
 
 from .models import (
     DETERMINISTIC_EVIDENCE_AUTHORITY,
@@ -18,6 +26,13 @@ from .models import (
     EvidencePack,
     missing_evidence_from_blockers,
 )
+from .small_project_context import (
+    collect_small_project_context,
+    run_context_policy,
+    validate_context_policy,
+)
+from .source_view import is_small_csharp_file, source_view_policy, whole_file_source_item
+from .source_window import fallback_source_window
 
 _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]{2,}")
 _CSHARP_FILENAME_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_.-]*\.cs\b")
@@ -63,9 +78,42 @@ _STOP_WORDS = {
 class RgLiveEvidenceProvider:
     """Collect bounded source-bound live excerpts without maintaining an index."""
 
-    def __init__(self, workspace_root: str | Path, *, rg_executable: str = "rg") -> None:
+    def __init__(self, workspace_root: str | Path, *, rg_executable: str = "rg",
+                 small_file_max_bytes: int = 0, small_project_context_policy: dict | None = None,
+                 reuse_query_observations: bool = True) -> None:
+        if type(reuse_query_observations) is not bool:
+            raise ValueError("RG_LIVE_QUERY_OBSERVATION_REUSE_INVALID")
+        self._reuse_query_observations = reuse_query_observations
         self.workspace_root = Path(workspace_root).resolve()
         self.rg_executable = rg_executable
+        self.small_file_max_bytes = source_view_policy(small_file_max_bytes)["small_file_max_bytes"]
+        self.small_project_context_policy = (run_context_policy(self.workspace_root)
+            if small_project_context_policy is None else validate_context_policy(small_project_context_policy))
+
+    @property
+    def reuse_query_observations(self) -> bool:
+        return self._reuse_query_observations
+
+    @property
+    def source_view_policy(self) -> dict[str, object]:
+        return source_view_policy(self.small_file_max_bytes)
+
+    def query_set_material_budget(self, *, query_count: int, max_items: int | None = None) -> dict[str, object]:
+        """Keep query obligations separate from the bounded source-material count."""
+        policy = self.small_project_context_policy
+        selected = max(query_count, policy["max_files"]) if max_items is None else max_items
+        # 为什么要有它：少数需求可能跨多个协作文件；保留旧查询数量下限，不把空命中兜底8192字节误用为所有项目总限。
+        byte_unit = max(self.small_file_max_bytes, policy["max_total_bytes"])
+        return {"schema_version": "rg_live_source_material_budget_v1", "query_count": query_count,
+                "scope": "query_set_retained_source_excerpts_not_total_model_request_or_read_io",
+                "max_items": selected, "max_source_files": selected,
+                "small_project_material_floor": policy["max_files"],
+                "max_excerpt_utf8_bytes": selected * byte_unit, "byte_unit": byte_unit,
+                "omission_metadata_limit": policy["max_entries"],
+                "selection_basis": "explicit_max_items" if max_items is not None else "max_query_count_and_small_project_material_floor",
+                "source_view_policy": self.source_view_policy,
+                "small_project_limits": {key: policy[key] for key in ("max_files", "max_total_bytes", "max_entries")},
+                "fallback_enabled": policy["enabled"], "semantic_coverage_claimed": False}
 
     def collect(
         self,
@@ -75,20 +123,23 @@ class RgLiveEvidenceProvider:
         source_identity_query: str | None = None,
         max_items: int = 1,
     ) -> EvidencePack:
+        input_payload = {"query": query, "search_root": str(search_root),
+                         "source_identity_query": source_identity_query, "max_items": max_items,
+                         "source_view_policy": self.source_view_policy}
         with trace_operation("evidence.source_query", kind="tool", attributes={
-            "input_payload_sha256": payload_sha256({
-                "query": query, "search_root": str(search_root),
-                "source_identity_query": source_identity_query, "max_items": max_items,
-            }),
+            "input_payload_sha256": payload_sha256(input_payload),
             "query_sha256": hashlib.sha256(query.encode("utf-8")).hexdigest(),
             "tool_dispatch_performed": False,
         }) as span:
-            result = self._collect(query=query, search_root=search_root,
-                source_identity_query=source_identity_query, max_items=max_items, span=span)
+            with observe_local_tool_bodies(span, input_payload) as record_result:
+                result = self._collect(query=query, search_root=search_root,
+                    source_identity_query=source_identity_query, max_items=max_items, span=span)
+                result_payload = result.to_artifact_payload()
+                record_result(result_payload)
             update_observation(span,
                 produced_materials=material_identities(result.items),
                 evidence_item_count=len(result.items),
-                output_payload_sha256=payload_sha256(result.to_artifact_payload()),
+                output_payload_sha256=payload_sha256(result_payload),
                 decision_summary_origin="deterministic_structured_result",
                 decision_summary=f"当前源码查询返回 {len(result.items)} 份材料。",
             )
@@ -101,7 +152,8 @@ class RgLiveEvidenceProvider:
         started = time.perf_counter()
         def empty(status, reason):
             return replace(EvidencePack.empty(query=query, reason=reason),
-                budget_summary={"retrieval_status": status})
+                budget_summary={"retrieval_status": status,
+                                "source_view_policy": self.source_view_policy})
         if (
             isinstance(max_items, bool)
             or not isinstance(max_items, int)
@@ -200,6 +252,8 @@ class RgLiveEvidenceProvider:
                 tokens,
                 requested_path=requested_path,
                 max_items=max_items,
+                small_file_max_bytes=self.small_file_max_bytes,
+                identifier_tokens=tuple(_query_tokens(" ".join(_request_source_identifiers(query)))),
             )
         except UnicodeDecodeError as exc:
             update_observation(span, retrieval_status="source_decode_failed")
@@ -211,9 +265,18 @@ class RgLiveEvidenceProvider:
             materialize_source_location(
                 workspace_root=self.workspace_root, selected_path=selected_path,
                 selected_line=selected_line, source_bytes=source_cache[selected_path][0], tokens=tokens,
+                small_file_max_bytes=self.small_file_max_bytes,
             )
             for selected_path, selected_line in selected_locations
         ]
+        selected_paths = {path for path, _ in selected_locations}
+        eligible_paths = {path for path, _, _ in matches if requested_path is None or path == requested_path}
+        omitted_paths = sorted(eligible_paths - selected_paths, key=lambda path: path.as_posix())
+        omission_limit = self.small_project_context_policy["max_entries"]
+        lane_omissions = [{"source_path": path.relative_to(self.workspace_root).as_posix(),
+            "reason": "per_query_material_limit", "source_read": path in source_cache,
+            "match_observed": True, "source_hash": source_cache[path][2] if path in source_cache else None}
+            for path in omitted_paths[:omission_limit]]
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         update_observation(span, retrieval_status="source_observations_returned", tool_exit_code=completed.returncode)
         coverage_blocker = {
@@ -243,7 +306,13 @@ class RgLiveEvidenceProvider:
                 },
             ),
             retrieval_methods_used=("rg_live_read",),
-            budget_summary={"retrieval_status": "source_observations_returned"},
+            budget_summary={"retrieval_status": "source_observations_returned",
+                            "source_view_policy": self.source_view_policy,
+                            "source_selection": {"matched_source_files": len(eligible_paths),
+                                "materialized_source_files": len(selected_paths),
+                                "omitted_matched_sources": lane_omissions,
+                                "omitted_matched_source_count": len(omitted_paths),
+                                "omission_metadata_complete": len(omitted_paths) <= omission_limit}},
             disabled_modes={
                 "bm25": "Not selected by the completed directional decision.",
                 "dense": "Not selected by the completed directional decision.",
@@ -276,14 +345,49 @@ class RgLiveEvidenceProvider:
             ),
         )
 
+    def _query_batch_revision(self, search_root: str | Path) -> dict[str, str] | None:
+        """Bind reusable lexical results to exact local source and search settings."""
+        root = (self.workspace_root / search_root).resolve()
+        if not root.is_relative_to(self.workspace_root) or not root.is_dir():
+            return None
+        # 为什么要有它：只在本次非Git隔离源码批次内共享；外部rg配置/Git忽略规则不在版本合同内时仍走原始实时查询。
+        if os.environ.get("RIPGREP_CONFIG_PATH") or any((p / ".git").exists() for p in (root, *root.parents)):
+            return None
+        files = []
+        pending = [root]
+        try:
+            while pending:
+                directory = pending.pop()
+                for entry in sorted(os.scandir(directory), key=lambda row: row.name):
+                    metadata = entry.stat(follow_symlinks=False)
+                    if entry.is_symlink() or getattr(metadata, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+                        return None
+                    path = Path(entry.path)
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(path)
+                    elif path.suffix.lower() == ".cs" or path.name in {".ignore", ".gitignore", ".rgignore"}:
+                        files.append((path.relative_to(root).as_posix(), hashlib.sha256(path.read_bytes()).hexdigest()))
+            for parent in root.parents:
+                for name in (".ignore", ".gitignore", ".rgignore"):
+                    path = parent / name
+                    if path.is_file():
+                        files.append((str(path), hashlib.sha256(path.read_bytes()).hexdigest()))
+        except OSError:
+            return None
+        return {"source_sha256": payload_sha256({"root": str(root), "files": sorted(files)}),
+                "strategy_sha256": payload_sha256({"rg_executable": self.rg_executable,
+                    "source_view_policy": self.source_view_policy, "command_contract": "rg_live_v1",
+                    "small_project_context_policy": self.small_project_context_policy})}
+
     def collect_query_set(
         self,
         *,
         queries: tuple[dict[str, str], ...],
         search_root: str | Path,
         max_items: int,
+        source_identity_query: str | None = None,
     ) -> EvidencePack:
-        """Run every focused query independently against current live source."""
+        """Resolve every obligation lane, sharing identical version-bound queries within this batch."""
 
         if (
             not queries
@@ -297,6 +401,62 @@ class RgLiveEvidenceProvider:
         lane_items: list[tuple[EvidenceItem, ...]] = []
         query_rows: list[dict[str, str]] = []
         total_ms = 0.0
+        identifier_lanes: list[tuple[EvidenceItem, ...]] = []
+        identifier_rows: list[dict[str, object]] = []
+        observations: dict[tuple[str, str, str, int], tuple[EvidencePack, str]] = {}
+        material_budget = self.query_set_material_budget(query_count=len(queries), max_items=max_items)
+        lane_omissions: dict[str, dict[str, object]] = {}
+        lane_omission_metadata_complete = True
+        dispatch_count = reuse_count = 0
+        source_revision: str | None = None
+        validation_ms = 0.0
+
+        def collect_lane(text: str, origin: str):
+            nonlocal dispatch_count, reuse_count, source_revision, validation_ms, lane_omission_metadata_complete
+            before_clock = time.perf_counter()
+            before = self._query_batch_revision(search_root)
+            validation_ms += (time.perf_counter() - before_clock) * 1000.0
+            if before is not None:
+                if source_revision is not None and source_revision != before["source_sha256"]:
+                    raise ValueError("RG_LIVE_QUERY_SET_SOURCE_CHANGED")
+                source_revision = before["source_sha256"]
+            key = ((before["source_sha256"], before["strategy_sha256"], text, max_items)
+                   if before is not None else None)
+            # 为什么要有它：在线对照只切换同批观察复用，两组均执行相同源码版本检查和材料保留规则。
+            if self.reuse_query_observations and key is not None and key in observations:
+                pack, first_origin = observations[key]
+                reuse_count += 1
+                return deepcopy(pack), {"observation_reused": True,
+                    "reused_from_lane": first_origin, "source_revision": before}, 0.0
+            pack = self.collect(query=text, search_root=search_root, max_items=max_items)
+            selection = pack.budget_summary.get("source_selection", {})
+            lane_omission_metadata_complete = lane_omission_metadata_complete and selection.get("omission_metadata_complete", True)
+            for omitted in selection.get("omitted_matched_sources", []):
+                lane_omissions[str(omitted["source_path"])] = deepcopy(omitted)
+            dispatch_count += 1
+            after_clock = time.perf_counter()
+            after = self._query_batch_revision(search_root)
+            validation_ms += (time.perf_counter() - after_clock) * 1000.0
+            # 为什么要有它：跨源码版本不能拼成一个当前证据包，源树在调查中变化则显式失败；新调用会重新读取。
+            if before is not None and after is not None and before["source_sha256"] != after["source_sha256"]:
+                raise ValueError("RG_LIVE_QUERY_SET_SOURCE_CHANGED")
+            if self.reuse_query_observations and key is not None and before == after and pack.budget_summary.get("retrieval_status") in {
+                    "source_observations_returned", "no_matches", "requested_source_no_matches"}:
+                observations[key] = deepcopy(pack), origin
+            return pack, {"observation_reused": False, "reused_from_lane": None,
+                          "source_revision": before}, float(pack.timing.get("total_ms", 0.0))
+        # 为什么要有它：模型的粗类别查询不能抹去用户明确写出的源码标识符；这些只增加检索线索，不授予语义支持或编辑权限。
+        for identifier in _request_source_identifiers(source_identity_query or ""):
+            lane_pack, reuse, lane_ms = collect_lane(identifier, f"request_identifier:{len(identifier_rows)}")
+            total_ms += lane_ms
+            identifier_lanes.append(lane_pack.items)
+            identifier_rows.append({
+                "query": identifier,
+                "origin": "user_request_identifier",
+                **reuse,
+                "request_sha256": hashlib.sha256(source_identity_query.encode("utf-8")).hexdigest(),
+                "retrieval_status": lane_pack.budget_summary.get("retrieval_status", "unknown"),
+            })
         for query in queries:
             if set(query) != {"query_id", "query", "requirement_id"} or any(
                 not isinstance(query.get(key), str) or not query[key].strip()
@@ -307,16 +467,13 @@ class RgLiveEvidenceProvider:
             if query_id in seen_query_ids:
                 raise ValueError("RG_LIVE_QUERY_SET_ID_DUPLICATE")
             seen_query_ids.add(query_id)
-            lane_pack = self.collect(
-                query=str(query["query"]),
-                search_root=search_root,
-                max_items=max_items,
-            )
-            total_ms += float(lane_pack.timing.get("total_ms", 0.0))
+            lane_pack, reuse, lane_ms = collect_lane(str(query["query"]), query_id)
+            total_ms += lane_ms
             lane_items.append(lane_pack.items)
             query_rows.append(
                 {
                     "query_id": query_id,
+                    **reuse,
                     "retrieval_status": lane_pack.budget_summary.get("retrieval_status", "unknown"),
                     "requirement_id": str(query["requirement_id"]),
                     "query_sha256": hashlib.sha256(
@@ -327,29 +484,36 @@ class RgLiveEvidenceProvider:
         items: list[EvidenceItem] = []
         selected_by_occurrence: dict[tuple[str, ...], EvidenceItem] = {}
         selected_item_ids: set[str] = set()
+        retained_bytes = 0
+        omitted_reasons: dict[tuple[str, ...], str] = {}
 
         def retain(item: EvidenceItem) -> None:
+            nonlocal retained_bytes
             occurrence = _evidence_occurrence_key(item)
-            if occurrence in selected_by_occurrence or len(items) >= max_items:
+            if occurrence in selected_by_occurrence:
+                return
+            if len(items) >= max_items:
+                omitted_reasons[occurrence] = "material_item_limit"
+                return
+            item_bytes = len(item.excerpt.encode("utf-8"))
+            if retained_bytes + item_bytes > material_budget["max_excerpt_utf8_bytes"]:
+                omitted_reasons[occurrence] = "source_excerpt_byte_limit"
                 return
             if item.evidence_id in selected_item_ids:
                 raise ValueError("RG_LIVE_EVIDENCE_ID_COLLISION")
             selected_by_occurrence[occurrence] = item
             selected_item_ids.add(item.evidence_id)
             items.append(item)
+            retained_bytes += item_bytes
 
-        # Every lane keeps its best observation before duplicate first choices
-        # release the remaining global budget to later occurrences.
-        for lane in lane_items:
+        # 为什么要有它：在原材料上限内先保留明确源码线索的最佳材料，再保留投影查询；重复材料归并后剩余额度用于次级命中。
+        for lane in (*identifier_lanes, *lane_items):
             if lane:
                 retain(lane[0])
-        for lane in lane_items:
+        # 为什么要有它：明确标识符查询的次级命中也是已取得的真实源码，不能在有剩余额度时静默遗漏。
+        for lane in (*identifier_lanes, *lane_items):
             for item in lane[1:]:
                 retain(item)
-                if len(items) >= max_items:
-                    break
-            if len(items) >= max_items:
-                break
 
         query_execution: list[dict[str, object]] = []
         for row, lane in zip(query_rows, lane_items, strict=True):
@@ -366,11 +530,55 @@ class RgLiveEvidenceProvider:
             query_execution.append(
                 {**row, "evidence_ids": lane_evidence_ids}
             )
+        for row, lane in zip(identifier_rows, identifier_lanes, strict=True):
+            row["evidence_ids"] = list(dict.fromkeys(
+                selected_by_occurrence[_evidence_occurrence_key(item)].evidence_id
+                for item in lane if _evidence_occurrence_key(item) in selected_by_occurrence
+            ))
         all_occurrences = {
             _evidence_occurrence_key(item)
-            for lane in lane_items
+            for lane in (*identifier_lanes, *lane_items)
             for item in lane
         }
+        context_audit = None
+        if (self.small_project_context_policy["enabled"] and self.small_file_max_bytes > 0
+                and not items
+                and all(row["retrieval_status"] == "no_matches" for row in (*query_rows, *identifier_rows))
+                and not any(_requested_csharp_filename(text) for text in (
+                    source_identity_query or "", *(str(row["query"]) for row in queries)))):
+            context_started = time.perf_counter()
+            context_items, context_audit = collect_small_project_context(
+                workspace_root=self.workspace_root, search_root=search_root, max_items=max_items,
+                small_file_max_bytes=self.small_file_max_bytes, policy=self.small_project_context_policy)
+            total_ms += (time.perf_counter() - context_started) * 1000.0
+            for item in context_items:
+                retain(item)
+                all_occurrences.add(_evidence_occurrence_key(item))
+        # 为什么要有它：被检索预算省略的源码不能伪装成没有命中；只传来源/哈希/原因，不新增可引用材料或修改权限。
+        observed_materials = {_evidence_occurrence_key(item): item
+            for lane in (*identifier_lanes, *lane_items) for item in lane}
+        omitted_materials = [{"evidence_id": item.evidence_id, "source_path": item.source_path,
+            "source_hash": item.source_hash, "span": item.span,
+            "excerpt_sha256": hashlib.sha256(item.excerpt.encode("utf-8")).hexdigest(),
+            "excerpt_utf8_bytes": len(item.excerpt.encode("utf-8")), "source_read": True,
+            "reason": omitted_reasons.get(occurrence, "material_item_limit")}
+            for occurrence, item in observed_materials.items() if occurrence not in selected_by_occurrence]
+        selected_paths = {item.source_path for item in items}
+        unmatched_materials = [value for path, value in lane_omissions.items() if path not in selected_paths]
+        omission_limit = int(material_budget["omission_metadata_limit"])
+        material_budget.update(retained_items=len(items), retained_source_files=len(selected_paths),
+                               retained_excerpt_utf8_bytes=retained_bytes)
+        omission_audit = {"schema_version": "rg_live_source_omissions_v1",
+            "scope": "query_set_selection_before_any_later_augmentation",
+            "omitted_read_materials": omitted_materials[:omission_limit],
+            "omitted_read_material_count": len(omitted_materials),
+            "matched_sources_not_materialized": unmatched_materials[:omission_limit],
+            "matched_sources_not_materialized_known_count": len(unmatched_materials),
+            "omission_metadata_complete": lane_omission_metadata_complete and
+                len(omitted_materials) <= omission_limit and len(unmatched_materials) <= omission_limit,
+            "semantic_coverage_claimed": False, "omitted_ids_are_citeable": False}
+        # 为什么要有它：续接身份必须可重建；源码复核耗时属于timing，不能混入确定性预算/来源字段。
+        total_ms += validation_ms
         blocker = {
             "code": "RG_LIVE_REQUIREMENT_COVERAGE_UNPROVEN",
             "message": (
@@ -384,9 +592,11 @@ class RgLiveEvidenceProvider:
             readiness="insufficient",
             can_generate_patch=False,
             items=tuple(items),
+            excluded=tuple(omitted_materials[:omission_limit]),
             gaps=("Explicit requirement coverage findings are not yet resolved.",),
             blockers=(blocker,),
-            retrieval_methods_used=("rg_live_query_set", "rg_live_read"),
+            retrieval_methods_used=("rg_live_query_set", "rg_live_read",
+                *(("bounded_small_project_context",) if context_audit is not None else ())),
             missing_evidence=missing_evidence_from_blockers((blocker,)),
             disabled_modes={
                 "bm25": "Not used by the current live-source query-set owner.",
@@ -410,16 +620,25 @@ class RgLiveEvidenceProvider:
                 ),
             },
             budget_summary={
+                "source_view_policy": self.source_view_policy,
+                "source_material_budget": material_budget,
+                "source_material_omissions": omission_audit,
+                **({"small_project_context": context_audit} if context_audit is not None else {}),
                 "query_count": len(queries),
+                "query_observation_reuse": {"scope": "same_collect_query_set_exact_source_and_strategy",
+                    # 为什么要有它：默认开启保持历史包的确定性形状；False 对照显式留痕，完整策略另由运行 manifest 记录。
+                    **({"enabled": False} if not self.reuse_query_observations else {}),
+                    "collect_calls": dispatch_count, "reused_lanes": reuse_count},
                 "max_items": max_items,
                 "per_query_execution": query_execution,
+                **({"request_identifier_queries": identifier_rows} if identifier_rows else {}),
                 "all_queries_executed": all(row["retrieval_status"] in {
                     "source_observations_returned", "no_matches", "requested_source_no_matches"}
                     for row in query_execution),
                 "dense_enabled": False,
             },
             message=(
-                "Every focused query executed against current live source; semantic "
+                "Every focused query resolved against current live source with any shared observation identified; semantic "
                 "coverage remains owned by the requirement coverage projection."
             ),
         )
@@ -427,12 +646,16 @@ class RgLiveEvidenceProvider:
 
 def materialize_source_location(
     *, workspace_root: Path, selected_path: Path, selected_line: int,
-    source_bytes: bytes, tokens: list[str],
+    source_bytes: bytes, tokens: list[str], small_file_max_bytes: int = 0,
 ) -> EvidenceItem:
     """Project exact live bytes into the existing complete source-unit contract."""
     lines = source_bytes.decode("utf-8").splitlines(keepends=True)
     if not 1 <= selected_line <= len(lines):
         raise ValueError("LIVE_SOURCE_SELECTED_LINE_INVALID")
+    source_view_policy(small_file_max_bytes)
+    if is_small_csharp_file(selected_path, source_bytes, small_file_max_bytes):
+        return whole_file_source_item(workspace_root=workspace_root,
+            selected_path=selected_path, source_bytes=source_bytes)
     file_hash = hashlib.sha256(source_bytes).hexdigest()
     method_spans = _csharp_method_source_spans(lines)
     method_context = _enclosing_csharp_method(
@@ -443,15 +666,19 @@ def materialize_source_location(
     source_context = method_context or _enclosing_csharp_field(
         lines, selected_line=selected_line
     )
+    fallback_start, fallback_end = fallback_source_window(
+        selected_line=selected_line, line_count=len(lines),
+        method_spans=method_spans if selected_path.suffix.lower() == ".cs" else (),
+    )
     start_line = (
         int(source_context["start_line"])
         if source_context is not None
-        else max(1, selected_line - 10)
+        else fallback_start
     )
     end_line = (
         int(source_context["end_line"])
         if source_context is not None
-        else min(len(lines), selected_line + 18)
+        else fallback_end
     )
     excerpt = (
         str(source_context["source_text"])
@@ -550,6 +777,23 @@ def _query_tokens(query: str) -> list[str]:
     )[:12]
 
 
+def _request_source_identifiers(request: str) -> tuple[str, ...]:
+    """Bounded lexical hints from explicit code spellings, never inferred targets."""
+    from src.mod_agent.planning.clarified_request import source_hint_text
+    request = source_hint_text(request)
+    hints: list[str] = []
+    for match in re.finditer(r"(?<![A-Za-z0-9_])[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*", request):
+        value = match.group()
+        if value.endswith(".cs"):
+            hints.append(value)
+        elif "." in value:
+            hints.extend(value.split("."))
+        elif (re.search(r"[a-z][A-Z]|[A-Z]{2}[a-z]|[a-zA-Z]_[a-zA-Z]", value)
+              or request[match.end():].startswith("(")):
+            hints.append(value)
+    return tuple(dict.fromkeys(hint for hint in hints if _query_tokens(hint)))[:8]
+
+
 def _parse_matches(raw: str) -> list[tuple[Path, int, str]]:
     matches: list[tuple[Path, int, str]] = []
     for line in raw.splitlines():
@@ -570,6 +814,8 @@ def _rank_evidence_locations(
     *,
     requested_path: Path | None,
     max_items: int,
+    small_file_max_bytes: int = 0,
+    identifier_tokens: tuple[str, ...] = (),
 ) -> tuple[
     tuple[tuple[Path, int], ...],
     dict[Path, tuple[bytes, list[str], str]],
@@ -580,6 +826,7 @@ def _rank_evidence_locations(
         matches,
         tokens,
         requested_path=requested_path,
+        identifier_tokens=identifier_tokens,
     )
     source_cache: dict[Path, tuple[bytes, list[str], str]] = {}
 
@@ -594,6 +841,8 @@ def _rank_evidence_locations(
             lines,
             hashlib.sha256(source_bytes).hexdigest(),
         )
+        if is_small_csharp_file(path, source_bytes, small_file_max_bytes):
+            return (min(line_number for line_number, _ in path_matches),)
         return _rank_distinct_match_lines(
             tuple(path_matches),
             tokens,
@@ -624,7 +873,9 @@ def _rank_files(
     tokens: list[str],
     *,
     requested_path: Path | None,
+    identifier_tokens: tuple[str, ...] = (),
 ) -> list[tuple[Path, list[tuple[int, str]]]]:
+    declaration_tokens = frozenset(tokens if len(tokens) == 1 else identifier_tokens)
     by_path: dict[Path, list[tuple[int, str]]] = {}
     for path, line_number, text in matches:
         by_path.setdefault(path, []).append((line_number, text))
@@ -640,6 +891,18 @@ def _rank_files(
     return sorted(
         eligible.items(),
         key=lambda item: (
+            # 为什么要有它：查询附带自然语言说明时仍优先定位明确代码标识符的同名定义，避免被调用频次挤出；不含标识符的多词查询保持原排序。
+            -int(any(
+                (declaration := _CSHARP_TYPE_RE.match(text.strip())) is not None
+                and declaration.group("type_name").lower() in declaration_tokens
+                for _, text in item[1]
+            )),
+            -int(any(
+                (declaration := _CSHARP_METHOD_RE.match(text.strip())) is not None
+                and declaration.group("method_name").lower() in declaration_tokens
+                for _, text in item[1]
+            )),
+            -int(item[0].stem.lower() in declaration_tokens),
             -sum(
                 sum(1 for token in tokens if token in text.lower())
                 for _, text in item[1]
@@ -712,10 +975,8 @@ def _rank_distinct_match_lines(
             ):
                 continue
             retained_non_method_spans.append(
-                (
-                    max(1, line_number - 10),
-                    min(len(lines), line_number + 18),
-                )
+                fallback_source_window(selected_line=line_number,
+                    line_count=len(lines), method_spans=method_spans)
             )
         ranked_lines.append(line_number)
     return tuple(ranked_lines)

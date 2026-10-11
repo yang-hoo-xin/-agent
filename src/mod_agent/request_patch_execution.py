@@ -239,7 +239,10 @@ class RequestPatchExecution:
                  budget_snapshot: Callable[[], Mapping[str, Any]],
                  behavior_evaluator: Any = None, trace_configuration: Any = None,
                  repair_profile: Any = None, worker_configuration_ref: Any = None,
-                 adapter_factory: Callable[..., Any] | None = None):
+                 adapter_factory: Callable[..., Any] | None = None,
+                 interrupted_patch_selection: Mapping[str, Any] | None = None,
+                 pretransport_patch_selection: Mapping[str, Any] | None = None,
+                 invocation_namespace: str | None = None):
         self.store = artifact_store
         self.workspace_root = Path(workspace_root).resolve()
         self.profile = profile
@@ -252,6 +255,15 @@ class RequestPatchExecution:
         self.trace_configuration = trace_configuration or PatchExecutionTraceConfiguration()
         self.worker_configuration_ref = worker_configuration_ref
         self.adapter_factory = adapter_factory
+        if invocation_namespace is not None:
+            import re
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", invocation_namespace):
+                raise ValueError("PRODUCT_PATCH_INVOCATION_NAMESPACE_INVALID")
+        self.invocation_namespace = invocation_namespace
+        self.pretransport_patch_selection = deepcopy(pretransport_patch_selection)
+        self.interrupted_patch_selection = deepcopy(interrupted_patch_selection)
+        if (interrupted_patch_selection is not None or pretransport_patch_selection is not None) and invocation_namespace is None:
+            raise ValueError("PRODUCT_PATCH_INTERRUPTED_NAMESPACE_REQUIRED")
         self.journals: list[Any] = []
         self.receipts: list[dict[str, Any]] = []
         self._repair_attempts: list[int] = []
@@ -288,12 +300,14 @@ class RequestPatchExecution:
             _validate_selected_plan,
             _validate_source_items,
         )
+        from src.mod_agent.model_call_budget import call_allowance, total_only
 
         if state.get("blockers") or not state["runtime_summary"].get("patch_upstream_return"):
             return state
         next_state = deepcopy(state)
         try:
-            if self.replan_count or self.last_worker is None or self.upstream_context is None:
+            if ((self.replan_count and not total_only(self.budget_snapshot()))
+                    or self.last_worker is None or self.upstream_context is None):
                 raise PatchContinuationError("PATCH_UPSTREAM_CONTINUATION_BUDGET_EXHAUSTED", "upstream_admission",
                     "The product invocation admits one complete upstream cycle.")
             self.prepare_assessment(state, self.store)
@@ -322,8 +336,11 @@ class RequestPatchExecution:
                 raise PatchContinuationError("PATCH_UPSTREAM_RETAIN_PLAN_IDENTITY_CHANGED", "upstream_admission",
                     "Plan retention requires all original assessed references unchanged.")
             budget = self.budget_snapshot()
-            previous_calls = self.last_worker.patch_attempt_receipt()["model_call_count"]
-            available = min(budget["remaining"], budget["by_stage"][self._last_role]["remaining"],
+            previous_receipt = self.last_worker.patch_attempt_receipt()
+            # 为什么要有它：保留request包含全部历史turn，连续续接不能只用当前segment增量覆盖累计偏移；共享预算仍只计新调用。
+            previous_calls = previous_receipt["model_call_count"] + (
+                previous_receipt.get("patch_agent_loop", {}).get("prior_worker_budget", {}).get("consumed_model_turns", 0))
+            available = call_allowance(budget, self._last_role,
                 self.last_worker.patch_agent_loop_policy.max_total_model_turns - previous_calls)
             if available < 1:
                 raise PatchContinuationError("PATCH_UPSTREAM_CONTINUATION_BUDGET_EXHAUSTED", "model_admission",
@@ -341,12 +358,13 @@ class RequestPatchExecution:
                     path=prior["artifacts"]["implementation_plan"], artifact_hash=prior["artifact_hashes"]["implementation_plan"])),
                 repair_plan=repair_ref, approval_inherited=False,
                 upstream_request={key: deepcopy(self.upstream_request[key]) for key in
-                    ("required_owner", "reason", "source_refs")},
+                    ("origin", "required_owner", "reason", "source_refs")},
                 planning_assessment={key: deepcopy(assessment[key]) for key in
                     ("decision", "rationale", "selected_evidence_ids", "missing_evidence") if key in assessment})
             self._upstream_resume = {"retain": retain, "history": history, "remaining": available,
                 "previous_calls": previous_calls, "assessment": deepcopy(assessment),
-                "retained_request": self.last_worker.retained_worker_request() if retain else None}
+                "context_calibration": self.last_worker.retained_context_calibration() if retain else None,
+                "retained_request": self.last_worker.retained_worker_request(complete_upstream=True) if retain else None}
             self.replan_count += 1
             for kind in ("patch_proposal", "proposal_review", "dry_run_result", "repair_plan"):
                 next_state["artifacts"].pop(kind, None)
@@ -392,21 +410,50 @@ class RequestPatchExecution:
             raise LocalEntryError("PRODUCT_PATCH_PLAN_CONTEXT_MISMATCH")
         if self.store.read(refs["evidence_pack"])["data"] != evidence_pack:
             raise LocalEntryError("PRODUCT_PATCH_EVIDENCE_CONTEXT_MISMATCH")
-        invocation = f"{state['run_id']}_patch_{len(self.journals) + 1}"
+        invocation = (f"{state['run_id']}_{self.invocation_namespace}_patch_{len(self.journals) + 1}"
+                      if self.invocation_namespace else f"{state['run_id']}_patch_{len(self.journals) + 1}")
         profile = self.repair_profile if role == "repair" and self.repair_profile is not None else self.profile
         limits = self.budget_snapshot()
-        remaining = min(limits["remaining"], limits["by_stage"][role]["remaining"],
-                        resumed["remaining"] if resumed else self.policy.max_total_model_turns)
-        if remaining < 1:
+        from src.mod_agent.model_call_budget import (
+            STAGE_AND_TOTAL,
+            TASK_TOTAL_ONLY,
+            call_allowance,
+            total_only,
+        )
+        remaining = call_allowance(limits, role,
+            resumed["remaining"] if resumed else self.policy.max_total_model_turns)
+        interrupted = None
+        if self.pretransport_patch_selection is not None and not self.journals:
+            from src.mod_agent.pretransport_patch_admission import admit_pretransport_patch
+            admitted = admit_pretransport_patch(self.pretransport_patch_selection,
+                workspace_root=self.workspace_root, artifact_store=self.store,
+                worker_configuration_ref=self.worker_configuration_ref)
+            if (admitted['selected_artifacts'] != {key: asdict(ref) for key, ref in refs.items()}
+                    or admitted['shared_model_budget'] != limits or self.interrupted_patch_selection is not None):
+                raise LocalEntryError('PRODUCT_PATCH_PRETRANSPORT_CONTEXT_CHANGED')
+        if self.interrupted_patch_selection is not None and not self.journals:
+            from src.mod_agent.interrupted_patch_admission import admit_interrupted_patch
+            interrupted = admit_interrupted_patch(self.interrupted_patch_selection,
+                workspace_root=self.workspace_root, artifact_store=self.store,
+                worker_configuration_ref=self.worker_configuration_ref)
+            # 为什么要有它：恢复只能沿原Plan、原任务余额继续；独立segment名称避免覆盖被中断的journal。
+            if (interrupted['selected_artifacts'] != {key: asdict(ref) for key, ref in refs.items()}
+                    or interrupted['shared_model_budget'] != limits):
+                raise LocalEntryError('PRODUCT_PATCH_INTERRUPTED_CONTEXT_CHANGED')
+        if remaining < 1 and interrupted is None:
             raise LocalEntryError("PRODUCT_MODEL_CALL_BUDGET_EXHAUSTED")
-        policy = replace(self.policy, max_total_model_turns=remaining,
+        inherited_calls = interrupted['factory_receipt']['model_call_count'] if interrupted else 0
+        allowance = inherited_calls + remaining
+        policy = replace(self.policy, max_total_model_turns=allowance,
+                         model_call_budget_policy=TASK_TOTAL_ONLY if total_only(limits) else STAGE_AND_TOTAL,
                          max_tool_rounds=max(0, self.policy.max_tool_rounds - self._consumed_reads),
                          max_observation_bytes=max(0, self.policy.max_observation_bytes - self._consumed_bytes))
         journal = PatchContinuationAttemptJournal.for_product_execution(
             artifact_root=self.store.root, run_id=invocation, request_id=state["request_id"],
             parent_run_id=state["run_id"], feature_spec_ref=refs["feature_spec"],
             evidence_pack_ref=refs["evidence_pack"], implementation_plan_ref=refs["implementation_plan"],
-            workspace_root=self.workspace_root, max_model_calls=remaining,
+            workspace_root=self.workspace_root, max_model_calls=allowance,
+            model_call_budget_policy=TASK_TOTAL_ONLY if total_only(limits) else STAGE_AND_TOTAL,
             worker_configuration_ref=self.worker_configuration_ref,
             worker_profile_sha256=(hashlib.sha256(json.dumps(
                 profile.to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -417,6 +464,8 @@ class RequestPatchExecution:
             profile=profile, artifact_store=self.store, workspace_root=self.workspace_root,
             patch_agent_loop_policy=policy, identity_reader=self.identity_reader,
             behavior_evaluator=self.behavior_evaluator, enable_recovery_loop=True)
+        if interrupted is not None:
+            worker.bind_interrupted_attempt(interrupted)
         if resumed is not None:
             if resumed["retain"]:
                 worker.patch_agent_loop_policy = replace(policy,
@@ -426,7 +475,8 @@ class RequestPatchExecution:
                 worker.bind_retained_worker_request(resumed["retained_request"],
                     consumed_model_turns=resumed["previous_calls"], consumed_tool_rounds=self._consumed_reads,
                     consumed_observation_bytes=self._consumed_bytes,
-                    planning_rationale=resumed["assessment"]["rationale"])
+                    planning_rationale=resumed["assessment"]["rationale"],
+                    context_calibration=resumed["context_calibration"])
             else:
                 worker._upstream_continuation_context = deepcopy(resumed["history"])
             self._upstream_resume = None
