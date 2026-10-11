@@ -171,3 +171,46 @@ jobs:
           tests/unit/test_runtime_deployment.py
           tests/unit/test_repair_loop.py
           tests/unit/test_evidence_retrieval.py
+
+  rag-golden:
+    name: RAG retrieval golden
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository and archived corpus history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # 为什么要有它：检索语料绑定历史 Git blob，浅克隆不能验证来源。
+          fetch-depth: 0
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.9"
+          python-version: "3.10"
+
+      - name: Restore frozen development environment
+        run: |
+          uv lock --check
+          uv sync --frozen --extra dev
+
+      # 为什么要有它：门禁的缺测、漂移和退化反例必须失败，不能只验证快乐路径。
+      - name: Verify golden gate counterexamples
+        run: uv run --frozen pytest tests/unit/test_rag_golden_ci.py -q -o addopts=
+
+      # 为什么要有它：每次 PR 实际执行建库和查询；不将评分器单测冒充检索质量。
+      - name: Execute frozen retrieval golden cases
+        # 为什么要有它：反例测试先失败时仍须运行正式测量并保存退化证据。
+        if: ${{ !cancelled() }}
+        run: >-
+          uv run --frozen python -B scripts/check_rag_golden.py
+          --output "${{ runner.temp }}/rag-golden/report.json"
+
+      - name: Preserve golden report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rag-golden-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rag-golden/report.json
+          if-no-files-found: error
+          retention-days: 14

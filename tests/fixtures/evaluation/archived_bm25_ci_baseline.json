@@ -1,0 +1,2281 @@
+{
+  "schema": "archived_bm25_ci_baseline.v1",
+  "scope": "CPU BM25 retrieval regression; exposed curated cases, not independent holdout, LLM faithfulness or product success",
+  "why": "为什么要有它：基线来自已执行检索，固定语料和逐题门槛以发现真实回归。",
+  "measured_at_utc": "2026-10-06T10:58:11.574643+00:00",
+  "measured_code_revision": "03225b37f5f9a5b2907d8eeb74ecc26c062c2486",
+  "retrieval_source_sha256_lf": {
+    "src/core/query_engine/tokenization.py": "sha256:cba253112af8cd17fd0c390c3e0e9be7108e3c3d7949eabd1cef433902a27422",
+    "src/ingestion/embedding/sparse_encoder.py": "sha256:191dc71e194575d7edc61bb4dd707d082133546f0873393fe51a0565a9bb94e2",
+    "src/ingestion/storage/bm25_indexer.py": "sha256:306908d250de3652f15a6829577705f6c8c211de1bb69038d3544fc24bbe771c",
+    "tests/tooling/archived_bm25_benchmark.py": "sha256:4688079d31453c8e68bd938dcdcca660259cfab1f8530505fdab5b9c78ce7abb"
+  },
+  "source_hash_encoding": "UTF-8 bytes with CRLF normalized to LF; portable checkout identity",
+  "python_version": "3.10.20",
+  "model_calls": 0,
+  "network_calls": 0,
+  "measurement": {
+    "benchmark_contract": {
+      "kind": "offline_bm25_benchmark_harness",
+      "measurement_serialization": "src.observability.evaluation.eval_runner.MeasurementState.to_dict",
+      "durable_eval_truth": false,
+      "graph_consumer": false,
+      "product_api": false,
+      "future_ci_input_only": true,
+      "formal_eval_integration": "not_implemented"
+    },
+    "dataset": {
+      "dataset_id": "coding_agent_v0_wave2b_bm25_archived_source_v2",
+      "dataset_schema_version": "archived_bm25_benchmark_cases_v1",
+      "dataset_sha256": "sha256:46abc05b522fb8bc8d9ce8877441806c2da9bffc907ff5b9150239f621cfbdef",
+      "source_revision": "50b270a65bc602150175389675cfb52a3e2e9baf",
+      "corpus_manifest_sha256": "sha256:67d3ae277307bedc0c25e64273d58f4b747d432ff15a387dbfb2733ad2697c39",
+      "case_counts": {
+        "total": 8,
+        "development": 7,
+        "reserved": 1,
+        "development_adjustment": 0
+      },
+      "reserved_case_ids": [
+        "reserved_wave1_b_scope"
+      ],
+      "development_adjustment_case_ids": [],
+      "case_governance": {
+        "case_scope": "curated_current_source_smoke",
+        "source_snapshot_policy": "archived_git_revision",
+        "collection_boundary": "The eight queries and nine source spans were curated from the named repository files at source_revision; no production query log, historical run, or external corpus is represented.",
+        "annotation_boundary": "expected_relevant_ids, relevance_reasons, support_status, support_ids, support_rationale, use_decision, use_rationale, and insufficient_evidence_action are fixture oracle labels; no claim evaluator, answer evaluator, adjudication record, or independent review record is included.",
+        "review_record_status": "not_recorded"
+      }
+    },
+    "baseline": {
+      "retriever": "BM25Indexer",
+      "encoder": "SparseEncoder",
+      "retrieval_lanes": [
+        "current_source"
+      ],
+      "top_k": 3,
+      "dense": "not_applicable",
+      "rrf": "not_applicable",
+      "reranker": "not_applicable",
+      "network_calls": 0,
+      "model_calls": 0,
+      "source_snapshot_policy": "archived_git_revision"
+    },
+    "corpus": [
+      {
+        "evidence_id": "current:eval_runner:measurement_states",
+        "lane": "current_source",
+        "source_ref": "src/observability/evaluation/eval_runner.py#L27-L55",
+        "source_sha256": "sha256:461ca7fb5f156a9e7eef102364a808d6d45d3d5183d17e909f57435fdf0bad07",
+        "source_revision": "50b270a65bc602150175389675cfb52a3e2e9baf"
+      },
+      {
+        "evidence_id": "current:eval_runner:metric_registry",
+        "lane": "current_source",
+        "source_ref": "src/observability/evaluation/eval_runner.py#L784-L847",
+        "source_sha256": "sha256:461ca7fb5f156a9e7eef102364a808d6d45d3d5183d17e909f57435fdf0bad07",
+        "source_revision": "50b270a65bc602150175389675cfb52a3e2e9baf"
+      },
+      {
+        "evidence_id": "current:eval_runner:metric_denominators",
+        "lane": "current_source",
+        "source_ref": "src/observability/evaluation/eval_runner.py#L896-L923",
+        "source_sha256": "sha256:461ca7fb5f156a9e7eef102364a808d6d45d3d5183d17e909f57435fdf0bad07",
+        "source_revision": "50b270a65bc602150175389675cfb52a3e2e9baf"
+      },
+      {
+        "evidence_id": "current:custom_evaluator:metric_contract",
+        "lane": "current_source",
+        "source_ref": "src/libs/evaluator/custom_evaluator.py#L14-L38",
+        "source_sha256": "sha256:c2ced14e0c071c81c19e96a910bcb80791fac214ec4c5dd1ff3e9ee4ad04d267",
+        "source_revision": "50b270a65bc602150175389675cfb52a3e2e9baf"
+      },
+      {
+        "evidence_id": "current:composite_evaluator:direct_children",
+        "lane": "current_source",
+        "source_ref": "src/observability/evaluation/composite_evaluator.py#L23-L44",
+        "source_sha256": "sha256:663c6240db95bd6c5fb24728854aed0c3e6369d8bcf9e5cf00eb6395949e52ac",
+        "source_revision": "50b270a65bc602150175389675cfb52a3e2e9baf"
+      },
+      {
+        "evidence_id": "current:agents:evidence_order",
+        "lane": "current_source",
+        "source_ref": "AGENTS.md#L44-L50",
+        "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3",
+        "source_revision": "50b270a65bc602150175389675cfb52a3e2e9baf"
+      },
+      {
+        "evidence_id": "current:agents:retrieval_not_authority",
+        "lane": "current_source",
+        "source_ref": "AGENTS.md#L195-L202",
+        "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3",
+        "source_revision": "50b270a65bc602150175389675cfb52a3e2e9baf"
+      },
+      {
+        "evidence_id": "current:agents:claim_levels",
+        "lane": "current_source",
+        "source_ref": "AGENTS.md#L220-L228",
+        "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3",
+        "source_revision": "50b270a65bc602150175389675cfb52a3e2e9baf"
+      },
+      {
+        "evidence_id": "current:active_contract:wave1_boundaries",
+        "lane": "current_source",
+        "source_ref": "docs/ACTIVE_PRODUCT_CONTRACT.md#L54-L74",
+        "source_sha256": "sha256:fc32c5bcff755acf66540ef0216deb8d44f87525e3f24fd5d4c688469d7492df",
+        "source_revision": "50b270a65bc602150175389675cfb52a3e2e9baf"
+      }
+    ],
+    "cases": [
+      {
+        "case_id": "exact_measurement_states",
+        "split": "development",
+        "category": "exact_code_lookup",
+        "requirement": "Identify the exact EvalRunner measurement-state literals.",
+        "query": "In EvalRunner MeasurementState, what are the exact observed failed_to_measure and not_applicable status literals?",
+        "retrieval_execution_measurement": {
+          "status": "observed",
+          "mode": "bm25_results",
+          "error_category": null,
+          "error_message": null
+        },
+        "objectives": {
+          "retrieve": {
+            "status": "not_applicable",
+            "mode": "no_retrieve_classifier",
+            "error_category": null,
+            "error_message": null
+          },
+          "isrel": {
+            "status": "observed",
+            "mode": "fixture_qrels_applied",
+            "error_category": null,
+            "error_message": null
+          },
+          "issup": {
+            "status": "not_applicable",
+            "mode": "no_claim_evaluator",
+            "error_category": null,
+            "error_message": null
+          },
+          "isuse": {
+            "status": "not_applicable",
+            "mode": "no_answer_evaluator",
+            "error_category": null,
+            "error_message": null
+          }
+        },
+        "retrieval": {
+          "required_evidence_lanes": [
+            "current_source"
+          ],
+          "lane_results": {
+            "current_source": {
+              "execution_measurement": {
+                "status": "observed",
+                "mode": "bm25_results",
+                "error_category": null,
+                "error_message": null
+              },
+              "skipped": false,
+              "retrieved_count": 3
+            }
+          },
+          "retrieved": [
+            {
+              "evidence_id": "current:eval_runner:measurement_states",
+              "score": 3.624045991131495,
+              "source_ref": "src/observability/evaluation/eval_runner.py#L27-L55",
+              "source_sha256": "sha256:461ca7fb5f156a9e7eef102364a808d6d45d3d5183d17e909f57435fdf0bad07"
+            },
+            {
+              "evidence_id": "current:eval_runner:metric_denominators",
+              "score": 3.070450334057668,
+              "source_ref": "src/observability/evaluation/eval_runner.py#L896-L923",
+              "source_sha256": "sha256:461ca7fb5f156a9e7eef102364a808d6d45d3d5183d17e909f57435fdf0bad07"
+            },
+            {
+              "evidence_id": "current:eval_runner:metric_registry",
+              "score": 0.644270742193461,
+              "source_ref": "src/observability/evaluation/eval_runner.py#L784-L847",
+              "source_sha256": "sha256:461ca7fb5f156a9e7eef102364a808d6d45d3d5183d17e909f57435fdf0bad07"
+            }
+          ]
+        },
+        "annotations": {
+          "qrels": {
+            "presence": "present",
+            "expected_relevant_ids": [
+              "current:eval_runner:measurement_states"
+            ],
+            "relevance_reasons": {
+              "current:eval_runner:measurement_states": "The current source declares all three exact literals and validates MeasurementState against them."
+            }
+          },
+          "issup": {
+            "presence": "present",
+            "support_status": "support",
+            "support_ids": [
+              "current:eval_runner:measurement_states"
+            ],
+            "support_rationale": "The literal declarations directly answer the requirement."
+          },
+          "isuse": {
+            "presence": "present",
+            "use_decision": "answer",
+            "use_rationale": "The exact current-source declaration is sufficient for a bounded answer.",
+            "insufficient_evidence_action": "additional_lookup"
+          }
+        },
+        "isrel_judgments": [
+          {
+            "evidence_id": "current:eval_runner:measurement_states",
+            "relevant": true,
+            "reason": "The current source declares all three exact literals and validates MeasurementState against them.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:eval_runner:metric_denominators",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:eval_runner:metric_registry",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          }
+        ],
+        "bounded_action_contract": {
+          "oracle_only": true,
+          "graph_connected": false,
+          "claimed_executed": false
+        },
+        "metrics": {
+          "micro_recall_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1.0
+          },
+          "macro_mrr": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1.0,
+            "denominator": 1,
+            "value": 1.0
+          },
+          "macro_ndcg_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1.0,
+            "denominator": 1,
+            "value": 1.0,
+            "score_counts": {
+              "numerator": 1.0,
+              "denominator": 1.0
+            }
+          },
+          "nonrelevant_retrieval_rate_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 2,
+            "denominator": 3,
+            "value": 0.6666666666666666
+          }
+        }
+      },
+      {
+        "case_id": "cross_file_custom_metric_discovery",
+        "split": "development",
+        "category": "cross_file_relationship",
+        "requirement": "Explain how EvalRunner discovers the metrics implemented by CustomEvaluator.",
+        "query": "How does EvalRunner discover CustomEvaluator supported metrics hit_rate and mrr across the two current source files?",
+        "retrieval_execution_measurement": {
+          "status": "observed",
+          "mode": "bm25_results",
+          "error_category": null,
+          "error_message": null
+        },
+        "objectives": {
+          "retrieve": {
+            "status": "not_applicable",
+            "mode": "no_retrieve_classifier",
+            "error_category": null,
+            "error_message": null
+          },
+          "isrel": {
+            "status": "observed",
+            "mode": "fixture_qrels_applied",
+            "error_category": null,
+            "error_message": null
+          },
+          "issup": {
+            "status": "not_applicable",
+            "mode": "no_claim_evaluator",
+            "error_category": null,
+            "error_message": null
+          },
+          "isuse": {
+            "status": "not_applicable",
+            "mode": "no_answer_evaluator",
+            "error_category": null,
+            "error_message": null
+          }
+        },
+        "retrieval": {
+          "required_evidence_lanes": [
+            "current_source"
+          ],
+          "lane_results": {
+            "current_source": {
+              "execution_measurement": {
+                "status": "observed",
+                "mode": "bm25_results",
+                "error_category": null,
+                "error_message": null
+              },
+              "skipped": false,
+              "retrieved_count": 3
+            }
+          },
+          "retrieved": [
+            {
+              "evidence_id": "current:custom_evaluator:metric_contract",
+              "score": 2.669216534273568,
+              "source_ref": "src/libs/evaluator/custom_evaluator.py#L14-L38",
+              "source_sha256": "sha256:c2ced14e0c071c81c19e96a910bcb80791fac214ec4c5dd1ff3e9ee4ad04d267"
+            },
+            {
+              "evidence_id": "current:agents:evidence_order",
+              "score": -0.011793338007920151,
+              "source_ref": "AGENTS.md#L44-L50",
+              "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3"
+            },
+            {
+              "evidence_id": "current:eval_runner:measurement_states",
+              "score": -0.32559362853401486,
+              "source_ref": "src/observability/evaluation/eval_runner.py#L27-L55",
+              "source_sha256": "sha256:461ca7fb5f156a9e7eef102364a808d6d45d3d5183d17e909f57435fdf0bad07"
+            }
+          ]
+        },
+        "annotations": {
+          "qrels": {
+            "presence": "present",
+            "expected_relevant_ids": [
+              "current:eval_runner:metric_registry",
+              "current:custom_evaluator:metric_contract"
+            ],
+            "relevance_reasons": {
+              "current:eval_runner:metric_registry": "The runner branch reads CustomEvaluator.metrics through the recognized interface.",
+              "current:custom_evaluator:metric_contract": "The evaluator declares hit_rate and mrr as its supported metrics."
+            }
+          },
+          "issup": {
+            "presence": "present",
+            "support_status": "support",
+            "support_ids": [
+              "current:eval_runner:metric_registry",
+              "current:custom_evaluator:metric_contract"
+            ],
+            "support_rationale": "Both sides of the cross-file contract are present in current source."
+          },
+          "isuse": {
+            "presence": "present",
+            "use_decision": "answer",
+            "use_rationale": "The relationship can be described without inferring an unimplemented interface.",
+            "insufficient_evidence_action": "additional_lookup"
+          }
+        },
+        "isrel_judgments": [
+          {
+            "evidence_id": "current:custom_evaluator:metric_contract",
+            "relevant": true,
+            "reason": "The evaluator declares hit_rate and mrr as its supported metrics.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:agents:evidence_order",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:eval_runner:measurement_states",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          }
+        ],
+        "bounded_action_contract": {
+          "oracle_only": true,
+          "graph_connected": false,
+          "claimed_executed": false
+        },
+        "metrics": {
+          "micro_recall_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5
+          },
+          "macro_mrr": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1.0,
+            "denominator": 1,
+            "value": 1.0
+          },
+          "macro_ndcg_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 0.6131471927654584,
+            "denominator": 1,
+            "value": 0.6131471927654584,
+            "score_counts": {
+              "numerator": 1.0,
+              "denominator": 1.6309297535714575
+            }
+          },
+          "nonrelevant_retrieval_rate_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 2,
+            "denominator": 3,
+            "value": 0.6666666666666666
+          }
+        }
+      },
+      {
+        "case_id": "honest_denominator_accounting",
+        "split": "development",
+        "category": "exact_code_lookup",
+        "requirement": "Identify how failed metric positions remain in report denominators.",
+        "query": "How does EvalRunner metric_measurements count total applicable observed failed_to_measure and not_applicable denominator positions?",
+        "retrieval_execution_measurement": {
+          "status": "observed",
+          "mode": "bm25_results",
+          "error_category": null,
+          "error_message": null
+        },
+        "objectives": {
+          "retrieve": {
+            "status": "not_applicable",
+            "mode": "no_retrieve_classifier",
+            "error_category": null,
+            "error_message": null
+          },
+          "isrel": {
+            "status": "observed",
+            "mode": "fixture_qrels_applied",
+            "error_category": null,
+            "error_message": null
+          },
+          "issup": {
+            "status": "not_applicable",
+            "mode": "no_claim_evaluator",
+            "error_category": null,
+            "error_message": null
+          },
+          "isuse": {
+            "status": "not_applicable",
+            "mode": "no_answer_evaluator",
+            "error_category": null,
+            "error_message": null
+          }
+        },
+        "retrieval": {
+          "required_evidence_lanes": [
+            "current_source"
+          ],
+          "lane_results": {
+            "current_source": {
+              "execution_measurement": {
+                "status": "observed",
+                "mode": "bm25_results",
+                "error_category": null,
+                "error_message": null
+              },
+              "skipped": false,
+              "retrieved_count": 3
+            }
+          },
+          "retrieved": [
+            {
+              "evidence_id": "current:eval_runner:metric_denominators",
+              "score": 8.54914650575868,
+              "source_ref": "src/observability/evaluation/eval_runner.py#L896-L923",
+              "source_sha256": "sha256:461ca7fb5f156a9e7eef102364a808d6d45d3d5183d17e909f57435fdf0bad07"
+            },
+            {
+              "evidence_id": "current:eval_runner:measurement_states",
+              "score": 3.1695387706329203,
+              "source_ref": "src/observability/evaluation/eval_runner.py#L27-L55",
+              "source_sha256": "sha256:461ca7fb5f156a9e7eef102364a808d6d45d3d5183d17e909f57435fdf0bad07"
+            },
+            {
+              "evidence_id": "current:eval_runner:metric_registry",
+              "score": 1.1044342488588748,
+              "source_ref": "src/observability/evaluation/eval_runner.py#L784-L847",
+              "source_sha256": "sha256:461ca7fb5f156a9e7eef102364a808d6d45d3d5183d17e909f57435fdf0bad07"
+            }
+          ]
+        },
+        "annotations": {
+          "qrels": {
+            "presence": "present",
+            "expected_relevant_ids": [
+              "current:eval_runner:metric_denominators",
+              "current:eval_runner:measurement_states"
+            ],
+            "relevance_reasons": {
+              "current:eval_runner:metric_denominators": "The aggregation code counts every measurement state and reports total plus applicable.",
+              "current:eval_runner:measurement_states": "The exact state vocabulary defines the denominator categories."
+            }
+          },
+          "issup": {
+            "presence": "present",
+            "support_status": "support",
+            "support_ids": [
+              "current:eval_runner:metric_denominators",
+              "current:eval_runner:measurement_states"
+            ],
+            "support_rationale": "The state definitions and aggregation fields jointly support the accounting explanation."
+          },
+          "isuse": {
+            "presence": "present",
+            "use_decision": "answer",
+            "use_rationale": "The current implementation is directly inspectable and the answer stays within code/test evidence.",
+            "insufficient_evidence_action": "additional_lookup"
+          }
+        },
+        "isrel_judgments": [
+          {
+            "evidence_id": "current:eval_runner:metric_denominators",
+            "relevant": true,
+            "reason": "The aggregation code counts every measurement state and reports total plus applicable.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:eval_runner:measurement_states",
+            "relevant": true,
+            "reason": "The exact state vocabulary defines the denominator categories.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:eval_runner:metric_registry",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          }
+        ],
+        "bounded_action_contract": {
+          "oracle_only": true,
+          "graph_connected": false,
+          "claimed_executed": false
+        },
+        "metrics": {
+          "micro_recall_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1.0
+          },
+          "macro_mrr": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1.0,
+            "denominator": 1,
+            "value": 1.0
+          },
+          "macro_ndcg_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1.0,
+            "denominator": 1,
+            "value": 1.0,
+            "score_counts": {
+              "numerator": 1.6309297535714575,
+              "denominator": 1.6309297535714575
+            }
+          },
+          "nonrelevant_retrieval_rate_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1,
+            "denominator": 3,
+            "value": 0.3333333333333333
+          }
+        }
+      },
+      {
+        "case_id": "current_source_precedes_community",
+        "split": "development",
+        "category": "relevant_but_no_authority",
+        "requirement": "Determine whether a community hint can replace current-source verification.",
+        "query": "For an empirical current behavior claim, may a community hint outrank or skip current source evidence?",
+        "retrieval_execution_measurement": {
+          "status": "observed",
+          "mode": "bm25_results",
+          "error_category": null,
+          "error_message": null
+        },
+        "objectives": {
+          "retrieve": {
+            "status": "not_applicable",
+            "mode": "no_retrieve_classifier",
+            "error_category": null,
+            "error_message": null
+          },
+          "isrel": {
+            "status": "observed",
+            "mode": "fixture_qrels_applied",
+            "error_category": null,
+            "error_message": null
+          },
+          "issup": {
+            "status": "not_applicable",
+            "mode": "no_claim_evaluator",
+            "error_category": null,
+            "error_message": null
+          },
+          "isuse": {
+            "status": "not_applicable",
+            "mode": "no_answer_evaluator",
+            "error_category": null,
+            "error_message": null
+          }
+        },
+        "retrieval": {
+          "required_evidence_lanes": [
+            "current_source"
+          ],
+          "lane_results": {
+            "current_source": {
+              "execution_measurement": {
+                "status": "observed",
+                "mode": "bm25_results",
+                "error_category": null,
+                "error_message": null
+              },
+              "skipped": false,
+              "retrieved_count": 3
+            }
+          },
+          "retrieved": [
+            {
+              "evidence_id": "current:agents:evidence_order",
+              "score": 10.200151216103041,
+              "source_ref": "AGENTS.md#L44-L50",
+              "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3"
+            },
+            {
+              "evidence_id": "current:agents:claim_levels",
+              "score": 2.8130574448235413,
+              "source_ref": "AGENTS.md#L220-L228",
+              "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3"
+            },
+            {
+              "evidence_id": "current:agents:retrieval_not_authority",
+              "score": 0.4201831573598175,
+              "source_ref": "AGENTS.md#L195-L202",
+              "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3"
+            }
+          ]
+        },
+        "annotations": {
+          "qrels": {
+            "presence": "present",
+            "expected_relevant_ids": [
+              "current:agents:evidence_order"
+            ],
+            "relevance_reasons": {
+              "current:agents:evidence_order": "The repository evidence order explicitly ranks current source above community hints."
+            }
+          },
+          "issup": {
+            "presence": "present",
+            "support_status": "conflict",
+            "support_ids": [
+              "current:agents:evidence_order"
+            ],
+            "support_rationale": "The requested shortcut conflicts with the exact repository evidence order."
+          },
+          "isuse": {
+            "presence": "present",
+            "use_decision": "refuse",
+            "use_rationale": "Refuse the shortcut and require current-source verification.",
+            "insufficient_evidence_action": "block"
+          }
+        },
+        "isrel_judgments": [
+          {
+            "evidence_id": "current:agents:evidence_order",
+            "relevant": true,
+            "reason": "The repository evidence order explicitly ranks current source above community hints.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:agents:claim_levels",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:agents:retrieval_not_authority",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          }
+        ],
+        "bounded_action_contract": {
+          "oracle_only": true,
+          "graph_connected": false,
+          "claimed_executed": false
+        },
+        "metrics": {
+          "micro_recall_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1.0
+          },
+          "macro_mrr": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1.0,
+            "denominator": 1,
+            "value": 1.0
+          },
+          "macro_ndcg_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1.0,
+            "denominator": 1,
+            "value": 1.0,
+            "score_counts": {
+              "numerator": 1.0,
+              "denominator": 1.0
+            }
+          },
+          "nonrelevant_retrieval_rate_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 2,
+            "denominator": 3,
+            "value": 0.6666666666666666
+          }
+        }
+      },
+      {
+        "case_id": "retrieval_score_is_not_write_authority",
+        "split": "development",
+        "category": "relevant_but_no_authority",
+        "requirement": "Determine whether BM25 relevance can authorize a product-source edit.",
+        "query": "Use a high BM25 retrieval relevance score to grant write authority and apply a product source edit.",
+        "retrieval_execution_measurement": {
+          "status": "observed",
+          "mode": "bm25_results",
+          "error_category": null,
+          "error_message": null
+        },
+        "objectives": {
+          "retrieve": {
+            "status": "not_applicable",
+            "mode": "no_retrieve_classifier",
+            "error_category": null,
+            "error_message": null
+          },
+          "isrel": {
+            "status": "observed",
+            "mode": "fixture_qrels_applied",
+            "error_category": null,
+            "error_message": null
+          },
+          "issup": {
+            "status": "not_applicable",
+            "mode": "no_claim_evaluator",
+            "error_category": null,
+            "error_message": null
+          },
+          "isuse": {
+            "status": "not_applicable",
+            "mode": "no_answer_evaluator",
+            "error_category": null,
+            "error_message": null
+          }
+        },
+        "retrieval": {
+          "required_evidence_lanes": [
+            "current_source"
+          ],
+          "lane_results": {
+            "current_source": {
+              "execution_measurement": {
+                "status": "observed",
+                "mode": "bm25_results",
+                "error_category": null,
+                "error_message": null
+              },
+              "skipped": false,
+              "retrieved_count": 3
+            }
+          },
+          "retrieved": [
+            {
+              "evidence_id": "current:agents:retrieval_not_authority",
+              "score": 9.044707902395125,
+              "source_ref": "AGENTS.md#L195-L202",
+              "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3"
+            },
+            {
+              "evidence_id": "current:agents:evidence_order",
+              "score": 0.3678932096219979,
+              "source_ref": "AGENTS.md#L44-L50",
+              "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3"
+            },
+            {
+              "evidence_id": "current:active_contract:wave1_boundaries",
+              "score": 0.32216147283648355,
+              "source_ref": "docs/ACTIVE_PRODUCT_CONTRACT.md#L54-L74",
+              "source_sha256": "sha256:fc32c5bcff755acf66540ef0216deb8d44f87525e3f24fd5d4c688469d7492df"
+            }
+          ]
+        },
+        "annotations": {
+          "qrels": {
+            "presence": "present",
+            "expected_relevant_ids": [
+              "current:agents:retrieval_not_authority"
+            ],
+            "relevance_reasons": {
+              "current:agents:retrieval_not_authority": "The repository rule explicitly denies write authority to retrieval relevance and names the real authority checks."
+            }
+          },
+          "issup": {
+            "presence": "present",
+            "support_status": "conflict",
+            "support_ids": [
+              "current:agents:retrieval_not_authority"
+            ],
+            "support_rationale": "The proposed use of a retrieval score conflicts with the write-authority boundary."
+          },
+          "isuse": {
+            "presence": "present",
+            "use_decision": "refuse",
+            "use_rationale": "Answer the authority question, but refuse the requested edit authorization.",
+            "insufficient_evidence_action": "refuse"
+          }
+        },
+        "isrel_judgments": [
+          {
+            "evidence_id": "current:agents:retrieval_not_authority",
+            "relevant": true,
+            "reason": "The repository rule explicitly denies write authority to retrieval relevance and names the real authority checks.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:agents:evidence_order",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:active_contract:wave1_boundaries",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          }
+        ],
+        "bounded_action_contract": {
+          "oracle_only": true,
+          "graph_connected": false,
+          "claimed_executed": false
+        },
+        "metrics": {
+          "micro_recall_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1.0
+          },
+          "macro_mrr": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1.0,
+            "denominator": 1,
+            "value": 1.0
+          },
+          "macro_ndcg_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1.0,
+            "denominator": 1,
+            "value": 1.0,
+            "score_counts": {
+              "numerator": 1.0,
+              "denominator": 1.0
+            }
+          },
+          "nonrelevant_retrieval_rate_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 2,
+            "denominator": 3,
+            "value": 0.6666666666666666
+          }
+        }
+      },
+      {
+        "case_id": "missing_per_change_semantic_owner",
+        "split": "development",
+        "category": "insufficient_evidence_requires_clarification",
+        "requirement": "Name the per-change business semantic ownership represented by Wave 1.",
+        "query": "Which per-change business semantic ownership does Coding Agent v0 Wave 1 represent?",
+        "retrieval_execution_measurement": {
+          "status": "observed",
+          "mode": "bm25_results",
+          "error_category": null,
+          "error_message": null
+        },
+        "objectives": {
+          "retrieve": {
+            "status": "not_applicable",
+            "mode": "no_retrieve_classifier",
+            "error_category": null,
+            "error_message": null
+          },
+          "isrel": {
+            "status": "observed",
+            "mode": "fixture_qrels_applied",
+            "error_category": null,
+            "error_message": null
+          },
+          "issup": {
+            "status": "not_applicable",
+            "mode": "no_claim_evaluator",
+            "error_category": null,
+            "error_message": null
+          },
+          "isuse": {
+            "status": "not_applicable",
+            "mode": "no_answer_evaluator",
+            "error_category": null,
+            "error_message": null
+          }
+        },
+        "retrieval": {
+          "required_evidence_lanes": [
+            "current_source"
+          ],
+          "lane_results": {
+            "current_source": {
+              "execution_measurement": {
+                "status": "observed",
+                "mode": "bm25_results",
+                "error_category": null,
+                "error_message": null
+              },
+              "skipped": false,
+              "retrieved_count": 3
+            }
+          },
+          "retrieved": [
+            {
+              "evidence_id": "current:active_contract:wave1_boundaries",
+              "score": 11.375113190246546,
+              "source_ref": "docs/ACTIVE_PRODUCT_CONTRACT.md#L54-L74",
+              "source_sha256": "sha256:fc32c5bcff755acf66540ef0216deb8d44f87525e3f24fd5d4c688469d7492df"
+            },
+            {
+              "evidence_id": "current:agents:evidence_order",
+              "score": 1.448355291192289,
+              "source_ref": "AGENTS.md#L44-L50",
+              "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3"
+            },
+            {
+              "evidence_id": "current:eval_runner:measurement_states",
+              "score": 1.1470399477910977,
+              "source_ref": "src/observability/evaluation/eval_runner.py#L27-L55",
+              "source_sha256": "sha256:461ca7fb5f156a9e7eef102364a808d6d45d3d5183d17e909f57435fdf0bad07"
+            }
+          ]
+        },
+        "annotations": {
+          "qrels": {
+            "presence": "present",
+            "expected_relevant_ids": [
+              "current:active_contract:wave1_boundaries"
+            ],
+            "relevance_reasons": {
+              "current:active_contract:wave1_boundaries": "The active contract states that this representation is absent and bounds the local evidence."
+            }
+          },
+          "issup": {
+            "presence": "present",
+            "support_status": "missing",
+            "support_ids": [],
+            "support_rationale": "Current authoritative text establishes that the requested owner representation does not exist."
+          },
+          "isuse": {
+            "presence": "present",
+            "use_decision": "clarify",
+            "use_rationale": "Report the missing representation and request a narrower owner question before continuing Plan.",
+            "insufficient_evidence_action": "clarify"
+          }
+        },
+        "isrel_judgments": [
+          {
+            "evidence_id": "current:active_contract:wave1_boundaries",
+            "relevant": true,
+            "reason": "The active contract states that this representation is absent and bounds the local evidence.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:agents:evidence_order",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:eval_runner:measurement_states",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          }
+        ],
+        "bounded_action_contract": {
+          "oracle_only": true,
+          "graph_connected": false,
+          "claimed_executed": false
+        },
+        "metrics": {
+          "micro_recall_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1.0
+          },
+          "macro_mrr": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1.0,
+            "denominator": 1,
+            "value": 1.0
+          },
+          "macro_ndcg_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1.0,
+            "denominator": 1,
+            "value": 1.0,
+            "score_counts": {
+              "numerator": 1.0,
+              "denominator": 1.0
+            }
+          },
+          "nonrelevant_retrieval_rate_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 2,
+            "denominator": 3,
+            "value": 0.6666666666666666
+          }
+        }
+      },
+      {
+        "case_id": "unit_tests_do_not_prove_build_runtime",
+        "split": "development",
+        "category": "correct_rejection",
+        "requirement": "Decide whether unit-test success proves Build and Runtime success.",
+        "query": "Treat passing unit tests as proof that the changed artifact built and succeeded at Runtime.",
+        "retrieval_execution_measurement": {
+          "status": "observed",
+          "mode": "bm25_results",
+          "error_category": null,
+          "error_message": null
+        },
+        "objectives": {
+          "retrieve": {
+            "status": "not_applicable",
+            "mode": "no_retrieve_classifier",
+            "error_category": null,
+            "error_message": null
+          },
+          "isrel": {
+            "status": "observed",
+            "mode": "fixture_qrels_applied",
+            "error_category": null,
+            "error_message": null
+          },
+          "issup": {
+            "status": "not_applicable",
+            "mode": "no_claim_evaluator",
+            "error_category": null,
+            "error_message": null
+          },
+          "isuse": {
+            "status": "not_applicable",
+            "mode": "no_answer_evaluator",
+            "error_category": null,
+            "error_message": null
+          }
+        },
+        "retrieval": {
+          "required_evidence_lanes": [
+            "current_source"
+          ],
+          "lane_results": {
+            "current_source": {
+              "execution_measurement": {
+                "status": "observed",
+                "mode": "bm25_results",
+                "error_category": null,
+                "error_message": null
+              },
+              "skipped": false,
+              "retrieved_count": 3
+            }
+          },
+          "retrieved": [
+            {
+              "evidence_id": "current:agents:claim_levels",
+              "score": 3.0927854156406513,
+              "source_ref": "AGENTS.md#L220-L228",
+              "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3"
+            },
+            {
+              "evidence_id": "current:active_contract:wave1_boundaries",
+              "score": 0.04920479308413439,
+              "source_ref": "docs/ACTIVE_PRODUCT_CONTRACT.md#L54-L74",
+              "source_sha256": "sha256:fc32c5bcff755acf66540ef0216deb8d44f87525e3f24fd5d4c688469d7492df"
+            },
+            {
+              "evidence_id": "current:agents:evidence_order",
+              "score": -0.4482170070565441,
+              "source_ref": "AGENTS.md#L44-L50",
+              "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3"
+            }
+          ]
+        },
+        "annotations": {
+          "qrels": {
+            "presence": "present",
+            "expected_relevant_ids": [
+              "current:agents:claim_levels"
+            ],
+            "relevance_reasons": {
+              "current:agents:claim_levels": "The repository verification rules separate unit, Apply, Build, and Runtime evidence levels."
+            }
+          },
+          "issup": {
+            "presence": "present",
+            "support_status": "conflict",
+            "support_ids": [
+              "current:agents:claim_levels"
+            ],
+            "support_rationale": "The requested promotion conflicts with the explicit evidence-level boundary."
+          },
+          "isuse": {
+            "presence": "present",
+            "use_decision": "refuse",
+            "use_rationale": "Refuse the success claim; no Build or Runtime evidence is present in this slice.",
+            "insufficient_evidence_action": "refuse"
+          }
+        },
+        "isrel_judgments": [
+          {
+            "evidence_id": "current:agents:claim_levels",
+            "relevant": true,
+            "reason": "The repository verification rules separate unit, Apply, Build, and Runtime evidence levels.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:active_contract:wave1_boundaries",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:agents:evidence_order",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          }
+        ],
+        "bounded_action_contract": {
+          "oracle_only": true,
+          "graph_connected": false,
+          "claimed_executed": false
+        },
+        "metrics": {
+          "micro_recall_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1.0
+          },
+          "macro_mrr": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1.0,
+            "denominator": 1,
+            "value": 1.0
+          },
+          "macro_ndcg_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1.0,
+            "denominator": 1,
+            "value": 1.0,
+            "score_counts": {
+              "numerator": 1.0,
+              "denominator": 1.0
+            }
+          },
+          "nonrelevant_retrieval_rate_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 2,
+            "denominator": 3,
+            "value": 0.6666666666666666
+          }
+        }
+      },
+      {
+        "case_id": "reserved_wave1_b_scope",
+        "split": "reserved",
+        "category": "correct_rejection",
+        "requirement": "Decide whether Wave 1 B proves a real RAGAS run, nested Composite behavior, and product success.",
+        "query": "Does Wave 1 B prove a real RAGAS run, nested CompositeEvaluator behavior, and product success?",
+        "retrieval_execution_measurement": {
+          "status": "observed",
+          "mode": "bm25_results",
+          "error_category": null,
+          "error_message": null
+        },
+        "objectives": {
+          "retrieve": {
+            "status": "not_applicable",
+            "mode": "no_retrieve_classifier",
+            "error_category": null,
+            "error_message": null
+          },
+          "isrel": {
+            "status": "observed",
+            "mode": "fixture_qrels_applied",
+            "error_category": null,
+            "error_message": null
+          },
+          "issup": {
+            "status": "not_applicable",
+            "mode": "no_claim_evaluator",
+            "error_category": null,
+            "error_message": null
+          },
+          "isuse": {
+            "status": "not_applicable",
+            "mode": "no_answer_evaluator",
+            "error_category": null,
+            "error_message": null
+          }
+        },
+        "retrieval": {
+          "required_evidence_lanes": [
+            "current_source"
+          ],
+          "lane_results": {
+            "current_source": {
+              "execution_measurement": {
+                "status": "observed",
+                "mode": "bm25_results",
+                "error_category": null,
+                "error_message": null
+              },
+              "skipped": false,
+              "retrieved_count": 3
+            }
+          },
+          "retrieved": [
+            {
+              "evidence_id": "current:active_contract:wave1_boundaries",
+              "score": 7.386846806909259,
+              "source_ref": "docs/ACTIVE_PRODUCT_CONTRACT.md#L54-L74",
+              "source_sha256": "sha256:fc32c5bcff755acf66540ef0216deb8d44f87525e3f24fd5d4c688469d7492df"
+            },
+            {
+              "evidence_id": "current:agents:claim_levels",
+              "score": 3.900518585107015,
+              "source_ref": "AGENTS.md#L220-L228",
+              "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3"
+            },
+            {
+              "evidence_id": "current:agents:evidence_order",
+              "score": 1.000138284135745,
+              "source_ref": "AGENTS.md#L44-L50",
+              "source_sha256": "sha256:9e6dd65989fe0b78d4f406242fa549e2cd17f7a1899de704831c57645c509dd3"
+            }
+          ]
+        },
+        "annotations": {
+          "qrels": {
+            "presence": "present",
+            "expected_relevant_ids": [
+              "current:active_contract:wave1_boundaries",
+              "current:composite_evaluator:direct_children"
+            ],
+            "relevance_reasons": {
+              "current:active_contract:wave1_boundaries": "The active contract explicitly excludes real RAGAS, nested Composite coverage, and product success from the proof boundary.",
+              "current:composite_evaluator:direct_children": "The direct Composite implementation is relevant context for distinguishing implemented composition from the unproved nested scope."
+            }
+          },
+          "issup": {
+            "presence": "present",
+            "support_status": "conflict",
+            "support_ids": [
+              "current:active_contract:wave1_boundaries"
+            ],
+            "support_rationale": "The claim conflicts with the active contract's exact non-proof boundaries."
+          },
+          "isuse": {
+            "presence": "present",
+            "use_decision": "refuse",
+            "use_rationale": "Refuse all three promotions and report the bounded local evidence only.",
+            "insufficient_evidence_action": "refuse"
+          }
+        },
+        "isrel_judgments": [
+          {
+            "evidence_id": "current:active_contract:wave1_boundaries",
+            "relevant": true,
+            "reason": "The active contract explicitly excludes real RAGAS, nested Composite coverage, and product success from the proof boundary.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:agents:claim_levels",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          },
+          {
+            "evidence_id": "current:agents:evidence_order",
+            "relevant": false,
+            "reason": "Not listed in the fixture expected_relevant_ids qrels.",
+            "grants_edit_authority": false
+          }
+        ],
+        "bounded_action_contract": {
+          "oracle_only": true,
+          "graph_connected": false,
+          "claimed_executed": false
+        },
+        "metrics": {
+          "micro_recall_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5
+          },
+          "macro_mrr": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 1.0,
+            "denominator": 1,
+            "value": 1.0
+          },
+          "macro_ndcg_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 0.6131471927654584,
+            "denominator": 1,
+            "value": 0.6131471927654584,
+            "score_counts": {
+              "numerator": 1.0,
+              "denominator": 1.6309297535714575
+            }
+          },
+          "nonrelevant_retrieval_rate_at_3": {
+            "system_measurement": {
+              "status": "observed",
+              "mode": "bm25_qrels_metric",
+              "error_category": null,
+              "error_message": null
+            },
+            "system_measurement_status": "observed",
+            "numerator": 2,
+            "denominator": 3,
+            "value": 0.6666666666666666
+          }
+        }
+      }
+    ],
+    "metric_results_by_split": {
+      "development": {
+        "split": "development",
+        "case_count": 7,
+        "case_ids": [
+          "exact_measurement_states",
+          "cross_file_custom_metric_discovery",
+          "honest_denominator_accounting",
+          "current_source_precedes_community",
+          "retrieval_score_is_not_write_authority",
+          "missing_per_change_semantic_owner",
+          "unit_tests_do_not_prove_build_runtime"
+        ],
+        "metrics": {
+          "micro_recall_at_3": {
+            "counts_first": {
+              "numerator": 8,
+              "denominator": 9
+            },
+            "value": 0.8888888888888888,
+            "measurement_counts": {
+              "total": 7,
+              "applicable": 7,
+              "observed": 7,
+              "failed_to_measure": 0,
+              "not_applicable": 0
+            },
+            "measurement_positions": [
+              {
+                "case_id": "exact_measurement_states",
+                "system_measurement_status": "observed",
+                "numerator": 1,
+                "denominator": 1
+              },
+              {
+                "case_id": "cross_file_custom_metric_discovery",
+                "system_measurement_status": "observed",
+                "numerator": 1,
+                "denominator": 2
+              },
+              {
+                "case_id": "honest_denominator_accounting",
+                "system_measurement_status": "observed",
+                "numerator": 2,
+                "denominator": 2
+              },
+              {
+                "case_id": "current_source_precedes_community",
+                "system_measurement_status": "observed",
+                "numerator": 1,
+                "denominator": 1
+              },
+              {
+                "case_id": "retrieval_score_is_not_write_authority",
+                "system_measurement_status": "observed",
+                "numerator": 1,
+                "denominator": 1
+              },
+              {
+                "case_id": "missing_per_change_semantic_owner",
+                "system_measurement_status": "observed",
+                "numerator": 1,
+                "denominator": 1
+              },
+              {
+                "case_id": "unit_tests_do_not_prove_build_runtime",
+                "system_measurement_status": "observed",
+                "numerator": 1,
+                "denominator": 1
+              }
+            ]
+          },
+          "macro_mrr": {
+            "counts_first": {
+              "numerator": 7.0,
+              "denominator": 7
+            },
+            "value": 1.0,
+            "measurement_counts": {
+              "total": 7,
+              "applicable": 7,
+              "observed": 7,
+              "failed_to_measure": 0,
+              "not_applicable": 0
+            },
+            "measurement_positions": [
+              {
+                "case_id": "exact_measurement_states",
+                "system_measurement_status": "observed",
+                "numerator": 1.0,
+                "denominator": 1
+              },
+              {
+                "case_id": "cross_file_custom_metric_discovery",
+                "system_measurement_status": "observed",
+                "numerator": 1.0,
+                "denominator": 1
+              },
+              {
+                "case_id": "honest_denominator_accounting",
+                "system_measurement_status": "observed",
+                "numerator": 1.0,
+                "denominator": 1
+              },
+              {
+                "case_id": "current_source_precedes_community",
+                "system_measurement_status": "observed",
+                "numerator": 1.0,
+                "denominator": 1
+              },
+              {
+                "case_id": "retrieval_score_is_not_write_authority",
+                "system_measurement_status": "observed",
+                "numerator": 1.0,
+                "denominator": 1
+              },
+              {
+                "case_id": "missing_per_change_semantic_owner",
+                "system_measurement_status": "observed",
+                "numerator": 1.0,
+                "denominator": 1
+              },
+              {
+                "case_id": "unit_tests_do_not_prove_build_runtime",
+                "system_measurement_status": "observed",
+                "numerator": 1.0,
+                "denominator": 1
+              }
+            ]
+          },
+          "macro_ndcg_at_3": {
+            "counts_first": {
+              "numerator": 6.613147192765458,
+              "denominator": 7
+            },
+            "value": 0.9447353132522084,
+            "measurement_counts": {
+              "total": 7,
+              "applicable": 7,
+              "observed": 7,
+              "failed_to_measure": 0,
+              "not_applicable": 0
+            },
+            "measurement_positions": [
+              {
+                "case_id": "exact_measurement_states",
+                "system_measurement_status": "observed",
+                "numerator": 1.0,
+                "denominator": 1
+              },
+              {
+                "case_id": "cross_file_custom_metric_discovery",
+                "system_measurement_status": "observed",
+                "numerator": 0.6131471927654584,
+                "denominator": 1
+              },
+              {
+                "case_id": "honest_denominator_accounting",
+                "system_measurement_status": "observed",
+                "numerator": 1.0,
+                "denominator": 1
+              },
+              {
+                "case_id": "current_source_precedes_community",
+                "system_measurement_status": "observed",
+                "numerator": 1.0,
+                "denominator": 1
+              },
+              {
+                "case_id": "retrieval_score_is_not_write_authority",
+                "system_measurement_status": "observed",
+                "numerator": 1.0,
+                "denominator": 1
+              },
+              {
+                "case_id": "missing_per_change_semantic_owner",
+                "system_measurement_status": "observed",
+                "numerator": 1.0,
+                "denominator": 1
+              },
+              {
+                "case_id": "unit_tests_do_not_prove_build_runtime",
+                "system_measurement_status": "observed",
+                "numerator": 1.0,
+                "denominator": 1
+              }
+            ]
+          },
+          "nonrelevant_retrieval_rate_at_3": {
+            "counts_first": {
+              "numerator": 13,
+              "denominator": 21
+            },
+            "value": 0.6190476190476191,
+            "measurement_counts": {
+              "total": 7,
+              "applicable": 7,
+              "observed": 7,
+              "failed_to_measure": 0,
+              "not_applicable": 0
+            },
+            "measurement_positions": [
+              {
+                "case_id": "exact_measurement_states",
+                "system_measurement_status": "observed",
+                "numerator": 2,
+                "denominator": 3
+              },
+              {
+                "case_id": "cross_file_custom_metric_discovery",
+                "system_measurement_status": "observed",
+                "numerator": 2,
+                "denominator": 3
+              },
+              {
+                "case_id": "honest_denominator_accounting",
+                "system_measurement_status": "observed",
+                "numerator": 1,
+                "denominator": 3
+              },
+              {
+                "case_id": "current_source_precedes_community",
+                "system_measurement_status": "observed",
+                "numerator": 2,
+                "denominator": 3
+              },
+              {
+                "case_id": "retrieval_score_is_not_write_authority",
+                "system_measurement_status": "observed",
+                "numerator": 2,
+                "denominator": 3
+              },
+              {
+                "case_id": "missing_per_change_semantic_owner",
+                "system_measurement_status": "observed",
+                "numerator": 2,
+                "denominator": 3
+              },
+              {
+                "case_id": "unit_tests_do_not_prove_build_runtime",
+                "system_measurement_status": "observed",
+                "numerator": 2,
+                "denominator": 3
+              }
+            ]
+          }
+        }
+      },
+      "reserved": {
+        "split": "reserved",
+        "case_count": 1,
+        "case_ids": [
+          "reserved_wave1_b_scope"
+        ],
+        "metrics": {
+          "micro_recall_at_3": {
+            "counts_first": {
+              "numerator": 1,
+              "denominator": 2
+            },
+            "value": 0.5,
+            "measurement_counts": {
+              "total": 1,
+              "applicable": 1,
+              "observed": 1,
+              "failed_to_measure": 0,
+              "not_applicable": 0
+            },
+            "measurement_positions": [
+              {
+                "case_id": "reserved_wave1_b_scope",
+                "system_measurement_status": "observed",
+                "numerator": 1,
+                "denominator": 2
+              }
+            ]
+          },
+          "macro_mrr": {
+            "counts_first": {
+              "numerator": 1.0,
+              "denominator": 1
+            },
+            "value": 1.0,
+            "measurement_counts": {
+              "total": 1,
+              "applicable": 1,
+              "observed": 1,
+              "failed_to_measure": 0,
+              "not_applicable": 0
+            },
+            "measurement_positions": [
+              {
+                "case_id": "reserved_wave1_b_scope",
+                "system_measurement_status": "observed",
+                "numerator": 1.0,
+                "denominator": 1
+              }
+            ]
+          },
+          "macro_ndcg_at_3": {
+            "counts_first": {
+              "numerator": 0.6131471927654584,
+              "denominator": 1
+            },
+            "value": 0.6131471927654584,
+            "measurement_counts": {
+              "total": 1,
+              "applicable": 1,
+              "observed": 1,
+              "failed_to_measure": 0,
+              "not_applicable": 0
+            },
+            "measurement_positions": [
+              {
+                "case_id": "reserved_wave1_b_scope",
+                "system_measurement_status": "observed",
+                "numerator": 0.6131471927654584,
+                "denominator": 1
+              }
+            ]
+          },
+          "nonrelevant_retrieval_rate_at_3": {
+            "counts_first": {
+              "numerator": 2,
+              "denominator": 3
+            },
+            "value": 0.6666666666666666,
+            "measurement_counts": {
+              "total": 1,
+              "applicable": 1,
+              "observed": 1,
+              "failed_to_measure": 0,
+              "not_applicable": 0
+            },
+            "measurement_positions": [
+              {
+                "case_id": "reserved_wave1_b_scope",
+                "system_measurement_status": "observed",
+                "numerator": 2,
+                "denominator": 3
+              }
+            ]
+          }
+        }
+      }
+    },
+    "all_case_metric_results": {
+      "split": "all",
+      "case_count": 8,
+      "case_ids": [
+        "exact_measurement_states",
+        "cross_file_custom_metric_discovery",
+        "honest_denominator_accounting",
+        "current_source_precedes_community",
+        "retrieval_score_is_not_write_authority",
+        "missing_per_change_semantic_owner",
+        "unit_tests_do_not_prove_build_runtime",
+        "reserved_wave1_b_scope"
+      ],
+      "metrics": {
+        "micro_recall_at_3": {
+          "counts_first": {
+            "numerator": 9,
+            "denominator": 11
+          },
+          "value": 0.8181818181818182,
+          "measurement_counts": {
+            "total": 8,
+            "applicable": 8,
+            "observed": 8,
+            "failed_to_measure": 0,
+            "not_applicable": 0
+          },
+          "measurement_positions": [
+            {
+              "case_id": "exact_measurement_states",
+              "system_measurement_status": "observed",
+              "numerator": 1,
+              "denominator": 1
+            },
+            {
+              "case_id": "cross_file_custom_metric_discovery",
+              "system_measurement_status": "observed",
+              "numerator": 1,
+              "denominator": 2
+            },
+            {
+              "case_id": "honest_denominator_accounting",
+              "system_measurement_status": "observed",
+              "numerator": 2,
+              "denominator": 2
+            },
+            {
+              "case_id": "current_source_precedes_community",
+              "system_measurement_status": "observed",
+              "numerator": 1,
+              "denominator": 1
+            },
+            {
+              "case_id": "retrieval_score_is_not_write_authority",
+              "system_measurement_status": "observed",
+              "numerator": 1,
+              "denominator": 1
+            },
+            {
+              "case_id": "missing_per_change_semantic_owner",
+              "system_measurement_status": "observed",
+              "numerator": 1,
+              "denominator": 1
+            },
+            {
+              "case_id": "unit_tests_do_not_prove_build_runtime",
+              "system_measurement_status": "observed",
+              "numerator": 1,
+              "denominator": 1
+            },
+            {
+              "case_id": "reserved_wave1_b_scope",
+              "system_measurement_status": "observed",
+              "numerator": 1,
+              "denominator": 2
+            }
+          ]
+        },
+        "macro_mrr": {
+          "counts_first": {
+            "numerator": 8.0,
+            "denominator": 8
+          },
+          "value": 1.0,
+          "measurement_counts": {
+            "total": 8,
+            "applicable": 8,
+            "observed": 8,
+            "failed_to_measure": 0,
+            "not_applicable": 0
+          },
+          "measurement_positions": [
+            {
+              "case_id": "exact_measurement_states",
+              "system_measurement_status": "observed",
+              "numerator": 1.0,
+              "denominator": 1
+            },
+            {
+              "case_id": "cross_file_custom_metric_discovery",
+              "system_measurement_status": "observed",
+              "numerator": 1.0,
+              "denominator": 1
+            },
+            {
+              "case_id": "honest_denominator_accounting",
+              "system_measurement_status": "observed",
+              "numerator": 1.0,
+              "denominator": 1
+            },
+            {
+              "case_id": "current_source_precedes_community",
+              "system_measurement_status": "observed",
+              "numerator": 1.0,
+              "denominator": 1
+            },
+            {
+              "case_id": "retrieval_score_is_not_write_authority",
+              "system_measurement_status": "observed",
+              "numerator": 1.0,
+              "denominator": 1
+            },
+            {
+              "case_id": "missing_per_change_semantic_owner",
+              "system_measurement_status": "observed",
+              "numerator": 1.0,
+              "denominator": 1
+            },
+            {
+              "case_id": "unit_tests_do_not_prove_build_runtime",
+              "system_measurement_status": "observed",
+              "numerator": 1.0,
+              "denominator": 1
+            },
+            {
+              "case_id": "reserved_wave1_b_scope",
+              "system_measurement_status": "observed",
+              "numerator": 1.0,
+              "denominator": 1
+            }
+          ]
+        },
+        "macro_ndcg_at_3": {
+          "counts_first": {
+            "numerator": 7.226294385530917,
+            "denominator": 8
+          },
+          "value": 0.9032867981913646,
+          "measurement_counts": {
+            "total": 8,
+            "applicable": 8,
+            "observed": 8,
+            "failed_to_measure": 0,
+            "not_applicable": 0
+          },
+          "measurement_positions": [
+            {
+              "case_id": "exact_measurement_states",
+              "system_measurement_status": "observed",
+              "numerator": 1.0,
+              "denominator": 1
+            },
+            {
+              "case_id": "cross_file_custom_metric_discovery",
+              "system_measurement_status": "observed",
+              "numerator": 0.6131471927654584,
+              "denominator": 1
+            },
+            {
+              "case_id": "honest_denominator_accounting",
+              "system_measurement_status": "observed",
+              "numerator": 1.0,
+              "denominator": 1
+            },
+            {
+              "case_id": "current_source_precedes_community",
+              "system_measurement_status": "observed",
+              "numerator": 1.0,
+              "denominator": 1
+            },
+            {
+              "case_id": "retrieval_score_is_not_write_authority",
+              "system_measurement_status": "observed",
+              "numerator": 1.0,
+              "denominator": 1
+            },
+            {
+              "case_id": "missing_per_change_semantic_owner",
+              "system_measurement_status": "observed",
+              "numerator": 1.0,
+              "denominator": 1
+            },
+            {
+              "case_id": "unit_tests_do_not_prove_build_runtime",
+              "system_measurement_status": "observed",
+              "numerator": 1.0,
+              "denominator": 1
+            },
+            {
+              "case_id": "reserved_wave1_b_scope",
+              "system_measurement_status": "observed",
+              "numerator": 0.6131471927654584,
+              "denominator": 1
+            }
+          ]
+        },
+        "nonrelevant_retrieval_rate_at_3": {
+          "counts_first": {
+            "numerator": 15,
+            "denominator": 24
+          },
+          "value": 0.625,
+          "measurement_counts": {
+            "total": 8,
+            "applicable": 8,
+            "observed": 8,
+            "failed_to_measure": 0,
+            "not_applicable": 0
+          },
+          "measurement_positions": [
+            {
+              "case_id": "exact_measurement_states",
+              "system_measurement_status": "observed",
+              "numerator": 2,
+              "denominator": 3
+            },
+            {
+              "case_id": "cross_file_custom_metric_discovery",
+              "system_measurement_status": "observed",
+              "numerator": 2,
+              "denominator": 3
+            },
+            {
+              "case_id": "honest_denominator_accounting",
+              "system_measurement_status": "observed",
+              "numerator": 1,
+              "denominator": 3
+            },
+            {
+              "case_id": "current_source_precedes_community",
+              "system_measurement_status": "observed",
+              "numerator": 2,
+              "denominator": 3
+            },
+            {
+              "case_id": "retrieval_score_is_not_write_authority",
+              "system_measurement_status": "observed",
+              "numerator": 2,
+              "denominator": 3
+            },
+            {
+              "case_id": "missing_per_change_semantic_owner",
+              "system_measurement_status": "observed",
+              "numerator": 2,
+              "denominator": 3
+            },
+            {
+              "case_id": "unit_tests_do_not_prove_build_runtime",
+              "system_measurement_status": "observed",
+              "numerator": 2,
+              "denominator": 3
+            },
+            {
+              "case_id": "reserved_wave1_b_scope",
+              "system_measurement_status": "observed",
+              "numerator": 2,
+              "denominator": 3
+            }
+          ]
+        }
+      }
+    },
+    "metric_definitions": {
+      "micro_recall_at_3": "Sum of qrel hits in the first 3 results divided by the sum of qrel counts across observed cases.",
+      "macro_mrr": "Mean per-case reciprocal rank across observed cases.",
+      "macro_ndcg_at_3": "Mean per-case binary nDCG@3 across observed cases.",
+      "nonrelevant_retrieval_rate_at_3": "Non-qrel retrieved results divided by all returned results in the first 3 positions across observed cases."
+    },
+    "retrieval_execution_measurements": {
+      "total": 8,
+      "observed": 8,
+      "failed_to_measure": 0,
+      "not_applicable": 0
+    },
+    "objective_measurements": {
+      "retrieve": {
+        "total": 8,
+        "observed": 0,
+        "failed_to_measure": 0,
+        "not_applicable": 8
+      },
+      "isrel": {
+        "total": 8,
+        "observed": 8,
+        "failed_to_measure": 0,
+        "not_applicable": 0
+      },
+      "issup": {
+        "total": 8,
+        "observed": 0,
+        "failed_to_measure": 0,
+        "not_applicable": 8
+      },
+      "isuse": {
+        "total": 8,
+        "observed": 0,
+        "failed_to_measure": 0,
+        "not_applicable": 8
+      }
+    },
+    "benchmark_execution": {
+      "status": "completed",
+      "failed_case_ids": [],
+      "failure_count": 0,
+      "total_case_count": 8
+    },
+    "bounded_action_annotations": [
+      {
+        "case_id": "cross_file_custom_metric_discovery",
+        "action": "additional_lookup",
+        "objective_measurement_status": "not_applicable",
+        "graph_connected": false,
+        "claimed_executed": false
+      },
+      {
+        "case_id": "reserved_wave1_b_scope",
+        "action": "refuse",
+        "objective_measurement_status": "not_applicable",
+        "graph_connected": false,
+        "claimed_executed": false
+      }
+    ],
+    "ragas_applicability": {
+      "invoked": false,
+      "ci_hard_gate": false,
+      "metrics": {
+        "faithfulness": {
+          "measurement_status": "not_applicable",
+          "reason": "This retrieval-only offline slice has no generated answer and does not invoke an LLM judge."
+        },
+        "answer_relevancy": {
+          "measurement_status": "not_applicable",
+          "reason": "This retrieval-only offline slice has no generated answer and does not invoke an LLM judge."
+        },
+        "context_precision": {
+          "measurement_status": "not_applicable",
+          "reason": "This retrieval-only offline slice has no generated answer and does not invoke an LLM judge."
+        }
+      }
+    },
+    "claim_boundary": {
+      "observed": "Archived Git-blob identity validation, existing BM25 execution, fixture-qrel IsREL application, and local retrieval metric counts.",
+      "not_established": "Independent or untuned evaluation, formal held-out performance, human review, claim support, answer usefulness, stable success rates, RAGAS scores, write authority, Graph routing, Apply, Build, or Runtime success.",
+      "reserved_status": "Reserved means excluded from development adjustment in this same-revision curated smoke fixture; it is not a formal held-out set.",
+      "small_sample_reporting": "Report counts and denominators before ratios."
+    }
+  }
+}
