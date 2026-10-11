@@ -3,6 +3,7 @@
   <p><strong>以源码证据驱动、以真实验收交付的 Coding Agent 平台</strong></p>
   <p>A coding agent platform that turns repository evidence into verified, controlled changes.</p>
   <p>
+    <a href="https://github.com/yang-hoo-xin/RepoForge/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/yang-hoo-xin/RepoForge/actions/workflows/ci.yml/badge.svg?branch=main"></a>
     <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square">
     <img alt="LangGraph workflows" src="https://img.shields.io/badge/LangGraph-Workflows-1C3C3C?style=flat-square">
     <img alt="FastAPI HTTP API" src="https://img.shields.io/badge/FastAPI-HTTP_API-009688?style=flat-square">
@@ -10,6 +11,7 @@
   </p>
   <p>
     <a href="#快速开始">快速开始</a> ·
+    <a href="#核心模块与工程取舍">核心模块</a> ·
     <a href="docs/PUBLIC_RESULTS.md">实测结果</a> ·
     <a href="docs/ARCHITECTURE_OVERVIEW.md">架构文档</a> ·
     <a href="deployment/service/README.md">服务部署</a>
@@ -42,6 +44,21 @@ flowchart LR
 ```
 
 **LangGraph** 负责业务编排，**RAG / 活源检索**提供调查依据，**ArtifactStore**保存产物谱系，**领域验收器**连接具体工程的编译和行为检查。模型服务支持本地 Ollama 与配置的外部提供方；执行范围见[产品契约](docs/ACTIVE_PRODUCT_CONTRACT.md)。
+
+## 核心模块与工程取舍
+
+RepoForge 按“编排—证据—检索—生成—执行—验收—服务化”拆分职责；各模块通过显式产物与身份关联协作，领域规则与共享 Agent 控制面保持分离。
+
+| 模块 | 职责与关键设计 | 代码 / 证据入口 |
+| --- | --- | --- |
+| **任务编排与状态机** | 将自然语言请求路由为新建、修改、续接或澄清任务；LangGraph 通过显式状态转移串联调查、计划、补丁、验收与失败修订，并支持 checkpoint、interrupt / resume。 | [请求路由](scripts/dsh_request_routing.py) · [工作流](src/mod_agent/workflow/graph.py) · [规划](src/mod_agent/planning/) |
+| **源码证据与上下文** | 默认从当前工作区执行 `rg` 活源检索与有界源码读取，校验证据身份、freshness、需求覆盖和可编辑范围；历史记忆与文档证据只作辅助，不能替代当前源码。 | [Evidence](src/mod_agent/evidence/) · [活源检索](src/mod_agent/evidence/rg_live.py) · [上下文策略](src/mod_agent/evidence/small_project_context.py) |
+| **RAG 知识检索** | 摄取链覆盖解析、切分、Embedding、BM25 与向量入库；查询层提供 Sparse / Dense / Hybrid、融合、重排和引用。Dense、RRF 与模型重排保持可选或实验定位，不冒充 Agent 默认取证路径。 | [Ingestion](src/ingestion/) · [Query Engine](src/core/query_engine/) · [检索决策](docs/RETRIEVAL_ARCHITECTURE_DECISIONS.md) |
+| **补丁生成与受控执行** | Patch worker 在计划绑定的源码范围内生成最小变更；Review、Dry-run、源码 preimage、允许路径和授权共同约束副作用，再进入隔离 Apply / Build，行为失败可返回 Repair。 | [Patch loop](src/mod_agent/proposal/patch_agent_loop.py) · [受控执行](src/mod_agent/execution/) · [产品执行](src/mod_agent/product_execution.py) |
+| **领域验收与评测驱动** | 共享执行链接入编译检查和领域行为裁判，保留首个失败并把可操作反馈送回修订；结果区分 `code_ready`、`awaiting_approval` 与 `delivered`，不以局部通过替代交付。 | [领域验收](src/mod_agent/domain/) · [评测](src/mod_agent/evaluation/) · [EDD 口径](docs/EVALUATION_DRIVEN_DEVELOPMENT.md) |
+| **模型接入与训练实验** | 统一 LLM 抽象接入 Ollama、OpenAI、Azure 与 DeepSeek；Agent-turn 另提供 Ollama Chat、Qwen Chat 与 OpenAI Responses 适配器。QLoRA Patch SFT 与 Self-RAG 作为实验链保留，未因脚本存在而进入默认产品路径。 | [模型适配](src/libs/llm/) · [QLoRA SFT](scripts/run_patch_sft_training.py) · [Self-RAG](scripts/run_self_rag_training.py) |
+| **产物谱系、追踪与恢复** | ArtifactStore 保存 revision、哈希与 lineage；Trace 关联模型请求、工具观察、Token、验收和失败反馈，支持候选保存、复验与有界续接。外部可观测投影不替代业务事实。 | [ArtifactStore](src/mod_agent/artifacts/) · [Trace](src/core/trace/) · [Observability](src/observability/) |
+| **服务化与协议接入** | FastAPI、独立 Worker 与 Redis 实现异步队列、租约、幂等、限流、缓存和超时；Prometheus、Docker Compose 与 MCP 复用同一业务模块，而不是另写展示逻辑。 | [服务层](src/service_layer/) · [MCP](src/mcp_server/) · [部署指南](deployment/service/README.md) |
 
 ## 已验证成果
 
@@ -82,15 +99,13 @@ curl.exe http://127.0.0.1:8080/health
 
 Compose 自动初始化真实仓库源码的 BM25 / Chroma 示例语料，默认运行无需模型的纯检索服务。API 文档位于 `http://127.0.0.1:8080/docs`，Prometheus 位于 `http://127.0.0.1:9095`。请求格式、认证、Agent profile 注册和停止命令见[部署指南](deployment/service/README.md)。
 
-## 文档与代码
+## 深入阅读
 
 | 从这里开始 | 内容 |
 | --- | --- |
 | [公开实测结果](docs/PUBLIC_RESULTS.md) | 交付案例、服务性能、故障恢复与证据范围。 |
 | [架构说明](docs/ARCHITECTURE_OVERVIEW.md) · [产品契约](docs/ACTIVE_PRODUCT_CONTRACT.md) | 模块职责、执行流程与权限边界。 |
 | [部署指南](deployment/service/README.md) · [压测说明](scripts/service_load/README.md) | API / Worker / Redis / Prometheus 部署与测量口径。 |
-| [Agent 核心](src/mod_agent/) · [工作流](src/mod_agent/workflow/graph.py) · [领域验收](src/mod_agent/domain/) | 调查、规划、补丁、执行、验收与恢复。 |
-| [检索服务](src/core/query_engine/) · [服务层](src/service_layer/) · [MCP](src/mcp_server/) | 知识查询、异步服务与协议接入。 |
 | [测试](tests/) · [评测定义](docs/EVALUATION_DRIVEN_DEVELOPMENT.md) · [历史成果](docs/PROJECT_OUTCOMES.md) | 回归检查、评测方法与完整演进记录。 |
 
 ## 持续迭代
