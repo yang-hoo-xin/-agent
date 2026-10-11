@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="840" height="188" viewBox="0 0 840 188" role="img" aria-labelledby="title desc">
+  <title id="title">RepoForge</title>
+  <desc id="desc">RepoForge. From repository evidence to verified changes.</desc>
+  <defs>
+    <linearGradient id="surface" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#101b30"/>
+      <stop offset="1" stop-color="#172941"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#67e8f9"/>
+      <stop offset="1" stop-color="#60a5fa"/>
+    </linearGradient>
+  </defs>
+  <rect width="840" height="188" rx="20" fill="url(#surface)"/>
+  <path d="M651 0 463 188M735 0 547 188M819 0 631 188" stroke="#ffffff" stroke-opacity=".035" stroke-width="32"/>
+  <rect x="43" y="45" width="98" height="98" rx="24" fill="#10243a" stroke="#31516e"/>
+  <path d="m75 75-17 19 17 19m34-38 17 19-17 19" fill="none" stroke="url(#accent)" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="m99 71-14 46" fill="none" stroke="#fbbf24" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="123" cy="62" r="5" fill="#fbbf24"/>
+  <text x="173" y="97" fill="#f8fafc" font-family="Segoe UI,Arial,sans-serif" font-size="49" font-weight="700" letter-spacing="-1.5">RepoForge</text>
+  <text x="176" y="128" fill="#b8cbe0" font-family="Segoe UI,Arial,sans-serif" font-size="17" letter-spacing=".2">From repository evidence to verified changes.</text>
+</svg>

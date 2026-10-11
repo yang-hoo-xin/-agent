@@ -1,4 +1,4 @@
-"""Tool safety primitives for the Evidence-Grounded Controlled Code Generation Agent Platform."""
+"""Tool safety primitives for RepoForge."""
 
 from .permissions import PermissionDecision, PermissionLevel, PermissionModel
 

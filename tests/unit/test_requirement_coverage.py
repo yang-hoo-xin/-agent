@@ -1370,6 +1370,12 @@ def test_v3_four_site_plan_projects_and_materializes_canned_native_response(
         "rationale",
         "rollback_hint",
         "after_text",
+        "before_text",
+    }
+    item_schema = llm.kwargs["response_format"]["properties"]["changes"]["items"]
+    assert set(item_schema["required"]) == schema_fields - {"before_text"}
+    assert item_schema["properties"]["before_text"] == {
+        "type": "string", "minLength": 1,
     }
     assert provider_requests == [{"body_sha256": "bound", "body_utf8": "{}"}]
     evidence_by_id = {item.evidence_id: item for item in complete_items}

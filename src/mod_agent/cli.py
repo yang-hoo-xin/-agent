@@ -1,4 +1,4 @@
-"""Local CLI for the Evidence-Grounded Controlled Code Generation Agent Platform."""
+"""Local CLI for RepoForge."""
 
 from __future__ import annotations
 
@@ -629,7 +629,7 @@ def build_parser(
 
     parser = argparse.ArgumentParser(
         prog="mod-agent",
-        description="Evidence-Grounded Controlled Code Generation Agent Platform CLI",
+        description="RepoForge — evidence-grounded Coding Agent CLI",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 

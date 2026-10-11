@@ -27,7 +27,7 @@ _DEFAULT_TRACES_PATH = resolve_path("logs/traces.jsonl")
 
 
 def get_logger(
-    name: str = "evidence-grounded-controlled-code-generation-agent-platform",
+    name: str = "repoforge",
     log_level: Optional[str] = None,
 ) -> logging.Logger:
     """Get a configured logger.
@@ -110,7 +110,7 @@ class JSONFormatter(logging.Formatter):
 def get_trace_logger(
     traces_path: str | Path = _DEFAULT_TRACES_PATH,
     *,
-    name: str = "evidence-grounded-controlled-code-generation-agent-platform.trace",
+    name: str = "repoforge.trace",
 ) -> logging.Logger:
     """Return a logger that writes JSON Lines to *traces_path*.
 

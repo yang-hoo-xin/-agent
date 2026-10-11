@@ -3,7 +3,7 @@
 ## 1. Purpose
 
 This document preserves the retrieval and Agentic RAG decisions discussed for
-the Evidence-Grounded Controlled Code Generation Agent Platform. It separates:
+RepoForge. It separates:
 
 - implemented facts;
 - design decisions;

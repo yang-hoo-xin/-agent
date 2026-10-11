@@ -1,13 +1,14 @@
 """Historical Findings retain exact meaning across reversible input text encoding."""
 
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
 import pytest
 
 from src.mod_agent import initial_findings_continuation as continuation
-from src.mod_agent.evidence import model_view
+from src.mod_agent.evidence import RgLiveEvidenceProvider, model_view
 from src.mod_agent.evidence import requirement_coverage_provider as provider
 from src.mod_agent.evidence.model_view import deduplicate_findings_input_text
 from tests.unit import test_findings_schema_recovery as schema_scenario
@@ -65,6 +66,40 @@ def test_initial_preparation_replays_raw_and_encoded_history_without_calls(
     assert prepared["budget"] == result["model_call_budget"]
     assert prepared["model_calls_performed"] == 0
     assert state["encoded_calls"] >= 1
+    assert len(posts) == 2
+    assert all(path.read_bytes() == raw for path, raw in before.items())
+
+
+def test_initial_preparation_preserves_recorded_source_budget_before_material_floor(
+        execution_config, monkeypatch, capsys):
+    collect = RgLiveEvidenceProvider.collect_query_set
+    findings = provider.StructuredModelRequirementCoverageProvider.findings
+
+    def prior_collect(self, *, queries, **kwargs):
+        kwargs["max_items"] = len(queries)
+        return collect(self, queries=queries, **kwargs)
+
+    def prior_findings(self, *, retrieved_pack, **kwargs):
+        budget = {key: value for key, value in retrieved_pack.budget_summary.items()
+                  if key != "source_material_budget_selection"}
+        return findings(self, retrieved_pack=replace(retrieved_pack, budget_summary=budget), **kwargs)
+
+    with monkeypatch.context() as historical:
+        # 为什么要有它：记录真实旧材料分配而非改写已封存请求，验证新重放不会把旧预算升级成当前默认。
+        historical.setattr(RgLiveEvidenceProvider, "collect_query_set", prior_collect)
+        historical.setattr(provider.StructuredModelRequirementCoverageProvider, "findings", prior_findings)
+        result, posts = _failed_run(execution_config, monkeypatch, capsys)
+    root = Path(result["run_root"])
+    before = {path: path.read_bytes() for path in root.rglob("*") if path.is_file()}
+    monkeypatch.setattr(httpx.HTTPTransport, "handle_request", lambda *_: pytest.fail("unexpected HTTP"))
+    prepared = continuation.prepare_initial_findings_continuation(
+        run_root=root, run_id=result["run_id"], execution_config=execution_config)
+    packet = prepared["continuation_input"]
+    budget = packet["retrieved_evidence"]["budget_summary"]
+    assert budget["source_material_budget"]["max_items"] == len(packet["materialized_projection"]["queries"])
+    assert budget["source_material_budget"]["max_items"] < budget["source_material_budget"]["small_project_material_floor"]
+    assert "source_material_budget_selection" not in budget
+    assert prepared["model_calls_performed"] == 0 and prepared["budget"] == result["model_call_budget"]
     assert len(posts) == 2
     assert all(path.read_bytes() == raw for path, raw in before.items())
 

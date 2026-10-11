@@ -8,9 +8,8 @@ from pathlib import Path
 
 from src.mod_agent.artifacts import ArtifactRef, ArtifactStore
 from src.mod_agent.evidence.optimization_policy import run_optimization_policy
-from src.mod_agent.evidence import RgLiveEvidenceProvider, model_view, requirement_coverage_provider
+from src.mod_agent.evidence import model_view, requirement_coverage_provider
 from src.mod_agent.evidence.requirement_coverage import materialize_requirement_coverage_projection
-from src.mod_agent.evidence.source_view import run_small_file_max_bytes
 from src.mod_agent.requirement_coverage_model import requirement_coverage_messages_match
 
 
@@ -131,7 +130,10 @@ def prepare_findings_schema_recovery(*, run_root, run_id, execution_config, allo
             if attributes.get(f"{key}_sha256") != observed["sha256"]:
                 raise ValueError("FINDINGS_SCHEMA_RECOVERY_TRACE_INVALID")
             references.append(observed)
-        if (set(values) != ({"request", "provider_request", "response"} if status == 200 else {"request", "provider_request"})
+        required_bodies = {"request", "provider_request", "response"} if status == 200 else {"request", "provider_request"}
+        # 为什么要有它：成功调用现在额外保存原始provider响应；它仍须通过上述文件及trace摘要校验，不能使原有历史trace失效。
+        allowed_bodies = (required_bodies, required_bodies | {"provider_response"}) if status == 200 else (required_bodies,)
+        if (set(values) not in allowed_bodies
                 or values["provider_request"]["messages"] != values["request"]["messages"]
                 or values["provider_request"]["format"] != values["request"]["response_format"]
                 or values["provider_request"]["model"] != original["model"]):
@@ -165,11 +167,11 @@ def prepare_findings_schema_recovery(*, run_root, run_id, execution_config, allo
             or projections[0]["materialized_projection_sha256"] != continuation._digest(materialized)
             or retrievals[0]["materialized_projection_sha256"] != continuation._digest(materialized)):
         raise ValueError("FINDINGS_SCHEMA_RECOVERY_PROJECTION_CHANGED")
-    retrieved = RgLiveEvidenceProvider(root, small_file_max_bytes=run_small_file_max_bytes(root),
-                reuse_query_observations=run_optimization_policy(root)["reuse_query_observations"]).collect_query_set(
-        queries=tuple(dict(q) for q in materialized["queries"]),
-        source_identity_query=feature["user_request"],
-        search_root=f"generated_mods/{feature['target_mod']}", max_items=max(1, len(materialized["queries"])))
+    historical_findings_payload = json.loads(next(row["content"] for row in findings_wire["request"]["messages"]
+                                                 if row["role"] == "user"))
+    retrieved = continuation._replay_source_query_set(root=root, materialized=materialized,
+        request=feature["user_request"], search_root=f"generated_mods/{feature['target_mod']}",
+        historical_payload=historical_findings_payload)
     if (retrieved.items or retrievals[0]["evidence_item_count"] != 0
             or retrieved.budget_summary["per_query_execution"] != retrievals[0]["query_execution"]):
         raise ValueError("FINDINGS_SCHEMA_RECOVERY_RETRIEVAL_CHANGED")
@@ -181,8 +183,6 @@ def prepare_findings_schema_recovery(*, run_root, run_id, execution_config, allo
         contract.update(role=role, payload=deepcopy(payload), schema=deepcopy(schema))
         raise _FindingsPreparedError()
     try:
-        historical_findings_payload = json.loads(next(row["content"] for row in findings_wire["request"]["messages"]
-                                                     if row["role"] == "user"))
         # 为什么要有它：这里只修原empty-enum故障，不能同时悄悄替换当时的零证据语义协议。
         requirement_coverage_provider.StructuredModelRequirementCoverageProvider(capture, compress_findings_input=run_optimization_policy(root)["compress_findings_input"],
             empty_evidence_policy=historical_findings_payload.get("empty_evidence_policy"),

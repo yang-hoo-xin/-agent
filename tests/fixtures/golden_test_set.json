@@ -1,5 +1,5 @@
 {
-  "description": "Golden test set for Evidence-Grounded Controlled Code Generation Agent Platform evaluation. Contains test queries with expected chunk IDs for IR metrics and optional reference answers for LLM-as-Judge metrics.",
+  "description": "Golden test set for RepoForge evaluation. Contains test queries with expected chunk IDs for IR metrics and optional reference answers for LLM-as-Judge metrics.",
   "version": "1.0",
   "test_cases": [
     {

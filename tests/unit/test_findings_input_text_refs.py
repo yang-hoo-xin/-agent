@@ -1,6 +1,7 @@
 """Reversible Findings text sharing keeps source facts, obligations and admission intact."""
 from copy import deepcopy
 import json
+from pathlib import PurePosixPath, PureWindowsPath
 
 import pytest
 
@@ -108,3 +109,53 @@ def test_initial_findings_shares_text_without_dropping_any_obligation_or_origin(
     assert len(encoded['relations']) == len(original['relations'])
     assert encoded['source_observations'] == original['source_observations']
     assert requirement_coverage_messages_match(encoded, messages(original))
+
+
+@pytest.mark.parametrize("path_type", [PurePosixPath, PureWindowsPath])
+def test_local_path_guard_checks_raw_and_encoded_meaning_without_changing_wire(monkeypatch, path_type):
+    from src.mod_agent import local_entry
+
+    monkeypatch.setattr(local_entry, "Path", path_type)
+    raw = payload()
+    encoded = deduplicate_findings_input_text(raw)
+    before = deepcopy(encoded)
+    local_entry._assert_no_absolute_local_paths(raw)
+    local_entry._assert_no_absolute_local_paths(encoded)
+    assert encoded == before
+    assert expand_findings_input_text(encoded) == raw
+
+
+@pytest.mark.parametrize("path_type", [PurePosixPath, PureWindowsPath])
+def test_raw_and_encoded_absolute_text_are_both_rejected(monkeypatch, path_type):
+    from src.mod_agent import local_entry
+
+    monkeypatch.setattr(local_entry, "Path", path_type)
+    encoded = deduplicate_findings_input_text(payload())
+    encoded["relations"][0]["parent_requirements"][0]["text"] = (
+        "/private/secret" if path_type is PurePosixPath else "C:/private/secret")
+    raw = expand_findings_input_text(encoded)
+    for value in (raw, encoded):
+        with pytest.raises(local_entry.LocalEntryError, match="absolute local path"):
+            local_entry._assert_no_absolute_local_paths(value)
+
+
+@pytest.mark.parametrize("damage", ["missing_marker", "unknown_marker", "outside_pointer", "absolute_target", "unrelated_metadata"])
+def test_encoded_text_does_not_bypass_posix_local_path_guard(monkeypatch, damage):
+    from src.mod_agent import local_entry
+
+    monkeypatch.setattr(local_entry, "Path", PurePosixPath)
+    encoded = deduplicate_findings_input_text(payload())
+    parent = encoded["relations"][0]["parent_requirements"][0]
+    if damage == "missing_marker":
+        del encoded["findings_input_text_encoding"]
+    elif damage == "unknown_marker":
+        encoded["findings_input_text_encoding"]["version"] = "unknown"
+    elif damage == "outside_pointer":
+        parent["input_obligations"][0]["text_ref"] = "/private/secret"
+    elif damage == "absolute_target":
+        parent["text"] = "/private/secret"
+    else:
+        encoded["metadata"] = {"text_ref": "/private/secret"}
+    expected = (ValueError if damage in {"unknown_marker", "outside_pointer"} else local_entry.LocalEntryError)
+    with pytest.raises(expected, match="FINDINGS_INPUT_TEXT|absolute local path"):
+        local_entry._assert_no_absolute_local_paths(encoded)

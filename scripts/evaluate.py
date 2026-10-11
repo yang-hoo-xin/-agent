@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Evaluation script for Evidence-Grounded Controlled Code Generation Agent Platform.
+"""Evaluation script for RepoForge.
 
 Runs batch evaluation against a golden test set and outputs a metrics report.
 

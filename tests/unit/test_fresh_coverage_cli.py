@@ -1287,7 +1287,7 @@ def test_fresh_coverage_cli_persists_success_and_stops_before_planning(
     assert result["can_generate_patch"] is True
     assert result["query_count"] == 1
     assert result["item_count"] == 1
-    assert result["max_items"] == 1
+    assert result["max_items"] == 4
     assert result["model_execution"]["roles"] == [
         "requirement_projection",
         "requirement_findings",

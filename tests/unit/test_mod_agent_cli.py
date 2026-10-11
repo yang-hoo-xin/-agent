@@ -2304,15 +2304,25 @@ def _public_patch_upstream_scenario(
                     if message_type == "product_requirement_findings":
                         observed.findings.append(context)
                         ids = [row["evidence_id"] for row in context["source_observations"]]
+                        native_findings = context.get("native_findings_contract") == "planning_readiness_v1"
                         for row in content["findings"]:
-                            row["evidence_ids"] = ids
+                            row["current_evidence_ids" if native_findings else "evidence_ids"] = ids
                             if row["edit_target_evidence_ids"]:
                                 row["edit_target_evidence_ids"] = ids
                         if initial_findings_gap and (len(observed.findings) == 1 or findings_still_missing):
                             for row in content["findings"]:
-                                row.update(relationship="missing", evidence_ids=[],
-                                    edit_target_evidence_ids=[],
-                                    unresolved_gaps=["Offline fixture requires the unobserved shared-state source."])
+                                if native_findings:
+                                    row.update(planning_readiness="needs_current_evidence",
+                                        current_evidence_ids=[], edit_target_evidence_ids=[],
+                                        current_basis="The shared-state source has not been observed.",
+                                        blocking_current_facts=[{
+                                            "fact_needed": "The current shared-state source implementation.",
+                                            "planning_impact": "The shared-state owner must be observed before planning its change.",
+                                        }])
+                                else:
+                                    row.update(relationship="missing", evidence_ids=[],
+                                        edit_target_evidence_ids=[],
+                                        unresolved_gaps=["Offline fixture requires the unobserved shared-state source."])
             else:
                 planning = next((value for value in contexts if "allowed_edit_evidence_ids" in value), None)
                 if planning is not None:

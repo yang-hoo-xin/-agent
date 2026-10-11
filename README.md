@@ -1,97 +1,141 @@
-# 面向既有代码库维护的 Coding Agent 平台
+<div align="center">
+  <img src="docs/assets/repoforge-mark.svg" alt="RepoForge — From repository evidence to verified changes" width="840">
+  <p><strong>以源码证据驱动、以真实验收交付的 Coding Agent 平台</strong></p>
+  <p>A coding agent platform that turns repository evidence into verified, controlled changes.</p>
+  <p>
+    <a href="https://github.com/yang-hoo-xin/RepoForge/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/yang-hoo-xin/RepoForge/actions/workflows/ci.yml/badge.svg?branch=main"></a>
+    <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square">
+    <img alt="LangGraph workflows" src="https://img.shields.io/badge/LangGraph-Workflows-1C3C3C?style=flat-square">
+    <img alt="FastAPI HTTP API" src="https://img.shields.io/badge/FastAPI-HTTP_API-009688?style=flat-square">
+    <img alt="Redis queues and leases" src="https://img.shields.io/badge/Redis-Queues_%26_Leases-DC382D?style=flat-square">
+  </p>
+  <p>
+    <a href="#快速开始">快速开始</a> ·
+    <a href="#核心模块与工程取舍">核心模块</a> ·
+    <a href="#精简-trace-示例">Trace 示例</a> ·
+    <a href="docs/PUBLIC_RESULTS.md">实测结果</a> ·
+    <a href="docs/ARCHITECTURE_OVERVIEW.md">架构文档</a> ·
+    <a href="deployment/service/README.md">服务部署</a>
+  </p>
+</div>
 
-**Evidence-Grounded Controlled Code Generation Agent Platform**
+---
 
-把自然语言需求推进到可验收的代码变更：调查当前源码与依赖 API，生成补丁，利用真实编译和行为反馈修订，再按授权应用到隔离工程。首个验证领域是 **C# / Unity / BepInEx / IL2CPP / Harmony 风格的 GTFO Mod**，同时保留面向其他代码库扩展的领域接口。
+RepoForge 面向新建、修改和修复代码库的自然语言任务，将**源码调查 → 补丁生成 → 编译与行为验收 → 授权交付**连接为可追溯工作流。首个验证领域是 C# / Unity / BepInEx / IL2CPP / Harmony 风格的 GTFO Mod，领域验收与共享 Agent 执行链分离，便于扩展其他工程场景。
 
-项目关注三个工程问题：Agent 是否完成了需求，修改是否在授权范围内，以及失败过程、模型成本和验收结果能否追溯。当前是研发原型，已执行真实模型、编译、受控行为验收和部分隔离交付；尚无跨项目稳定成功率、多租户或生产部署结论。
+## 核心能力
 
-[公开实测结果](docs/PUBLIC_RESULTS.md) · [产品目标与执行边界](docs/ACTIVE_PRODUCT_CONTRACT.md) · [架构说明](docs/ARCHITECTURE_OVERVIEW.md) · [服务部署](deployment/service/README.md)
+- **从当前源码找到依据**：默认使用 ripgrep 活源检索，结合依赖 API、文档 RAG 与引用，为需求调查、规划和代码修改提供上下文。
+- **让验收反馈驱动修订**：LangGraph 编排任务阶段，共享 Patch worker 接入真实编译与领域行为验收；失败反馈进入后续修订，候选可保存、复验和续接。
+- **让修改和结果可复查**：精确 diff、源码身份、授权和适用验收绑定；ArtifactStore 保存产物与谱系，Trace 关联模型调用、工具观察和用量。
+- **把 Agent 接入服务**：FastAPI 与独立 Worker 复用正常业务入口；Redis 提供队列、租约、幂等、限流和缓存，配合超时处理、Prometheus 与 Docker Compose。
 
-## 核心设计
+## 工作流
 
 ```mermaid
 flowchart LR
-    A[自然语言需求] --> B[新建 / 修改 / 继续修复 / 澄清]
+    A[自然语言需求] --> B[新建 / 修改 / 继续修复]
     B --> C[源码与 API 调查]
     C --> D[计划与补丁]
-    D --> E[编译与适用行为验收]
+    D --> E[编译与行为验收]
     E -->|失败反馈| D
-    E -->|候选通过| F[确定性 Review 与 Dry-run]
+    E -->|候选通过| F[Review / Dry-run]
     F --> G[精确授权]
-    G --> H[隔离 Apply / 正式 Build / 复验]
+    G --> H[隔离 Apply / Build / 复验]
 ```
 
-| 层次 | 实现与作用 |
-| --- | --- |
-| 工作流与领域 | **LangGraph** 编排调查、规划、补丁、审阅、执行及恢复；领域验收器位于 `src/mod_agent/domain/`，将 C# 编译、配置检查和行为探针接入共享执行链。 |
-| 源码与知识 | 默认使用 **ripgrep 活源检索**，可选索引源码；文档 RAG 通过 BM25、Dense / Hybrid、重排与引用提供证据。检索与代码修改分别拥有自己的验收口径。 |
-| 受控执行 | 修改绑定目标路径、当前源码、精确 diff 和有效授权；Review、无写入 Dry-run、隔离 Apply、真实 Build 分别记录结果。支持任务委托及原人审路径。 |
-| 持久化与可观测性 | **ArtifactStore** 保存业务产物、哈希和谱系；Trace 关联模型请求、工具观察、失败反馈和用量。保留候选可用于同任务复验与续接。 |
-| 服务与接入 | **FastAPI + 独立 Worker + Redis** 提供异步作业、原子队列、租约、幂等、限流、缓存、超时及有界重试；提供 CLI、MCP 和只读状态入口，使用 Prometheus 与 Docker Compose 部署服务演示。 |
+**LangGraph** 负责业务编排，**RAG / 活源检索**提供调查依据，**ArtifactStore**保存产物谱系，**领域验收器**连接具体工程的编译和行为检查。模型服务支持本地 Ollama 与配置的外部提供方；执行范围见[产品契约](docs/ACTIVE_PRODUCT_CONTRACT.md)。
 
-RAG 支撑调查，LangGraph 编排业务，ArtifactStore 保存可复查结果；外部模型与本地 Ollama 的配置、数据披露及执行授权各有明确边界。具体合同见[当前产品契约](docs/ACTIVE_PRODUCT_CONTRACT.md)。
+## 核心模块与工程取舍
 
-## 已取得的结果
+RepoForge 按“编排—证据—检索—生成—执行—验收—服务化”拆分职责；各模块通过显式产物与身份关联协作，领域规则与共享 Agent 控制面保持分离。
 
-以下为保留原失败与分母的精选记录，完整范围见[公开结果与证据索引](docs/PUBLIC_RESULTS.md)。
-
-| 验证对象 | 实际结果 | 适用范围 |
+| 模块 | 职责与关键设计 | 代码 / 证据入口 |
 | --- | --- | --- |
-| SpreadAPI 代码修改交付 | 非法输入原子拒绝及行为保留：原版本 **53/87** 检查通过，候选与正式 Build 后 DLL 均 **87/87** 通过；成功尝试含路由 **31,249 Token**，此前失败尝试 **42,660 Token**。 | 已暴露开发题、开发者配置的受控验收；9 个独立进程、60 个动作，跳过游戏回调主体，独立任务增量 0。 |
-| 模块评测驱动修复 | 覆盖 13 个模块、224 个不同工程用例；最新结果 **222 通过、2 项训练依赖问题未解决**，修复非有限预算与 DLL / 验收身份绑定缺陷。 | 282 次执行包含复验，部分使用替身；这轮产品模型调用和新增 Mod 交付均为 0。 |
-| 异步检索服务 | 两个 Worker、4 并发，**64/64** 作业成功，**1.028 作业/秒，P95 4.031 秒**。 | 6 个源码文件 / 37 个块的纯 BM25 检索，模型调用 0；该条件仅运行一次，统计窗口含收尾。 |
-| 真实 Agent HTTP 入口 | 本地 Qwen3-coder:30b 经正常路由和 LangGraph 执行，候选编译成功，5 个独立进程的 **15/15 行为断言**通过，执行 **179.085 秒**。 | 终态为 `awaiting_approval`，未 Apply、未完成最终交付；不计入独立交付率。 |
+| **任务编排与状态机** | 将自然语言请求路由为新建、修改、续接或澄清任务；LangGraph 通过显式状态转移串联调查、计划、补丁、验收与失败修订，并支持 checkpoint、interrupt / resume。 | [请求路由](scripts/dsh_request_routing.py) · [工作流](src/mod_agent/workflow/graph.py) · [规划](src/mod_agent/planning/) |
+| **源码证据与上下文** | 默认从当前工作区执行 `rg` 活源检索与有界源码读取，校验证据身份、freshness、需求覆盖和可编辑范围；历史记忆与文档证据只作辅助，不能替代当前源码。 | [Evidence](src/mod_agent/evidence/) · [活源检索](src/mod_agent/evidence/rg_live.py) · [上下文策略](src/mod_agent/evidence/small_project_context.py) |
+| **RAG 知识检索** | 摄取链覆盖解析、切分、Embedding、BM25 与向量入库；查询层提供 Sparse / Dense / Hybrid、融合、重排和引用。Dense、RRF 与模型重排保持可选或实验定位，不冒充 Agent 默认取证路径。 | [Ingestion](src/ingestion/) · [Query Engine](src/core/query_engine/) · [检索决策](docs/RETRIEVAL_ARCHITECTURE_DECISIONS.md) |
+| **补丁生成与受控执行** | Patch worker 在计划绑定的源码范围内生成最小变更；Review、Dry-run、源码 preimage、允许路径和授权共同约束副作用，再进入隔离 Apply / Build，行为失败可返回 Repair。 | [Patch loop](src/mod_agent/proposal/patch_agent_loop.py) · [受控执行](src/mod_agent/execution/) · [产品执行](src/mod_agent/product_execution.py) |
+| **领域验收与评测驱动** | 共享执行链接入编译检查和领域行为裁判，保留首个失败并把可操作反馈送回修订；结果区分 `code_ready`、`awaiting_approval` 与 `delivered`，不以局部通过替代交付。 | [领域验收](src/mod_agent/domain/) · [评测](src/mod_agent/evaluation/) · [EDD 口径](docs/EVALUATION_DRIVEN_DEVELOPMENT.md) |
+| **模型接入与训练实验** | 统一 LLM 抽象接入 Ollama、OpenAI、Azure 与 DeepSeek；Agent-turn 另提供 Ollama Chat、Qwen Chat 与 OpenAI Responses 适配器。QLoRA Patch SFT 与 Self-RAG 作为实验链保留，未因脚本存在而进入默认产品路径。 | [模型适配](src/libs/llm/) · [QLoRA SFT](scripts/run_patch_sft_training.py) · [Self-RAG](scripts/run_self_rag_training.py) |
+| **产物谱系、追踪与恢复** | ArtifactStore 保存 revision、哈希与 lineage；Trace 关联模型请求、工具观察、Token、验收和失败反馈，支持候选保存、复验与有界续接。外部可观测投影不替代业务事实。 | [ArtifactStore](src/mod_agent/artifacts/) · [Trace](src/core/trace/) · [Observability](src/observability/) |
+| **服务化与协议接入** | FastAPI、独立 Worker 与 Redis 实现异步队列、租约、幂等、限流、缓存和超时；Prometheus、Docker Compose 与 MCP 复用同一业务模块，而不是另写展示逻辑。 | [服务层](src/service_layer/) · [MCP](src/mcp_server/) · [部署指南](deployment/service/README.md) |
 
-服务负载继续升到 12 并发时，吞吐为 0.993 作业/秒、P95 增至 12.437 秒，瓶颈体现为排队。重复提交压测实际触发 429；缓存命中没有证明端到端提速。早期两道自有 C# 工程题的三轮候选交付为 1/6 次，尚未稳定；Self-RAG 与上下文策略实验也保留未获益或退化结果，见[历史成果清单](docs/PROJECT_OUTCOMES.md)。
+## 精简 Trace 示例
+
+下面是 SpreadAPI 受控交付的公开投影，不是伪造的原始日志；本机路径、模型正文和敏感配置被省略，阶段结果仍绑定已记录的 Artifact 与验收身份。
+
+```json
+{
+  "request": "非法数值输入原子拒绝，并保持状态与回调行为",
+  "route": "modify_project",
+  "baseline": {"behavior_checks": "53/87"},
+  "stages": [
+    {"stage": "evidence_retrieval", "status": "passed", "output": "evidence_pack"},
+    {"stage": "implementation_plan", "status": "passed", "output": "source-bound plan"},
+    {"stage": "patch_proposal", "status": "passed", "output": "exact diff"},
+    {"stage": "candidate_verification", "status": "passed", "behavior_checks": "87/87"},
+    {"stage": "task_delegation", "status": "approved", "binding": "diff + source snapshot + required checks + allowed effects"},
+    {"stage": "isolated_apply_and_build", "status": "passed"},
+    {"stage": "final_revalidation", "status": "passed", "behavior_checks": "87/87"}
+  ],
+  "result": "delivered",
+  "scope": "候选与最终 DLL 各 9 个独立进程、60 个动作；跳过游戏回调主体；未启动游戏、未部署"
+}
+```
+
+完整实验条件、Token 与边界见 [SpreadAPI 受控代码交付](docs/PUBLIC_RESULTS.md#34-spreadapi-受控代码交付)；本地记录可通过 [Trace 查询入口](scripts/product_trace.py)按明确 run 身份读取。
+
+## 已验证成果
+
+| 方向 | 已记录结果 | 验证范围 |
+| --- | --- | --- |
+| **代码修改交付** | SpreadAPI 候选与正式 DLL 均通过 **87/87** 检查，并完成精确授权的 Apply / Build。 | 已暴露开发题的受控行为验收：9 个独立进程、60 个动作；跳过游戏回调主体。 |
+| **工程评测与修复** | 覆盖 **13 个模块、224 个不同工程用例**，最新结果 **222 通过**；定位并修复预算数值与验收产物身份绑定缺陷。 | 部分路径使用替身；其余 2 项训练依赖问题仍在迭代，工程用例数不等于用户任务数。 |
+| **服务故障恢复** | **11 项故障联调检查通过**，覆盖 Redis 中断与恢复、Worker 死亡后的租约接管、短预算超时。 | 实际服务进程联调；执行结果不明的 Agent 任务保留为 `indeterminate`，避免盲目重跑。 |
+| **异步检索性能** | 4 并发下 **64/64** 作业成功，**1.028 作业/秒，P95 4.031 秒**。 | 两个 Worker、6 个源码文件 / 37 块，单次纯 BM25 检索压测、模型调用 0；非完整 Agent 吞吐。 |
+
+真实 Agent HTTP 入口也已接通 Qwen3-coder:30b 与 LangGraph：候选编译成功，**15/15 受控行为断言**通过，停在 `awaiting_approval`；尚未 Apply，完整交付仍在迭代。完整数据、成本、实验条件和历史结果见[公开实测记录](docs/PUBLIC_RESULTS.md)。
 
 ## 快速开始
 
-### 本机查看入口与运行离线检查
+### 本机体验
 
-环境：Python 3.10+、`uv`；源码调查使用 `rg`。以下命令在仓库根目录执行，不调用模型：
+环境：Python 3.10+、`uv`；源码调查使用 `rg`。以下命令验证入口并生成只读工程导航，不调用模型：
 
 ```powershell
+git clone https://github.com/yang-hoo-xin/RepoForge.git
+cd RepoForge
 uv sync --frozen --extra dev
 uv run --frozen python -m src.main --help
 uv run --frozen python -m scripts.engineering_cognition --view summary --pretty
 uv run --frozen pytest tests/unit/test_mod_agent_cli.py -q
 ```
 
-工程导航是由当前源码生成的只读视图；CLI 检查验证入口行为。真实 Coding Agent 运行还需要目标工程、模型服务、适用的 .NET / 领域依赖，以及与目标绑定的执行 profile。
+完整 Coding Agent 运行通过任务 profile 配置目标工程、模型服务、适用的 .NET / 领域依赖，以及写入和 Build 范围，参见[Agent 注册](deployment/service/README.md#agent-注册)。
 
-### 启动无需模型的 HTTP 检索演示
+### Docker 服务演示
 
-环境：Docker Engine / Docker Desktop 与 Compose。将 [`.env.example`](deployment/service/.env.example) 复制为 `deployment/service/.env`，为 `SERVICE_API_TOKEN` 和 `SERVICE_REDIS_PASSWORD` 设置两个不同的随机值；已有 `.env` 保留，不将凭据提交到 Git。为什么要有它：演示需要独立的接口及队列访问凭据，公开仓库只保存配置模板。
+环境：Docker Engine / Docker Desktop 与 Compose。将 [`.env.example`](deployment/service/.env.example) 复制为 `deployment/service/.env`，设置两个不同的随机值：`SERVICE_API_TOKEN` 和 `SERVICE_REDIS_PASSWORD`；保留已有配置，凭据不提交 Git。为什么要有它：接口和队列使用独立凭据，公开仓库只保存可共享的模板。
 
 ```powershell
 docker compose --env-file deployment/service/.env -f deployment/service/compose.yaml up -d --build --scale worker=2
 curl.exe http://127.0.0.1:8080/health
 ```
 
-首次初始化会用仓库内真实源码建立 BM25 / Chroma 示例语料。API 文档位于 `http://127.0.0.1:8080/docs`，Prometheus 位于 `http://127.0.0.1:9095`。业务接口使用 `Authorization: Bearer <SERVICE_API_TOKEN>`；提交作业还需 `Idempotency-Key`。完整请求示例、终态查询和停止命令见[部署与接口说明](deployment/service/README.md)。
+Compose 自动初始化真实仓库源码的 BM25 / Chroma 示例语料，默认运行无需模型的纯检索服务。API 文档位于 `http://127.0.0.1:8080/docs`，Prometheus 位于 `http://127.0.0.1:9095`。请求格式、认证、Agent profile 注册和停止命令见[部署指南](deployment/service/README.md)。
 
-Compose 默认展示纯检索，Agent 注册表为空。完整 Agent 经同一服务模块调用现有自然语言入口；Windows / .NET 领域任务需要相应本机 profile，配置方式见[Agent 注册](deployment/service/README.md#agent-注册)。这条路径的模型预算、依赖、写入和 Build 范围都由任务配置表达。
+## 深入阅读
 
-## 代码导航
-
-| 路径 | 内容 |
+| 从这里开始 | 内容 |
 | --- | --- |
-| [`src/mod_agent/`](src/mod_agent/) | Coding Agent 入口、LangGraph 工作流、ArtifactStore、证据、规划、补丁、授权、Build / Runtime / Repair 与领域验收。 |
-| [`src/core/query_engine/`](src/core/query_engine/) / [`src/ingestion/`](src/ingestion/) | QueryService、检索与文档入库。 |
-| [`src/service_layer/`](src/service_layer/) / [`deployment/service/`](deployment/service/) | HTTP API、Redis 存储、Worker、容器与监控配置。 |
-| [`src/mcp_server/`](src/mcp_server/) / [`src/observability/`](src/observability/) | MCP 协议接入、追踪、评测及展示。 |
-| [`scripts/`](scripts/) / [`tests/`](tests/) | 正常入口桥接、工程导航、评测与压测脚本，以及单元、集成和端到端检查。 |
-| [`docs/`](docs/) | 产品合同、架构、公开成果、评测定义及历史研究记录。 |
+| [公开实测结果](docs/PUBLIC_RESULTS.md) | 交付案例、服务性能、故障恢复与证据范围。 |
+| [架构说明](docs/ARCHITECTURE_OVERVIEW.md) · [产品契约](docs/ACTIVE_PRODUCT_CONTRACT.md) | 模块职责、执行流程与权限边界。 |
+| [部署指南](deployment/service/README.md) · [压测说明](scripts/service_load/README.md) | API / Worker / Redis / Prometheus 部署与测量口径。 |
+| [测试](tests/) · [评测定义](docs/EVALUATION_DRIVEN_DEVELOPMENT.md) · [历史成果](docs/PROJECT_OUTCOMES.md) | 回归检查、评测方法与完整演进记录。 |
 
-进一步阅读：[CLI 实现](src/mod_agent/cli.py)、[自然语言路由](scripts/dsh_request_routing.py)、[工作流](src/mod_agent/workflow/graph.py)、[ArtifactStore](src/mod_agent/artifacts/store.py)、[评测定义](docs/EVALUATION_DRIVEN_DEVELOPMENT.md)、[压测口径](scripts/service_load/README.md)。
+## 持续迭代
 
-## AI 协作与成果边界
+RepoForge 正在围绕更多独立工程任务、重复交付稳定性、训练依赖收口和服务长期运行验证持续迭代；游戏运行时与跨环境支持按具体领域任务扩展。当前发布面向本机研发与受控验证，模型质量、性能优化和成本收益以对应实验为依据，进展记录在[项目状态](docs/PROJECT_STATE.md)。
 
-项目由维护者负责需求定义、架构与技术选型、验收设计，结合 AI 编码工具推进实现。开发助手对平台的代码贡献、产品模型在任务中的行为、独立评测结果分别记录；这里不主张全部代码由个人独立手写，也不把开发助手的修复计为产品自主完成。
-
-产品执行中，模型建议和检索命中不授予写入权限；Apply 消费与当前源码和精确 diff 对应的授权，Build 成功与实际运行行为分开判定。为什么要有它：模型输出只能提出变更，最终副作用与成功结论需要可检查的授权和验收依据。
-
-对外数字保留任务数量、重复次数、环境和失败；已暴露开发题、受控探针、游戏运行时和独立评测分别呈现。为什么要有它：单次成功或局部检查不能证明跨任务可靠性，也不能替代人工成本、生产容量或业务收益数据。
-
-早期 Phase A 占位阶段已不代表当前实现。历史演进保留在[项目状态](docs/PROJECT_STATE.md)、[状态归档](docs/PROJECT_STATE.history-20260926.md)与[产品合同归档](docs/ACTIVE_PRODUCT_CONTRACT.history-20260926.md)中。
+维护者负责需求定义、架构与技术选型、验收设计，并结合 AI 编码工具推进实现；平台开发、产品模型行为和独立评测分别记录。

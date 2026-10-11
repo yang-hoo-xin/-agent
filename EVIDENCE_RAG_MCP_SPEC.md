@@ -5,7 +5,7 @@ only when the selected work affects retrieval, knowledge, or MCP. Sections 0-3
 are normative subsystem detail; section 4 and later material is reference-only.
 
 This file defines the Evidence Retrieval, Knowledge, and MCP subsystem inside
-the Evidence-Grounded Controlled Code Generation Agent Platform.
+RepoForge.
 
 ## 0. Validation-First Normative Override
 
@@ -61,7 +61,7 @@ Authority split:
 
 | Area | Primary authority | Notes |
 | --- | --- | --- |
-| Product identity and delivery loop | `DEV_SPEC.md` | Evidence-Grounded Controlled Code Generation Agent Platform remains the product. |
+| Product identity and delivery loop | `DEV_SPEC.md` | RepoForge remains the product. |
 | RAG/MCP normative architecture | Sections 0-3 plus the architecture and validation documents | Defines source-specific retrieval, authority, freshness, EvidencePack, experiments, and controlled MCP boundaries. |
 | Imported implementation patterns | Section 4 and later legacy material | Reference-only; use a pattern only after a current requirement and validation decision justify it. |
 | Exact names and behavior | Current source/tests | Do not guess identifiers; read code and tests. |
@@ -1250,7 +1250,7 @@ retrieval.readiness_classified
 
 ```yaml
 project:
-  name: evidence-grounded-controlled-code-generation-agent-platform
+  name: repoforge
   artifact_root: artifacts
   data_root: data
 
@@ -2533,7 +2533,7 @@ cross-encoder rerank
 
 > Source: C:/Users/10160/Desktop/ai学习/DEV_SPEC.md  
 > Import mode: full verbatim integration for RAG subsystem reference.  
-> Scope: this imported document is a sub-spec for the Knowledge Hub / Evidence RAG subsystem. It does not override the Evidence-Grounded Controlled Code Generation Agent Platform top-level workflow, safety policy, or artifact contract.
+> Scope: this imported document is a sub-spec for the Knowledge Hub / Evidence RAG subsystem. It does not override the RepoForge top-level workflow, safety policy, or artifact contract.
 
 <!-- Dev specification skeleton for the project. Fill sections with details later. -->
 # Developer Specification (DEV_SPEC)
@@ -5778,7 +5778,7 @@ RAG 系统的上限取决于其对特定业务数据的理解深度。未来的�
 
 | 冲突点 | 一号 RAG 原文 | 二号当前定位 | 冲突等级 | 处理规则 |
 | --- | --- | --- | --- | --- |
-| 产品名称 | Smart Knowledge Hub / RAG MCP Server | Evidence-Grounded Controlled Code Generation Agent Platform | 高 | 一号产品名只作为 imported source，不作为二号项目名 |
+| 产品名称 | Smart Knowledge Hub / RAG MCP Server | RepoForge | 高 | 一号产品名只作为 imported source，不作为二号项目名 |
 | 主目标 | 文档问答、知识库检索、MCP 查询 | 受控代码生成、证据驱动 patch workflow | 高 | RAG 作为 evidence subsystem，不替代 LangGraph workflow |
 | 用户路径 | 用户 query -> retrieve -> answer | request -> plan -> evidence -> proposal -> review -> dry-run | 高 | query path 只服务 evidence retrieval；QA 后置 |
 | 目录结构 | `src/core`, `src/ingestion`, `src/libs`, `src/mcp_server` | `src/mod_agent/...` | 中 | 迁移到 `src/mod_agent/knowledge_hub/...` |
@@ -5934,8 +5934,8 @@ retrieval quality 通过真实 eval case 和 dashboard report 证明。
 第 46 章是一号 RAG 系统的完整迁入规格。
 它在二号中整合为 Knowledge Hub / Evidence RAG 的权威子系统规格。
 它提供 ingestion、chunking、retrieval、rerank、multimodal、MCP、dashboard、eval 的工程细节。
-它服务于二号项目的顶层目标：Evidence-Grounded Controlled Code Generation Agent Platform。
-patch/apply/review/build/runtime 决策通过 Evidence-Grounded Controlled Code Generation Agent Platform 的 workflow、artifact 和 eval 链路完成。
+它服务于二号项目的顶层目标：RepoForge。
+patch/apply/review/build/runtime 决策通过 RepoForge 的 workflow、artifact 和 eval 链路完成。
 ```
 
 因此，后续实现时可以放心引用第 46 章做 RAG 子系统，但每次引用都必须同时检查第 47 章的冲突处理规则。

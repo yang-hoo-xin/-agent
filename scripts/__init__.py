@@ -1,4 +1,4 @@
-"""Scripts module for Evidence-Grounded Controlled Code Generation Agent Platform.
+"""Scripts module for RepoForge.
 
 This module contains command-line utilities for various operations.
 """

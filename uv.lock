@@ -1071,7 +1071,7 @@ wheels = [
 ]
 
 [[package]]
-name = "evidence-grounded-controlled-code-generation-agent-platform"
+name = "repoforge"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

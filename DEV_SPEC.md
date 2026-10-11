@@ -1,4 +1,4 @@
-# Evidence-Grounded Controlled Code Generation Agent Platform DEV_SPEC
+# RepoForge DEV_SPEC
 
 Authority and reading order are defined only by `AGENTS.md` section 2. This file remains
 the detailed root control-plane specification. Older phase tables, imported
@@ -476,7 +476,7 @@ Validation not run: <reason>
 
 > 版本：0.3  
 > 状态：Greenfield Technical Specification  
-> 项目类型：Evidence-Grounded Controlled Code Generation Agent Platform
+> 项目类型：RepoForge
 > 初始领域：GTFO / BepInEx / Unity IL2CPP / HarmonyX Mod Development  
 > 核心能力：LangGraph Workflow、Knowledge Base、Evidence RAG、Patch Proposal、Review Gate、Build/Runtime Feedback、Evaluation Harness、Dashboard、MCP/API  
 > 目标：把自然语言 Mod 需求转化为可追踪、可评估、可审查、可回滚的受控代码生成流程。
@@ -517,7 +517,7 @@ Validation not run: <reason>
 
 # 1. 项目概述
 
-Evidence-Grounded Controlled Code Generation Agent Platform 是一个用于游戏 Mod 开发的受控代码生成 Agent 平台。
+RepoForge 是一个用于游戏 Mod 开发的受控代码生成 Agent 平台。
 
 它不只是一个“让 LLM 写代码”的工具，而是一套完整的工程化系统：
 
