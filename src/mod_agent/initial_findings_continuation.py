@@ -128,6 +128,29 @@ def _with_baseline_compilation_evidence(pack, observation):
         pack.budget_summary, observation)) if observation is not None else pack
 
 
+def _replay_source_query_set(*, root, materialized, request, search_root, historical_payload):
+    """Reconstruct the recorded source allocation before checking the full Findings input."""
+    source = RgLiveEvidenceProvider(root, small_file_max_bytes=run_small_file_max_bytes(root),
+        reuse_query_observations=run_optimization_policy(root)["reuse_query_observations"])
+    query_count = len(materialized["queries"])
+    # 为什么要有它：历史请求绑定当时的材料预算；不能用当前默认扩大或缩小检索后再把差异当作源码漂移。
+    max_items = historical_payload.get("source_material_budget", {}).get("max_items", max(1, query_count))
+    retrieved = source.collect_query_set(
+        queries=tuple(dict(row) for row in materialized["queries"]),
+        source_identity_query=request, search_root=search_root, max_items=max_items)
+    if "source_material_budget_selection" in historical_payload:
+        # 为什么要有它：新owner的预算选择属于原wire，逐字段重建它而非复制历史元数据，保留后续完整输入比较。
+        selection = {"schema_version": "requirement_material_budget_v1",
+            "scope": "requirement_coverage_source_query_set_item_allocation",
+            "query_count": query_count, "max_items": max_items,
+            "small_project_material_floor": source.small_project_context_policy["max_files"],
+            "basis": "max_of_query_count_and_bounded_small_project_material_floor",
+            "semantic_coverage_claimed": False}
+        retrieved = replace(retrieved, budget_summary={**retrieved.budget_summary,
+            "source_material_budget_selection": selection})
+    return retrieved
+
+
 class _CorrectionPreparedError(RuntimeError):
     pass
 
@@ -266,11 +289,10 @@ def prepare_initial_findings_continuation(*, run_root, run_id, execution_config=
         feature_data=feature, request=feature["user_request"], projection=projection)
     if result.get("source_retrieval_mode") != "rg_live":
         raise ValueError("INITIAL_FINDINGS_RETRIEVAL_MODE_NOT_SUPPORTED")
-    retrieved = RgLiveEvidenceProvider(root, small_file_max_bytes=run_small_file_max_bytes(root),
-                reuse_query_observations=run_optimization_policy(root)["reuse_query_observations"]).collect_query_set(
-        queries=tuple(dict(row) for row in materialized["queries"]),
-        source_identity_query=feature["user_request"],
-        search_root=generated.relative_to(root).as_posix(), max_items=max(1, len(materialized["queries"])))
+    original_findings_payload = json.loads(next(m["content"] for m in bodies[1][0]["messages"] if m["role"] == "user"))
+    retrieved = _replay_source_query_set(root=root, materialized=materialized,
+        request=feature["user_request"], search_root=generated.relative_to(root).as_posix(),
+        historical_payload=original_findings_payload)
     prepared = {}
     def capture(role, payload, schema):
         payload = _with_baseline_compilation_observation(payload, baseline_observation)
@@ -285,7 +307,6 @@ def prepare_initial_findings_continuation(*, run_root, run_id, execution_config=
             raise ValueError("INITIAL_FINDINGS_ROLE_CHANGED")
         prepared.update(role=role, payload=deepcopy(payload), schema=deepcopy(schema))
         raise _CorrectionPreparedError()
-    original_findings_payload = json.loads(next(m["content"] for m in bodies[1][0]["messages"] if m["role"] == "user"))
     historical_version = original_findings_payload.get("findings_contract_version", "1")
     # 为什么要有它：历史零证据wire没有新policy标记时须保持旧schema，不能把协议升级当作原输入漂移。
     provider = StructuredModelRequirementCoverageProvider(capture, compress_findings_input=run_optimization_policy(root)["compress_findings_input"], findings_contract_version=historical_version,
@@ -1035,11 +1056,9 @@ def execute_initial_findings_continuation(*, run_root, run_id, execution_config,
         from src.mod_agent.saved_reassessment import restored_source_observations
         retrieved = (None if revision and not schema_recovery else restored_source_observations(packet)
             if packet.get("saved_reassessment_query") or packet.get("saved_reassessment_completion") or schema_recovery
-            else RgLiveEvidenceProvider(root, small_file_max_bytes=run_small_file_max_bytes(root),
-                reuse_query_observations=run_optimization_policy(root)["reuse_query_observations"]).collect_query_set(
-                queries=tuple(dict(row) for row in packet["materialized_projection"]["queries"]),
-                source_identity_query=feature["user_request"],
-                search_root=target.relative_to(root).as_posix(), max_items=max(1, len(packet["materialized_projection"]["queries"]))))
+            else _replay_source_query_set(root=root, materialized=packet["materialized_projection"],
+                request=feature["user_request"], search_root=target.relative_to(root).as_posix(),
+                historical_payload=packet["retrieved_evidence"]["budget_summary"]))
         if not revision and _input_digest({"retrieved_evidence": retrieved.to_artifact_payload()}) != _input_digest({"retrieved_evidence": packet["retrieved_evidence"]}):
             raise ValueError("INITIAL_FINDINGS_CURRENT_EVIDENCE_CHANGED")
         def complete(role, payload, schema):

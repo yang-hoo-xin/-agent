@@ -90,6 +90,20 @@ def test_empty_findings_refusal_recovers_once_with_original_six_charges(executio
         "schema_fix_ref": fix, "provider_ref": provider_ref}
     _write(args["allocation_config"], allocation)
     roles.clear()
+    trace = json.loads((Path(failed["continuation_root"]) / "run_manifest.json").read_text(encoding="utf-8"))
+    projection_call = next(row for row in trace["execution_observations"].values()
+                           if row["name"] == "model.request"
+                           and row["attributes"].get("model_role") == "requirement_projection")
+    native_response_path = Path(projection_call["attributes"]["local_detail_refs"]["provider_response"]["path"])
+    native_response_bytes = native_response_path.read_bytes()
+    # 为什么要有它：兼容新增原始响应记录不能跳过它的摘要约束，且拒绝篡改不得重新计费或调用模型。
+    native_response_path.write_bytes(native_response_bytes + b" ")
+    try:
+        with pytest.raises(ValueError, match="INITIAL_FINDINGS_INPUT_HASH_CHANGED"):
+            bridge.advance_task(**call)
+        assert roles == []
+    finally:
+        native_response_path.write_bytes(native_response_bytes)
     blocked = bridge.advance_task(**call)
     assert "PRODUCT_STAGE_MODEL_CALL_BUDGET_EXHAUSTED" in blocked["blockers"]
     assert blocked["effective_budget"]["consumed"] == 6

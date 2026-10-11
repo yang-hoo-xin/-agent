@@ -41,7 +41,8 @@ def run(tmp_path, *, budget=3, diagnosis='Speculation, not authority.', tool=Fal
     before = _source_hashes(inputs.workspace)
     actions = actions or (['RecordFirstFailure', 'RecordRuntimeMarker'] if budget == 2 else [
         'RecordFirstFailure', 'diagnosis', 'RecordRuntimeMarker'])
-    mutation = (lambda: next(inputs.workspace.rglob('*.cs')).write_text('// actual source drift')) if drift else None
+    # 为什么要有它：该场景检查已绑定源码的逐轮漂移门禁，目录遍历顺序不能决定被修改的文件。
+    mutation = (lambda: inputs.behavior.write_text('// actual source drift', encoding='utf-8')) if drift else None
     client = Client(actions, diagnosis=diagnosis, tool=tool, mutate=mutation)
     oracle = _BehaviorOracle(tmp_path / 'observations')
     adapter = _adapter(inputs, client, oracle)

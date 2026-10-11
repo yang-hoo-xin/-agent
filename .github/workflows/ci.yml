@@ -27,7 +27,7 @@ jobs:
       - name: Restore frozen development environment
         run: |
           uv lock --check
-          uv sync --frozen --extra dev
+          uv sync --frozen --extra dev --extra service
 
       - name: Install source inspection dependency
         run: |
@@ -55,6 +55,7 @@ jobs:
         # 为什么要有它：模块评测发现的非有限预算与编译/验收 DLL 错绑，以及统计缺测和去重检查随 PR 回归。
         run: >-
           uv run --frozen pytest -n 2
+          --junitxml=${{ runner.temp }}/ci-results/checkpoint.xml
           tests/unit/test_module_budget_finiteness.py
           tests/unit/test_member_repair_artifact_binding.py
           tests/unit/test_module_evaluation_measurement.py
@@ -155,6 +156,7 @@ jobs:
           tests/unit/test_rg_live_multiword_identifiers.py
           tests/unit/test_findings_input_text_refs.py
           tests/unit/test_findings_input_history_compatibility.py
+          tests/unit/test_findings_schema_recovery.py
           tests/unit/test_saved_candidate_reverification.py
           tests/unit/test_candidate_reverification_graph.py
           tests/unit/test_candidate_verification_continuation.py
@@ -171,3 +173,18 @@ jobs:
           tests/unit/test_runtime_deployment.py
           tests/unit/test_repair_loop.py
           tests/unit/test_evidence_retrieval.py
+          tests/unit/test_service_http_api.py
+          tests/unit/test_service_http_edges.py
+          tests/unit/test_service_worker.py
+          scripts/service_load/test_service_load.py
+          scripts/service_load/test_resources.py
+
+      # 为什么要有它：服务层边界与测量脚本进入同一质量检查；失败后的逐项结果也需保留，不能只依赖邮件通知。
+      - name: Retain checkpoint test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: checkpoint-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-results/checkpoint.xml
+          if-no-files-found: warn
+          retention-days: 30
