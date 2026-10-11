@@ -12,6 +12,7 @@
   <p>
     <a href="#快速开始">快速开始</a> ·
     <a href="#核心模块与工程取舍">核心模块</a> ·
+    <a href="#精简-trace-示例">Trace 示例</a> ·
     <a href="docs/PUBLIC_RESULTS.md">实测结果</a> ·
     <a href="docs/ARCHITECTURE_OVERVIEW.md">架构文档</a> ·
     <a href="deployment/service/README.md">服务部署</a>
@@ -59,6 +60,31 @@ RepoForge 按“编排—证据—检索—生成—执行—验收—服务化�
 | **模型接入与训练实验** | 统一 LLM 抽象接入 Ollama、OpenAI、Azure 与 DeepSeek；Agent-turn 另提供 Ollama Chat、Qwen Chat 与 OpenAI Responses 适配器。QLoRA Patch SFT 与 Self-RAG 作为实验链保留，未因脚本存在而进入默认产品路径。 | [模型适配](src/libs/llm/) · [QLoRA SFT](scripts/run_patch_sft_training.py) · [Self-RAG](scripts/run_self_rag_training.py) |
 | **产物谱系、追踪与恢复** | ArtifactStore 保存 revision、哈希与 lineage；Trace 关联模型请求、工具观察、Token、验收和失败反馈，支持候选保存、复验与有界续接。外部可观测投影不替代业务事实。 | [ArtifactStore](src/mod_agent/artifacts/) · [Trace](src/core/trace/) · [Observability](src/observability/) |
 | **服务化与协议接入** | FastAPI、独立 Worker 与 Redis 实现异步队列、租约、幂等、限流、缓存和超时；Prometheus、Docker Compose 与 MCP 复用同一业务模块，而不是另写展示逻辑。 | [服务层](src/service_layer/) · [MCP](src/mcp_server/) · [部署指南](deployment/service/README.md) |
+
+## 精简 Trace 示例
+
+下面是 SpreadAPI 受控交付的公开投影，不是伪造的原始日志；本机路径、模型正文和敏感配置被省略，阶段结果仍绑定已记录的 Artifact 与验收身份。
+
+```json
+{
+  "request": "非法数值输入原子拒绝，并保持状态与回调行为",
+  "route": "modify_project",
+  "baseline": {"behavior_checks": "53/87"},
+  "stages": [
+    {"stage": "evidence_retrieval", "status": "passed", "output": "evidence_pack"},
+    {"stage": "implementation_plan", "status": "passed", "output": "source-bound plan"},
+    {"stage": "patch_proposal", "status": "passed", "output": "exact diff"},
+    {"stage": "candidate_verification", "status": "passed", "behavior_checks": "87/87"},
+    {"stage": "task_delegation", "status": "approved", "binding": "diff + source snapshot + required checks + allowed effects"},
+    {"stage": "isolated_apply_and_build", "status": "passed"},
+    {"stage": "final_revalidation", "status": "passed", "behavior_checks": "87/87"}
+  ],
+  "result": "delivered",
+  "scope": "候选与最终 DLL 各 9 个独立进程、60 个动作；跳过游戏回调主体；未启动游戏、未部署"
+}
+```
+
+完整实验条件、Token 与边界见 [SpreadAPI 受控代码交付](docs/PUBLIC_RESULTS.md#34-spreadapi-受控代码交付)；本地记录可通过 [Trace 查询入口](scripts/product_trace.py)按明确 run 身份读取。
 
 ## 已验证成果
 
