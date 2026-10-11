@@ -1,4 +1,4 @@
-"""Evidence-Grounded Controlled Code Generation Agent Platform package."""
+"""RepoForge package."""
 
 __all__ = [
     "__version__",

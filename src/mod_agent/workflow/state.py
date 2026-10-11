@@ -1,4 +1,4 @@
-"""Runtime control state for the Evidence-Grounded Controlled Code Generation Agent Platform workflow."""
+"""Runtime control state for the RepoForge workflow."""
 
 from __future__ import annotations
 

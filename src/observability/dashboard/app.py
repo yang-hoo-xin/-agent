@@ -1,4 +1,4 @@
-"""Evidence-Grounded Controlled Code Generation Agent Platform dashboard.
+"""RepoForge dashboard.
 
 Entry-point: ``streamlit run src/observability/dashboard/app.py``
 
@@ -64,7 +64,7 @@ pages = [
 
 def main() -> None:
     st.set_page_config(
-        page_title="Evidence-Grounded Controlled Code Generation Agent Platform",
+        page_title="RepoForge",
         page_icon="📊",
         layout="wide",
     )

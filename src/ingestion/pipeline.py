@@ -1,4 +1,4 @@
-"""Ingestion pipeline for the Evidence-Grounded Controlled Code Generation Agent Platform.
+"""Ingestion pipeline for RepoForge.
 
 This module implements the main pipeline that orchestrates the complete
 document ingestion flow:

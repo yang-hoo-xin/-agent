@@ -1,4 +1,4 @@
-"""Workflow primitives for the Evidence-Grounded Controlled Code Generation Agent Platform."""
+"""Workflow primitives for RepoForge."""
 
 from .checkpointing import (
     CheckpointPolicy,

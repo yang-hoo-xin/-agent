@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Ingestion script for the Evidence-Grounded Controlled Code Generation Agent Platform.
+"""Ingestion script for RepoForge.
 
 This script provides a command-line interface for ingesting documents into
 the knowledge hub. It supports processing single files or entire directories.
@@ -59,7 +59,7 @@ def parse_args() -> argparse.Namespace:
         Parsed arguments namespace
     """
     parser = argparse.ArgumentParser(
-        description="Ingest documents into the Evidence-Grounded Controlled Code Generation Agent Platform knowledge hub.",
+        description="Ingest documents into the RepoForge knowledge hub.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__
     )
@@ -193,7 +193,7 @@ def main() -> int:
         import logging
         logging.getLogger().setLevel(logging.DEBUG)
     
-    print("[*] Evidence-Grounded Controlled Code Generation Agent Platform Ingestion")
+    print("[*] RepoForge Ingestion")
     print("=" * 60)
     
     # Load configuration

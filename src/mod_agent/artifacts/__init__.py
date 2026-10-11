@@ -1,4 +1,4 @@
-"""Artifact storage primitives for the Evidence-Grounded Controlled Code Generation Agent Platform."""
+"""Artifact storage primitives for RepoForge."""
 
 from .envelope import ArtifactEnvelope, ArtifactRef
 from .freshness import FreshnessView, StaleArtifactError

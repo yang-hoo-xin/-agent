@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     pass
 
 
-SERVER_NAME = "evidence-grounded-controlled-code-generation-agent-platform"
+SERVER_NAME = "repoforge"
 SERVER_VERSION = "0.1.0"
 
 

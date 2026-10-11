@@ -1,10 +1,10 @@
-# Evidence-Grounded Controlled Code Generation Agent Platform - Configuration
+# RepoForge - Configuration
 # Phase A keeps business behavior stubbed and side effects blocked.
 # RAG-oriented settings below are preserved for the future Evidence Knowledge
 # Subsystem and should not be treated as the top-level product goal.
 
 project:
-  name: "evidence-grounded-controlled-code-generation-agent-platform"
+  name: "RepoForge"
   phase: "A"
   default_domain: "gtfo"
 
