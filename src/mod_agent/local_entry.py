@@ -14071,6 +14071,11 @@ def _external_evidence_items(items: list[dict[str, Any]]) -> list[dict[str, Any]
 
 def _assert_no_absolute_local_paths(value: Any) -> None:
     if isinstance(value, dict):
+        if "findings_input_text_encoding" in value:
+            from src.mod_agent.evidence.model_view import expand_findings_input_text
+
+            # 为什么要有它：同消息JSON指针在POSIX上形似绝对路径；只扫描严格还原后的内容，不能豁免真实路径或改变发送的wire。
+            value = expand_findings_input_text(value)
         for nested in value.values():
             _assert_no_absolute_local_paths(nested)
         return

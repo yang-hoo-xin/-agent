@@ -46,6 +46,9 @@ def make_evaluator(*, output):
         _arguments(execution_config, lambda values: [*values, "--patch-worker-config", str(config)])
     transport = httpx.HTTPTransport.handle_request
     captured = []
+    current_fact_needed = "The source or API declaration that owns MissingType."
+    planning_impact = "Its contract is needed to decide how the missing field type should be repaired."
+    expected_gap = f"Current fact needed: {current_fact_needed}; Blocks planning: {planning_impact}"
 
     def controlled_transport(self, request):
         if request.method != "POST":
@@ -69,9 +72,15 @@ def make_evaluator(*, output):
         outer = response.json()
         output = json.loads(outer["message"]["content"])
         if "findings" in output:
+            assert context["native_findings_contract"] == "planning_readiness_v1"
             for row in output["findings"]:
+                row["planning_readiness"] = "needs_current_evidence"
                 row["edit_target_evidence_ids"] = []
-                row["unresolved_gaps"] = ["The known compiler error still needs a code repair."]
+                row["current_basis"] = "The current source uses MissingType but does not declare its contract."
+                row["blocking_current_facts"] = [{
+                    "fact_needed": current_fact_needed,
+                    "planning_impact": planning_impact,
+                }]
         elif "allowed_edit_evidence_ids" in context and configured:
             output.pop("missing_evidence", None)
             output["verification_questions"] = ["Verify the repaired candidate actually compiles."]
@@ -96,7 +105,9 @@ def make_evaluator(*, output):
     evidence = json.loads(Path(result["artifacts"]["evidence_pack"]).read_bytes())
     assert evidence["status"] == "blocked"
     assert evidence["data"]["can_generate_patch"] is False
-    assert evidence["data"]["requirement_coverage"]["findings"][0]["unresolved_gaps"]
+    finding = evidence["data"]["requirement_coverage"]["findings"][0]
+    assert finding["relationship"] == "missing"
+    assert finding["unresolved_gaps"] == [expected_gap]
     assert source.read_bytes() == original and result["actual_write_performed"] is False
     assert len(builds) == 1
     if configured:
@@ -106,7 +117,7 @@ def make_evaluator(*, output):
         assert scope["semantic_coverage_established"] is False
         plan = json.loads(Path(result["artifacts"]["implementation_plan"]).read_bytes())["data"]
         assert {row["evidence_id"] for row in plan["binding_registry"]["edit_bindings"]} <= set(scope["evidence_ids"])
-        assert "The known compiler error still needs a code repair." in plan["verification_questions"]
+        assert expected_gap in plan["verification_questions"]
         assert json.loads((execution_config.parent / "synthetic-check.json").read_bytes())["status"] == "passed"
         assert root.is_dir()
     else:
